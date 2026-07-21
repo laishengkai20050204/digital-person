@@ -1,31 +1,45 @@
 package com.laishengkai.digitalperson;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-/**
- * Executes functions requested by the dialogue model.
- */
 @FunctionalInterface
 public interface FunctionExecutor {
 
     CompletionStage<FunctionResult> execute(DialogueModelResult.FunctionCall functionCall);
 
-    /**
-     * Result returned to the dialogue model after a function finishes.
-     *
-     * @param callId function-call identifier
-     * @param name executed function name
-     * @param successful whether execution succeeded
-     * @param resultJson structured JSON result or error payload
-     */
+    default CompletionStage<List<DialogueModel.FunctionExchange>> executeAll(
+            List<DialogueModelResult.FunctionCall> functionCalls
+    ) {
+        CompletionStage<List<DialogueModel.FunctionExchange>> stage =
+                CompletableFuture.completedFuture(List.of());
+
+        for (DialogueModelResult.FunctionCall functionCall : functionCalls) {
+            stage = stage.thenCompose(exchanges ->
+                    execute(functionCall).thenApply(functionResult -> {
+                        List<DialogueModel.FunctionExchange> updated =
+                                new ArrayList<>(exchanges);
+                        updated.add(new DialogueModel.FunctionExchange(
+                                functionCall,
+                                functionResult
+                        ));
+                        return List.copyOf(updated);
+                    })
+            );
+        }
+
+        return stage;
+    }
+
     record FunctionResult(
             String callId,
             String name,
             boolean successful,
             String resultJson
     ) {
-
         public FunctionResult {
             callId = requireText(callId, "callId");
             name = requireText(name, "name");
