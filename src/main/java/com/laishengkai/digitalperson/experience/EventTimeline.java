@@ -11,7 +11,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Maintains a person's events and enforces timeline invariants.
+ * Maintains events that actually happened or are currently happening.
  */
 @ToString
 public final class EventTimeline {
@@ -19,20 +19,8 @@ public final class EventTimeline {
     private final List<PersonEvent> events = new ArrayList<>();
 
     /**
-     * Adds a future or planned event without changing existing events.
-     */
-    public void schedule(PersonEvent event) {
-        PersonEvent plannedEvent = requireNewEvent(event);
-        if (plannedEvent.isTerminated()) {
-            throw new IllegalArgumentException("a terminated event cannot be scheduled");
-        }
-        ensureNoConflicts(plannedEvent, List.of());
-        addInternal(plannedEvent);
-    }
-
-    /**
-     * Starts an open event. Earlier open events in the same channel are ended
-     * with {@link EventEndReason#REPLACED} at the new event's start time.
+     * Starts an actual open event. Earlier open events in the same channel are
+     * ended with {@link EventEndReason#REPLACED} at the new event's start time.
      */
     public void start(PersonEvent event) {
         PersonEvent newEvent = requireNewEvent(event);
@@ -64,14 +52,14 @@ public final class EventTimeline {
     }
 
     /**
-     * Adds a closed historical event and marks it completed.
+     * Records an actual event whose start and end are already known.
      */
     public void record(PersonEvent event) {
         record(event, EventEndReason.COMPLETED);
     }
 
     /**
-     * Adds a closed historical event with an explicit end reason.
+     * Records an actual event with an explicit end reason.
      */
     public void record(PersonEvent event, EventEndReason reason) {
         PersonEvent recordedEvent = requireNewEvent(event);
@@ -80,11 +68,8 @@ public final class EventTimeline {
         if (recordedEvent.getEndTime().isEmpty()) {
             throw new IllegalArgumentException("a recorded event must have an end time");
         }
-        if (reason == EventEndReason.CANCELLED) {
-            throw new IllegalArgumentException("a cancelled event must be added through schedule() and cancel()");
-        }
-        if (recordedEvent.isTerminated()) {
-            throw new IllegalArgumentException("a recorded event must not already be terminated");
+        if (recordedEvent.isFinished()) {
+            throw new IllegalArgumentException("a recorded event must not already be finished");
         }
 
         ensureNoConflicts(recordedEvent, List.of());
@@ -97,12 +82,7 @@ public final class EventTimeline {
             Instant endTime,
             EventEndReason reason
     ) {
-        PersonEvent event = getRequired(eventId);
-        event.finish(endTime, reason);
-    }
-
-    public void cancel(EventId eventId, Instant cancelledAt) {
-        getRequired(eventId).cancel(cancelledAt);
+        getRequired(eventId).finish(endTime, reason);
     }
 
     public boolean remove(EventId eventId) {
@@ -142,6 +122,9 @@ public final class EventTimeline {
                 .findFirst();
     }
 
+    /**
+     * Returns the first actual event that started after the supplied time.
+     */
     public Optional<PersonEvent> getNext(Instant time) {
         Objects.requireNonNull(time, "time cannot be null");
 
@@ -162,9 +145,7 @@ public final class EventTimeline {
     }
 
     /**
-     * Returns every event that overlaps the interval ending at {@code now}.
-     * This includes events that began before the interval but continued into it,
-     * as well as events that are still in progress.
+     * Returns actual events overlapping {@code [now - duration, now)}.
      */
     public List<PersonEvent> getRecentEvents(
             Instant now,
