@@ -3,19 +3,18 @@ package com.laishengkai.digitalperson.state;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 
 import java.util.List;
+import java.util.concurrent.CompletionStage;
 
 /**
- * Evaluates one newly active event and returns that event's channel-specific
- * state transitions.
+ * Asynchronously evaluates one newly active event.
  *
- * <p>An implementation may later call a large language model. The updater calls
- * this interface only when a different event becomes current in a channel.</p>
+ * <p>An LLM implementation belongs outside {@link StateUpdater}. The updater
+ * remains deterministic and never waits on network I/O.</p>
  */
 @FunctionalInterface
 public interface StateTransitionEvaluator {
-
-    List<StateTransition> evaluate(
-            PersonState currentState,
+    CompletionStage<List<StateTransition>> evaluate(
+            PersonStateSnapshot currentState,
             PersonEvent newEvent
     );
 }
