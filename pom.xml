@@ -10,12 +10,20 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.36</lombok.version>
+        <langchain4j.version>1.18.0</langchain4j.version>
         <slf4j.version>2.0.18</slf4j.version>
         <logback.version>1.5.38</logback.version>
         <junit.version>5.11.4</junit.version>
         <jacoco.version>0.8.12</jacoco.version>
     </properties>
     <dependencies>
+        <!-- OpenAI-compatible LangChain4j model integration. -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
+
         <!-- Logging API used by domain and application code. -->
         <dependency>
             <groupId>org.slf4j</groupId>
