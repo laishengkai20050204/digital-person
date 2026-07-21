@@ -1,0 +1,160 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deployment
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build and test
+        run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Locate executable JAR
+        id: jar
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          JAR_FILE="$(find target -maxdepth 1 -type f \
+            -name '*.jar' \
+            ! -name 'original-*.jar' \
+            -print -quit)"
+
+          if [ -z "$JAR_FILE" ]; then
+            echo "没有找到可部署的 JAR"
+            exit 1
+          fi
+
+          echo "path=$JAR_FILE" >> "$GITHUB_OUTPUT"
+          echo "将部署：$JAR_FILE"
+
+      - name: Configure SSH
+        env:
+          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          install -d -m 700 ~/.ssh
+
+          printf '%s' "$SERVER_SSH_KEY_B64" \
+            | base64 --decode \
+            > ~/.ssh/id_ed25519
+
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" \
+            > ~/.ssh/known_hosts
+
+          chmod 600 ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/known_hosts
+
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Upload JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          scp \
+            -i ~/.ssh/id_ed25519 \
+            -P "$SERVER_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            "${{ steps.jar.outputs.path }}" \
+            "$SERVER_USER@$SERVER_HOST:/tmp/person-ai-$GITHUB_SHA.jar"
+
+      - name: Deploy, restart and health check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$SERVER_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            "$SERVER_USER@$SERVER_HOST" \
+            "APP_SHA='$GITHUB_SHA' bash -s" <<'DEPLOY_SCRIPT'
+
+          set -euo pipefail
+
+          APP_DIR="/opt/person-ai"
+          RELEASE_DIR="$APP_DIR/releases"
+          UPLOADED_JAR="/tmp/person-ai-$APP_SHA.jar"
+          NEW_JAR="$RELEASE_DIR/person-ai-$APP_SHA.jar"
+          PREVIOUS_JAR=""
+
+          mkdir -p "$RELEASE_DIR"
+
+          if [ -L "$APP_DIR/current.jar" ]; then
+            PREVIOUS_JAR="$(readlink -f "$APP_DIR/current.jar")"
+          fi
+
+          mv "$UPLOADED_JAR" "$NEW_JAR"
+          ln -sfn "$NEW_JAR" "$APP_DIR/current.jar"
+
+          sudo -n /usr/bin/systemctl restart person-ai
+
+          HEALTHY=false
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:8080/actuator/health \
+              | grep -q '"status":"UP"'; then
+              HEALTHY=true
+              break
+            fi
+
+            echo "等待应用启动：$attempt/20"
+            sleep 3
+          done
+
+          if [ "$HEALTHY" != "true" ]; then
+            echo "新版本健康检查失败"
+            sudo -n /usr/bin/systemctl status person-ai --no-pager || true
+            sudo -n /usr/bin/systemctl is-active person-ai || true
+
+            if [ -n "$PREVIOUS_JAR" ] && [ -f "$PREVIOUS_JAR" ]; then
+              echo "回滚到上一个版本：$PREVIOUS_JAR"
+              ln -sfn "$PREVIOUS_JAR" "$APP_DIR/current.jar"
+              sudo -n /usr/bin/systemctl restart person-ai
+            fi
+
+            exit 1
+          fi
+
+          echo "部署成功：$APP_SHA"
+
+          cd "$RELEASE_DIR"
+          ls -1t person-ai-*.jar 2>/dev/null \
+            | tail -n +6 \
+            | xargs -r rm -f
+
+          DEPLOY_SCRIPT
