@@ -41,6 +41,19 @@ public final class PhysicalState {
         this.hunger = validateUnitValue(hunger, "hunger");
     }
 
+    /**
+     * Applies relative changes while keeping every dimension inside [0, 1].
+     */
+    public void adjust(
+            double fatigueDelta,
+            double sleepinessDelta,
+            double hungerDelta
+    ) {
+        fatigue = applyDelta(fatigue, fatigueDelta, "fatigueDelta");
+        sleepiness = applyDelta(sleepiness, sleepinessDelta, "sleepinessDelta");
+        hunger = applyDelta(hunger, hungerDelta, "hungerDelta");
+    }
+
     private static double validateUnitValue(double value, String name) {
         if (!Double.isFinite(value) || value < 0.0 || value > 1.0) {
             throw new IllegalArgumentException(
@@ -48,5 +61,12 @@ public final class PhysicalState {
             );
         }
         return value;
+    }
+
+    private static double applyDelta(double current, double delta, String name) {
+        if (!Double.isFinite(delta)) {
+            throw new IllegalArgumentException(name + " must be finite");
+        }
+        return Math.clamp(current + delta, 0.0, 1.0);
     }
 }
