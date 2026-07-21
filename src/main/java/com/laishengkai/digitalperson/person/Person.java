@@ -5,12 +5,16 @@ import com.laishengkai.digitalperson.experience.LifeEvent;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
 import com.laishengkai.digitalperson.state.PersonState;
+import lombok.Getter;
+import lombok.ToString;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 
+@Getter
+@ToString
 public final class Person {
 
     private final Personality personality;
@@ -33,14 +37,6 @@ public final class Person {
                 state,
                 "state cannot be null"
         );
-    }
-
-    public Personality getPersonality() {
-        return personality;
-    }
-
-    public PersonState getState() {
-        return state;
     }
 
     public List<LifeEvent> getLifeEvents() {
