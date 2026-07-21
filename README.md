@@ -13,6 +13,7 @@
 - 异步 `StateTransitionEvaluator` 边界，方便后续接入 LangChain4j
 - `PersonId`、`PersonRepository` 和应用层状态更新服务
 - 防御性复制，避免调用方绕过时间线和状态规则
+- 基于 SLF4J 与 Logback 的结构化运行日志
 
 ## 架构
 
@@ -64,6 +65,35 @@ PersonRepository.save
 `StateUpdater` 不保存任何人物专属状态。`lastUpdatedAt` 和每个活动渠道的效果保存在不可变的 `StateEvolutionContext` 中，并与人物一起持久化。
 
 如果 LLM 评估失败，工作副本不会提交到 `Person`，也不会调用 Repository 保存。
+
+## 日志
+
+项目代码通过 SLF4J API 写日志，当前运行时实现为 Logback。默认输出到标准输出，方便 Docker、systemd 或云平台统一采集；项目本身不直接管理日志文件。
+
+默认日志级别为 `INFO`，可以使用环境变量调整：
+
+```bash
+export LOG_LEVEL=INFO
+export STATE_LOG_LEVEL=DEBUG
+export EVENT_LOG_LEVEL=DEBUG
+```
+
+日志覆盖以下关键流程：
+
+- 人物状态更新的开始、完成、失败和耗时
+- 待评估活动渠道及状态结算过程
+- 事件开始、替换、结束、记录和删除
+
+日志只记录 `PersonId`、`EventId`、活动类型、渠道、时间和数量等结构化信息。禁止记录聊天正文、事件标题、地点、参与者、备注、提示词和长期记忆内容，避免泄露隐私数据。
+
+测试使用独立的 `logback-test.xml`，默认只输出 `WARN` 和 `ERROR`。
+
+## 注释规范
+
+- 对聚合根、应用服务、不可变值对象和重要领域服务使用类级 Javadoc。
+- 对存在事务边界、异步边界或不明显副作用的方法说明前置条件与失败语义。
+- 不为显而易见的 getter 或简单赋值逐行添加注释。
+- 注释解释“为什么”和业务约束，不重复代码已经清楚表达的“做什么”。
 
 ## 构建
 
