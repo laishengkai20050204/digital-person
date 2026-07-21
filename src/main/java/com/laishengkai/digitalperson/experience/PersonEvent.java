@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * A person activity with stable identity and lifecycle information.
+ * An activity that actually happened or is currently happening.
  */
 @ToString
 public final class PersonEvent {
@@ -22,7 +22,6 @@ public final class PersonEvent {
     private final String notes;
 
     private EventEndReason endReason;
-    private Instant terminatedAt;
 
     public PersonEvent(
             EventId id,
@@ -109,45 +108,23 @@ public final class PersonEvent {
         return Optional.ofNullable(endReason);
     }
 
-    public Optional<Instant> getTerminatedAt() {
-        return Optional.ofNullable(terminatedAt);
-    }
-
     public boolean isOpen() {
         return timeRange.isOpenEnded() && endReason == null;
     }
 
-    public boolean isTerminated() {
+    public boolean isFinished() {
         return endReason != null;
     }
 
-    public boolean isCancelled() {
-        return endReason == EventEndReason.CANCELLED;
-    }
-
     public boolean contains(Instant time) {
-        Objects.requireNonNull(time, "time cannot be null");
-
-        if (time.isBefore(getStartTime())) {
-            return false;
-        }
-        if (terminatedAt != null && !time.isBefore(terminatedAt)) {
-            return false;
-        }
         return timeRange.contains(time);
     }
 
     public EventStatus getStatusAt(Instant time) {
         Objects.requireNonNull(time, "time cannot be null");
 
-        if (isCancelled() && !time.isBefore(terminatedAt)) {
-            return EventStatus.CANCELLED;
-        }
         if (time.isBefore(getStartTime())) {
-            return EventStatus.PLANNED;
-        }
-        if (terminatedAt != null && !time.isBefore(terminatedAt)) {
-            return EventStatus.FINISHED;
+            return EventStatus.NOT_STARTED;
         }
         if (timeRange.contains(time)) {
             return EventStatus.IN_PROGRESS;
@@ -157,98 +134,39 @@ public final class PersonEvent {
 
     public boolean overlaps(PersonEvent other) {
         Objects.requireNonNull(other, "other cannot be null");
-        if (!other.hasPositiveEffectiveDuration()) {
-            return false;
-        }
-        return overlaps(other.getStartTime(), other.effectiveEndTime());
+        return timeRange.overlaps(other.timeRange);
     }
 
     public boolean overlaps(TimeRange other) {
-        Objects.requireNonNull(other, "other cannot be null");
-        return overlaps(other.getStart(), other.getEnd());
+        return timeRange.overlaps(Objects.requireNonNull(other, "other cannot be null"));
     }
 
     public void finish(Instant endTime, EventEndReason reason) {
         Objects.requireNonNull(endTime, "endTime cannot be null");
         Objects.requireNonNull(reason, "reason cannot be null");
 
-        if (reason == EventEndReason.CANCELLED) {
-            throw new IllegalArgumentException("use cancel() for cancelled events");
-        }
-        ensureNotTerminated();
+        ensureNotFinished();
         if (!timeRange.isOpenEnded()) {
             throw new IllegalStateException("only an open event can be finished explicitly");
         }
 
         timeRange.finish(endTime);
         endReason = reason;
-        terminatedAt = endTime;
     }
 
     public void markFinished(EventEndReason reason) {
         Objects.requireNonNull(reason, "reason cannot be null");
+        ensureNotFinished();
 
-        if (reason == EventEndReason.CANCELLED) {
-            throw new IllegalArgumentException("use cancel() for cancelled events");
+        if (timeRange.getEnd().isEmpty()) {
+            throw new IllegalStateException("an open event must be finished with an end time");
         }
-        ensureNotTerminated();
-
-        Instant endTime = timeRange.getEnd().orElseThrow(
-                () -> new IllegalStateException("an open event must be finished with an end time")
-        );
         endReason = reason;
-        terminatedAt = endTime;
     }
 
-    public void cancel(Instant cancelledAt) {
-        Objects.requireNonNull(cancelledAt, "cancelledAt cannot be null");
-        ensureNotTerminated();
-
-        Optional<Instant> plannedEnd = timeRange.getEnd();
-        if (plannedEnd.isPresent() && !cancelledAt.isBefore(plannedEnd.get())) {
-            throw new IllegalArgumentException("an event cannot be cancelled at or after its end");
-        }
-
-        if (cancelledAt.isAfter(getStartTime()) && timeRange.isOpenEnded()) {
-            timeRange.finish(cancelledAt);
-        }
-
-        endReason = EventEndReason.CANCELLED;
-        terminatedAt = cancelledAt;
-    }
-
-    private Optional<Instant> effectiveEndTime() {
-        if (terminatedAt != null) {
-            return Optional.of(terminatedAt);
-        }
-        return timeRange.getEnd();
-    }
-
-    private boolean overlaps(
-            Instant otherStart,
-            Optional<Instant> otherEnd
-    ) {
-        if (!hasPositiveEffectiveDuration()) {
-            return false;
-        }
-
-        Optional<Instant> thisEnd = effectiveEndTime();
-        boolean startsBeforeOtherEnds = otherEnd.isEmpty()
-                || getStartTime().isBefore(otherEnd.get());
-        boolean otherStartsBeforeThisEnds = thisEnd.isEmpty()
-                || otherStart.isBefore(thisEnd.get());
-        return startsBeforeOtherEnds && otherStartsBeforeThisEnds;
-    }
-
-    private boolean hasPositiveEffectiveDuration() {
-        return effectiveEndTime()
-                .map(end -> end.isAfter(getStartTime()))
-                .orElse(true);
-    }
-
-    private void ensureNotTerminated() {
+    private void ensureNotFinished() {
         if (endReason != null) {
-            throw new IllegalStateException("event has already terminated");
+            throw new IllegalStateException("event has already finished");
         }
     }
 
