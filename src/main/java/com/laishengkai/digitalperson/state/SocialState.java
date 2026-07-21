@@ -52,6 +52,6 @@ public final class SocialState {
         if (!Double.isFinite(delta)) {
             throw new IllegalArgumentException(name + " must be finite");
         }
-        return Math.clamp(current + delta, 0.0, 1.0);
+        return Math.max(0.0, Math.min(1.0, current + delta));
     }
 }
