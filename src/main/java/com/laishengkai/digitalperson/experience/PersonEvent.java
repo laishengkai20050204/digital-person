@@ -1,7 +1,5 @@
 package com.laishengkai.digitalperson.experience;
 
-import lombok.ToString;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
@@ -9,18 +7,18 @@ import java.util.Optional;
 
 /**
  * An activity that actually happened or is currently happening.
+ *
+ * <p>Lifecycle mutation is package-private so it can only be performed by the
+ * timeline aggregate.</p>
  */
-@ToString
 public final class PersonEvent {
-
     private final EventId id;
     private final ActivityType activityType;
     private final String title;
     private final String location;
-    private final TimeRange timeRange;
+    private TimeRange timeRange;
     private final List<String> participants;
     private final String notes;
-
     private EventEndReason endReason;
 
     public PersonEvent(
@@ -32,36 +30,31 @@ public final class PersonEvent {
             List<String> participants,
             String notes
     ) {
-        this.id = Objects.requireNonNull(id, "id cannot be null");
-        this.activityType = Objects.requireNonNull(
-                activityType,
-                "activityType cannot be null"
-        );
-        this.title = requireText(title, "title");
-        this.location = normalize(location);
-        this.timeRange = Objects.requireNonNull(
-                timeRange,
-                "timeRange cannot be null"
-        );
-        this.participants = normalizeParticipants(participants);
-        this.notes = normalize(notes);
+        this(id, activityType, title, location, timeRange, participants, notes, null);
     }
 
-    public PersonEvent(
+    private PersonEvent(
+            EventId id,
             ActivityType activityType,
             String title,
             String location,
-            TimeRange timeRange
+            TimeRange timeRange,
+            List<String> participants,
+            String notes,
+            EventEndReason endReason
     ) {
-        this(
-                EventId.random(),
-                activityType,
-                title,
-                location,
-                timeRange,
-                List.of(),
-                ""
-        );
+        this.id = Objects.requireNonNull(id, "id cannot be null");
+        this.activityType = Objects.requireNonNull(activityType, "activityType cannot be null");
+        this.title = requireText(title, "title");
+        this.location = normalize(location);
+        this.timeRange = Objects.requireNonNull(timeRange, "timeRange cannot be null");
+        this.participants = normalizeParticipants(participants);
+        this.notes = normalize(notes);
+        this.endReason = endReason;
+    }
+
+    public PersonEvent(ActivityType activityType, String title, String location, TimeRange timeRange) {
+        this(EventId.random(), activityType, title, location, timeRange, List.of(), "");
     }
 
     public EventId getId() {
@@ -120,21 +113,12 @@ public final class PersonEvent {
         return timeRange.contains(time);
     }
 
-    /**
-     * Returns no status before the event actually began.
-     */
     public Optional<EventStatus> getStatusAt(Instant time) {
         Objects.requireNonNull(time, "time cannot be null");
-
         if (time.isBefore(getStartTime())) {
             return Optional.empty();
         }
-
-        return Optional.of(
-                timeRange.contains(time)
-                        ? EventStatus.IN_PROGRESS
-                        : EventStatus.FINISHED
-        );
+        return Optional.of(timeRange.contains(time) ? EventStatus.IN_PROGRESS : EventStatus.FINISHED);
     }
 
     public boolean overlaps(PersonEvent other) {
@@ -146,23 +130,24 @@ public final class PersonEvent {
         return timeRange.overlaps(Objects.requireNonNull(other, "other cannot be null"));
     }
 
-    public void finish(Instant endTime, EventEndReason reason) {
+    public PersonEvent copy() {
+        return new PersonEvent(id, activityType, title, location, timeRange, participants, notes, endReason);
+    }
+
+    void finish(Instant endTime, EventEndReason reason) {
         Objects.requireNonNull(endTime, "endTime cannot be null");
         Objects.requireNonNull(reason, "reason cannot be null");
-
         ensureNotFinished();
         if (!timeRange.isOpenEnded()) {
             throw new IllegalStateException("only an open event can be finished explicitly");
         }
-
-        timeRange.finish(endTime);
+        timeRange = timeRange.finishAt(endTime);
         endReason = reason;
     }
 
-    public void markFinished(EventEndReason reason) {
+    void markFinished(EventEndReason reason) {
         Objects.requireNonNull(reason, "reason cannot be null");
         ensureNotFinished();
-
         if (timeRange.getEnd().isEmpty()) {
             throw new IllegalStateException("an open event must be finished with an end time");
         }
@@ -177,13 +162,7 @@ public final class PersonEvent {
 
     @Override
     public boolean equals(Object other) {
-        if (this == other) {
-            return true;
-        }
-        if (!(other instanceof PersonEvent event)) {
-            return false;
-        }
-        return id.equals(event.id);
+        return this == other || other instanceof PersonEvent event && id.equals(event.id);
     }
 
     @Override
@@ -191,11 +170,19 @@ public final class PersonEvent {
         return id.hashCode();
     }
 
+    @Override
+    public String toString() {
+        return "PersonEvent[id=" + id
+                + ", activityType=" + activityType
+                + ", startTime=" + getStartTime()
+                + ", endReason=" + endReason
+                + "]";
+    }
+
     private static List<String> normalizeParticipants(List<String> participants) {
         if (participants == null) {
             return List.of();
         }
-
         return participants.stream()
                 .filter(Objects::nonNull)
                 .map(String::strip)
@@ -205,15 +192,10 @@ public final class PersonEvent {
     }
 
     private static String requireText(String value, String fieldName) {
-        String normalized = Objects.requireNonNull(
-                value,
-                fieldName + " cannot be null"
-        ).strip();
-
+        String normalized = Objects.requireNonNull(value, fieldName + " cannot be null").strip();
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException(fieldName + " cannot be blank");
         }
-
         return normalized;
     }
 
