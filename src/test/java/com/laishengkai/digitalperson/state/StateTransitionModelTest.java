@@ -18,15 +18,27 @@ class StateTransitionModelTest {
     private final StateTransitionModel model = new StateTransitionModel();
 
     @Test
-    void hungerContinuesFromItsCurrentPointOnTheCurve() {
+    void negativeShapeContinuesFromCurrentPointTowardMinimum() {
         double next = model.calculate(
+                StateDimension.HUNGER,
                 0.7,
-                0.0,
-                1.0,
+                -1.0,
                 Duration.ofMinutes(30)
         );
 
         assertEquals(0.7 * Math.exp(-0.5), next, EPSILON);
+    }
+
+    @Test
+    void positiveShapeContinuesFromCurrentPointTowardMaximum() {
+        double next = model.calculate(
+                StateDimension.HUNGER,
+                0.7,
+                1.0,
+                Duration.ofMinutes(30)
+        );
+
+        assertEquals(1.0 - 0.3 * Math.exp(-0.5), next, EPSILON);
     }
 
     @Test
@@ -35,8 +47,7 @@ class StateTransitionModelTest {
         PersonState twoUpdates = stateWithHunger(0.7);
         StateTransition transition = new StateTransition(
                 StateDimension.HUNGER,
-                0.0,
-                1.4
+                -1.4
         );
 
         model.apply(oneUpdate, transition, Duration.ofHours(1));
@@ -59,28 +70,42 @@ class StateTransitionModelTest {
         }
 
         List<StateTransition> transitions = List.of(
-                new StateTransition(StateDimension.VALENCE, 0.9, 1.0),
-                new StateTransition(StateDimension.ENERGY, 0.9, 1.1),
-                new StateTransition(StateDimension.TENSION, 0.9, 1.2),
-                new StateTransition(StateDimension.FOCUS, 0.9, 1.3),
-                new StateTransition(StateDimension.MENTAL_LOAD, 0.9, 1.4),
-                new StateTransition(StateDimension.MOTIVATION, 0.9, 1.5),
-                new StateTransition(StateDimension.FATIGUE, 0.9, 1.6),
-                new StateTransition(StateDimension.SLEEPINESS, 0.9, 1.7),
-                new StateTransition(StateDimension.HUNGER, 0.9, 1.8),
-                new StateTransition(StateDimension.LONELINESS, 0.9, 1.9),
-                new StateTransition(StateDimension.SOCIAL_NEED, 0.9, 2.0)
+                new StateTransition(StateDimension.VALENCE, 1.0),
+                new StateTransition(StateDimension.ENERGY, 1.1),
+                new StateTransition(StateDimension.TENSION, 1.2),
+                new StateTransition(StateDimension.FOCUS, 1.3),
+                new StateTransition(StateDimension.MENTAL_LOAD, 1.4),
+                new StateTransition(StateDimension.MOTIVATION, 1.5),
+                new StateTransition(StateDimension.FATIGUE, 1.6),
+                new StateTransition(StateDimension.SLEEPINESS, 1.7),
+                new StateTransition(StateDimension.HUNGER, 1.8),
+                new StateTransition(StateDimension.LONELINESS, 1.9),
+                new StateTransition(StateDimension.SOCIAL_NEED, 2.0)
         );
 
         model.applyAll(state, transitions, Duration.ofHours(1));
 
         for (StateTransition transition : transitions) {
-            double original = before.get(transition.dimension());
-            double updated = transition.dimension().read(state);
+            StateDimension dimension = transition.dimension();
+            double original = before.get(dimension);
+            double updated = dimension.read(state);
 
             assertTrue(updated > original);
-            assertTrue(updated < transition.target());
+            assertTrue(updated < dimension.getMaximum());
         }
+    }
+
+    @Test
+    void valenceUsesItsFullMinusOneToOneRange() {
+        double next = model.calculate(
+                StateDimension.VALENCE,
+                0.0,
+                -1.0,
+                Duration.ofHours(1)
+        );
+
+        double expected = -1.0 + Math.exp(-1.0);
+        assertEquals(expected, next, EPSILON);
     }
 
     @Test
@@ -89,7 +114,7 @@ class StateTransitionModelTest {
 
         model.apply(
                 state,
-                new StateTransition(StateDimension.HUNGER, 0.0, 2.0),
+                new StateTransition(StateDimension.HUNGER, -2.0),
                 Duration.ZERO
         );
 
@@ -100,15 +125,25 @@ class StateTransitionModelTest {
     void rejectsInvalidTransitionParameters() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new StateTransition(StateDimension.HUNGER, -0.1, 1.0)
+                () -> new StateTransition(StateDimension.HUNGER, 0.0)
         );
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new StateTransition(StateDimension.HUNGER, 0.0, 0.0)
+                () -> model.calculate(
+                        StateDimension.HUNGER,
+                        -0.1,
+                        -1.0,
+                        Duration.ofMinutes(1)
+                )
         );
         assertThrows(
                 IllegalArgumentException.class,
-                () -> model.calculate(0.5, 0.0, 1.0, Duration.ofMinutes(-1))
+                () -> model.calculate(
+                        StateDimension.HUNGER,
+                        0.5,
+                        -1.0,
+                        Duration.ofMinutes(-1)
+                )
         );
     }
 
@@ -121,8 +156,8 @@ class StateTransitionModelTest {
                 () -> model.applyAll(
                         state,
                         List.of(
-                                new StateTransition(StateDimension.HUNGER, 0.1, 1.0),
-                                new StateTransition(StateDimension.HUNGER, 0.2, 2.0)
+                                new StateTransition(StateDimension.HUNGER, -1.0),
+                                new StateTransition(StateDimension.HUNGER, -2.0)
                         ),
                         Duration.ofMinutes(30)
                 )
