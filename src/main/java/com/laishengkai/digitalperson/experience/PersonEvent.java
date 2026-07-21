@@ -1,17 +1,19 @@
 package com.laishengkai.digitalperson.experience;
 
-import lombok.Getter;
 import lombok.ToString;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
-@Getter
+/**
+ * A person activity with stable identity and lifecycle information.
+ */
 @ToString
 public final class PersonEvent {
 
+    private final EventId id;
     private final ActivityType activityType;
     private final String title;
     private final String location;
@@ -19,7 +21,11 @@ public final class PersonEvent {
     private final List<String> participants;
     private final String notes;
 
+    private EventEndReason endReason;
+    private Instant terminatedAt;
+
     public PersonEvent(
+            EventId id,
             ActivityType activityType,
             String title,
             String location,
@@ -27,6 +33,7 @@ public final class PersonEvent {
             List<String> participants,
             String notes
     ) {
+        this.id = Objects.requireNonNull(id, "id cannot be null");
         this.activityType = Objects.requireNonNull(
                 activityType,
                 "activityType cannot be null"
@@ -48,6 +55,7 @@ public final class PersonEvent {
             TimeRange timeRange
     ) {
         this(
+                EventId.random(),
                 activityType,
                 title,
                 location,
@@ -57,77 +65,207 @@ public final class PersonEvent {
         );
     }
 
-    public PersonEvent(
-            ActivityType activityType,
-            String title,
-            String location,
-            LocalDateTime startTime,
-            LocalDateTime endTime,
-            List<String> participants,
-            String notes
-    ) {
-        this(
-                activityType,
-                title,
-                location,
-                TimeRange.closed(startTime, endTime),
-                participants,
-                notes
-        );
+    public EventId getId() {
+        return id;
     }
 
-    public PersonEvent(
-            ActivityType activityType,
-            String title,
-            String location,
-            LocalDateTime startTime,
-            LocalDateTime endTime
-    ) {
-        this(
-                activityType,
-                title,
-                location,
-                TimeRange.closed(startTime, endTime)
-        );
+    public ActivityType getActivityType() {
+        return activityType;
     }
 
-    public static PersonEvent openEnded(
-            ActivityType activityType,
-            String title,
-            String location,
-            LocalDateTime startTime
-    ) {
-        return new PersonEvent(
-                activityType,
-                title,
-                location,
-                TimeRange.openEnded(startTime)
-        );
+    public ActivityChannel getChannel() {
+        return activityType.getChannel();
     }
 
-    public LocalDateTime getStartTime() {
+    public String getTitle() {
+        return title;
+    }
+
+    public String getLocation() {
+        return location;
+    }
+
+    public TimeRange getTimeRange() {
+        return timeRange;
+    }
+
+    public List<String> getParticipants() {
+        return participants;
+    }
+
+    public String getNotes() {
+        return notes;
+    }
+
+    public Instant getStartTime() {
         return timeRange.getStart();
     }
 
-    public Optional<LocalDateTime> getEndTime() {
+    public Optional<Instant> getEndTime() {
         return timeRange.getEnd();
     }
 
-    public boolean contains(LocalDateTime time) {
+    public Optional<EventEndReason> getEndReason() {
+        return Optional.ofNullable(endReason);
+    }
+
+    public Optional<Instant> getTerminatedAt() {
+        return Optional.ofNullable(terminatedAt);
+    }
+
+    public boolean isOpen() {
+        return timeRange.isOpenEnded() && endReason == null;
+    }
+
+    public boolean isTerminated() {
+        return endReason != null;
+    }
+
+    public boolean isCancelled() {
+        return endReason == EventEndReason.CANCELLED;
+    }
+
+    public boolean contains(Instant time) {
+        Objects.requireNonNull(time, "time cannot be null");
+
+        if (time.isBefore(getStartTime())) {
+            return false;
+        }
+        if (terminatedAt != null && !time.isBefore(terminatedAt)) {
+            return false;
+        }
         return timeRange.contains(time);
     }
 
-    public EventStatus getStatusAt(LocalDateTime time) {
-        return timeRange.getStatusAt(time);
+    public EventStatus getStatusAt(Instant time) {
+        Objects.requireNonNull(time, "time cannot be null");
+
+        if (isCancelled() && !time.isBefore(terminatedAt)) {
+            return EventStatus.CANCELLED;
+        }
+        if (time.isBefore(getStartTime())) {
+            return EventStatus.PLANNED;
+        }
+        if (terminatedAt != null && !time.isBefore(terminatedAt)) {
+            return EventStatus.FINISHED;
+        }
+        if (timeRange.contains(time)) {
+            return EventStatus.IN_PROGRESS;
+        }
+        return EventStatus.FINISHED;
     }
 
     public boolean overlaps(PersonEvent other) {
         Objects.requireNonNull(other, "other cannot be null");
-        return timeRange.overlaps(other.timeRange);
+        if (!other.hasPositiveEffectiveDuration()) {
+            return false;
+        }
+        return overlaps(other.getStartTime(), other.effectiveEndTime());
     }
 
-    public void finish(LocalDateTime endTime) {
+    public boolean overlaps(TimeRange other) {
+        Objects.requireNonNull(other, "other cannot be null");
+        return overlaps(other.getStart(), other.getEnd());
+    }
+
+    public void finish(Instant endTime, EventEndReason reason) {
+        Objects.requireNonNull(endTime, "endTime cannot be null");
+        Objects.requireNonNull(reason, "reason cannot be null");
+
+        if (reason == EventEndReason.CANCELLED) {
+            throw new IllegalArgumentException("use cancel() for cancelled events");
+        }
+        ensureNotTerminated();
+        if (!timeRange.isOpenEnded()) {
+            throw new IllegalStateException("only an open event can be finished explicitly");
+        }
+
         timeRange.finish(endTime);
+        endReason = reason;
+        terminatedAt = endTime;
+    }
+
+    public void markFinished(EventEndReason reason) {
+        Objects.requireNonNull(reason, "reason cannot be null");
+
+        if (reason == EventEndReason.CANCELLED) {
+            throw new IllegalArgumentException("use cancel() for cancelled events");
+        }
+        ensureNotTerminated();
+
+        Instant endTime = timeRange.getEnd().orElseThrow(
+                () -> new IllegalStateException("an open event must be finished with an end time")
+        );
+        endReason = reason;
+        terminatedAt = endTime;
+    }
+
+    public void cancel(Instant cancelledAt) {
+        Objects.requireNonNull(cancelledAt, "cancelledAt cannot be null");
+        ensureNotTerminated();
+
+        Optional<Instant> plannedEnd = timeRange.getEnd();
+        if (plannedEnd.isPresent() && !cancelledAt.isBefore(plannedEnd.get())) {
+            throw new IllegalArgumentException("an event cannot be cancelled at or after its end");
+        }
+
+        if (cancelledAt.isAfter(getStartTime()) && timeRange.isOpenEnded()) {
+            timeRange.finish(cancelledAt);
+        }
+
+        endReason = EventEndReason.CANCELLED;
+        terminatedAt = cancelledAt;
+    }
+
+    private Optional<Instant> effectiveEndTime() {
+        if (terminatedAt != null) {
+            return Optional.of(terminatedAt);
+        }
+        return timeRange.getEnd();
+    }
+
+    private boolean overlaps(
+            Instant otherStart,
+            Optional<Instant> otherEnd
+    ) {
+        if (!hasPositiveEffectiveDuration()) {
+            return false;
+        }
+
+        Optional<Instant> thisEnd = effectiveEndTime();
+        boolean startsBeforeOtherEnds = otherEnd.isEmpty()
+                || getStartTime().isBefore(otherEnd.get());
+        boolean otherStartsBeforeThisEnds = thisEnd.isEmpty()
+                || otherStart.isBefore(thisEnd.get());
+        return startsBeforeOtherEnds && otherStartsBeforeThisEnds;
+    }
+
+    private boolean hasPositiveEffectiveDuration() {
+        return effectiveEndTime()
+                .map(end -> end.isAfter(getStartTime()))
+                .orElse(true);
+    }
+
+    private void ensureNotTerminated() {
+        if (endReason != null) {
+            throw new IllegalStateException("event has already terminated");
+        }
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof PersonEvent event)) {
+            return false;
+        }
+        return id.equals(event.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return id.hashCode();
     }
 
     private static List<String> normalizeParticipants(List<String> participants) {
