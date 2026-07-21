@@ -1,5 +1,8 @@
 package com.laishengkai.digitalperson.experience;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -11,9 +14,17 @@ import java.util.Optional;
 /**
  * Maintains events that actually happened or are currently happening.
  *
- * <p>The aggregate stores defensive copies and returns defensive copies.</p>
+ * <p>The aggregate stores defensive copies and returns defensive copies. All
+ * event lifecycle changes pass through this class so channel conflicts, event
+ * ordering and finish rules cannot be bypassed.</p>
+ *
+ * <p>Logs contain event identifiers and structural metadata only. Human-readable
+ * titles, locations, participants and notes are intentionally excluded because
+ * they may contain private user information.</p>
  */
 public final class EventTimeline {
+    private static final Logger LOGGER = LoggerFactory.getLogger(EventTimeline.class);
+
     private final List<PersonEvent> events;
 
     public EventTimeline() {
@@ -26,10 +37,16 @@ public final class EventTimeline {
                 .collect(ArrayList::new, ArrayList::add, ArrayList::addAll);
     }
 
+    /** Returns a fully detached timeline copy. */
     public EventTimeline copy() {
         return new EventTimeline(events);
     }
 
+    /**
+     * Starts an open event and replaces an older open event in the same channel.
+     *
+     * <p>Events in different channels may remain active concurrently.</p>
+     */
     public void start(PersonEvent event, Instant now) {
         PersonEvent newEvent = requireNewEvent(event);
         Instant registrationTime = Objects.requireNonNull(now, "now cannot be null");
@@ -54,15 +71,38 @@ public final class EventTimeline {
         }
 
         ensureNoConflicts(newEvent, sameChannelOpenEvents);
-        sameChannelOpenEvents.forEach(existing ->
-                existing.finish(newEvent.getStartTime(), EventEndReason.REPLACED));
+        sameChannelOpenEvents.forEach(existing -> {
+            existing.finish(newEvent.getStartTime(), EventEndReason.REPLACED);
+            LOGGER.debug(
+                    "Replaced open event: eventId={}, replacementEventId={}, channel={}, endTime={}",
+                    existing.getId(),
+                    newEvent.getId(),
+                    existing.getChannel(),
+                    newEvent.getStartTime()
+            );
+        });
         addInternal(newEvent);
+
+        LOGGER.debug(
+                "Started event: eventId={}, activityType={}, channel={}, startTime={}",
+                newEvent.getId(),
+                newEvent.getActivityType(),
+                newEvent.getChannel(),
+                newEvent.getStartTime()
+        );
     }
 
+    /** Records a completed historical event using {@link EventEndReason#COMPLETED}. */
     public void record(PersonEvent event, Instant now) {
         record(event, EventEndReason.COMPLETED, now);
     }
 
+    /**
+     * Records an event that already has both start and end times.
+     *
+     * <p>The supplied event must not already carry an end reason because this
+     * aggregate owns the lifecycle transition to the finished state.</p>
+     */
     public void record(PersonEvent event, EventEndReason reason, Instant now) {
         PersonEvent recordedEvent = requireNewEvent(event);
         Objects.requireNonNull(reason, "reason cannot be null");
@@ -79,20 +119,47 @@ public final class EventTimeline {
         ensureNoConflicts(recordedEvent, List.of());
         recordedEvent.markFinished(reason);
         addInternal(recordedEvent);
+
+        LOGGER.debug(
+                "Recorded event: eventId={}, activityType={}, channel={}, startTime={}, endTime={}, endReason={}",
+                recordedEvent.getId(),
+                recordedEvent.getActivityType(),
+                recordedEvent.getChannel(),
+                recordedEvent.getStartTime(),
+                endTime,
+                reason
+        );
     }
 
+    /** Finishes one currently open event at the supplied logical time. */
     public void finish(EventId eventId, Instant endTime, EventEndReason reason, Instant now) {
         Objects.requireNonNull(endTime, "endTime cannot be null");
         Instant registrationTime = Objects.requireNonNull(now, "now cannot be null");
         if (endTime.isAfter(registrationTime)) {
             throw new IllegalArgumentException("an event cannot finish in the future");
         }
-        getInternalRequired(eventId).finish(endTime, reason);
+
+        PersonEvent event = getInternalRequired(eventId);
+        event.finish(endTime, reason);
+
+        LOGGER.debug(
+                "Finished event: eventId={}, activityType={}, channel={}, endTime={}, endReason={}",
+                event.getId(),
+                event.getActivityType(),
+                event.getChannel(),
+                endTime,
+                reason
+        );
     }
 
+    /** Removes an event by identity and reports whether it existed. */
     public boolean remove(EventId eventId) {
         Objects.requireNonNull(eventId, "eventId cannot be null");
-        return events.removeIf(event -> event.getId().equals(eventId));
+        boolean removed = events.removeIf(event -> event.getId().equals(eventId));
+        if (removed) {
+            LOGGER.debug("Removed event: eventId={}", eventId);
+        }
+        return removed;
     }
 
     public Optional<PersonEvent> getById(EventId eventId) {
@@ -166,6 +233,7 @@ public final class EventTimeline {
                 .toList();
     }
 
+    /** Creates the aggregate-owned event instance and rejects duplicate identity. */
     private PersonEvent requireNewEvent(PersonEvent event) {
         PersonEvent copy = Objects.requireNonNull(event, "event cannot be null").copy();
         if (findInternalById(copy.getId()).isPresent()) {
@@ -174,6 +242,7 @@ public final class EventTimeline {
         return copy;
     }
 
+    /** Enforces that overlapping events cannot occupy the same activity channel. */
     private void ensureNoConflicts(PersonEvent event, List<PersonEvent> allowedConflicts) {
         List<EventId> allowedIds = allowedConflicts.stream().map(PersonEvent::getId).toList();
         List<PersonEvent> conflicts = events.stream()
