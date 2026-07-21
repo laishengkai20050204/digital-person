@@ -1,39 +1,44 @@
 package com.laishengkai.digitalperson.experience;
 
-import lombok.Getter;
 import lombok.ToString;
 
 import java.time.Duration;
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
-@Getter
+/**
+ * A half-open time interval: {@code [start, end)}.
+ *
+ * <p>An absent end represents an open-ended interval.
+ */
 @ToString
 public final class TimeRange {
 
-    private final LocalDateTime start;
-    private LocalDateTime end;
+    private final Instant start;
+    private Instant end;
 
-    public TimeRange(LocalDateTime start, LocalDateTime end) {
+    private TimeRange(Instant start, Instant end) {
         this.start = Objects.requireNonNull(start, "start cannot be null");
-        this.end = Objects.requireNonNull(end, "end cannot be null");
-        validateEnd(end);
+        if (end != null) {
+            validateEnd(end);
+        }
+        this.end = end;
     }
 
-    private TimeRange(LocalDateTime start) {
-        this.start = Objects.requireNonNull(start, "start cannot be null");
+    public static TimeRange closed(Instant start, Instant end) {
+        return new TimeRange(start, Objects.requireNonNull(end, "end cannot be null"));
     }
 
-    public static TimeRange closed(LocalDateTime start, LocalDateTime end) {
-        return new TimeRange(start, end);
+    public static TimeRange openEnded(Instant start) {
+        return new TimeRange(start, null);
     }
 
-    public static TimeRange openEnded(LocalDateTime start) {
-        return new TimeRange(start);
+    public Instant getStart() {
+        return start;
     }
 
-    public Optional<LocalDateTime> getEnd() {
+    public Optional<Instant> getEnd() {
         return Optional.ofNullable(end);
     }
 
@@ -41,21 +46,9 @@ public final class TimeRange {
         return end == null;
     }
 
-    public boolean contains(LocalDateTime time) {
+    public boolean contains(Instant time) {
         Objects.requireNonNull(time, "time cannot be null");
         return !time.isBefore(start) && (end == null || time.isBefore(end));
-    }
-
-    public EventStatus getStatusAt(LocalDateTime time) {
-        Objects.requireNonNull(time, "time cannot be null");
-
-        if (time.isBefore(start)) {
-            return EventStatus.PLANNED;
-        }
-        if (end == null || time.isBefore(end)) {
-            return EventStatus.IN_PROGRESS;
-        }
-        return EventStatus.COMPLETED;
     }
 
     public boolean overlaps(TimeRange other) {
@@ -72,7 +65,7 @@ public final class TimeRange {
                 : Optional.of(Duration.between(start, end));
     }
 
-    public void finish(LocalDateTime endTime) {
+    public void finish(Instant endTime) {
         Objects.requireNonNull(endTime, "endTime cannot be null");
 
         if (end != null) {
@@ -83,7 +76,7 @@ public final class TimeRange {
         end = endTime;
     }
 
-    private void validateEnd(LocalDateTime endTime) {
+    private void validateEnd(Instant endTime) {
         if (!endTime.isAfter(start)) {
             throw new IllegalArgumentException("end must be after start");
         }
