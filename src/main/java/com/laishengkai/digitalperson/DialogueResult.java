@@ -4,10 +4,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Final result returned by {@link Person#chatAsync(String, DialogueModel, FunctionExecutor)}.
- *
- * <p>This type is intended for message adapters such as WeChat. Function calls are resolved
- * inside {@code Person.chatAsync} and are never exposed in this final result.
+ * Final user-facing result returned by {@link Person#chatAsync(String)}.
  */
 public record DialogueResult(
         Outcome outcome,
@@ -56,13 +53,6 @@ public record DialogueResult(
         REPLY
     }
 
-    /**
-     * One independently sent message bubble.
-     *
-     * @param content text to send
-     * @param delayAfterPreviousMillis delay after the previous bubble before sending this one;
-     *                                 for the first bubble, delay after the dialogue result is ready
-     */
     public record ReplySegment(String content, long delayAfterPreviousMillis) {
 
         public ReplySegment {
