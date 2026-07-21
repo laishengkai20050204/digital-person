@@ -1,25 +1,14 @@
 package com.laishengkai.digitalperson.state;
 
-import lombok.Getter;
-import lombok.ToString;
-
 import java.util.Objects;
 
-/**
- * Aggregates the person's short-term internal state.
- */
-@Getter
-@ToString
+/** Aggregates the person's short-term internal state. */
 public final class PersonState {
-
     private final AffectState affectState;
     private final CognitiveState cognitiveState;
     private final PhysicalState physicalState;
     private final SocialState socialState;
 
-    /**
-     * Keeps compatibility with callers that only provide emotional state.
-     */
     public PersonState(AffectState affectState) {
         this(
                 affectState,
@@ -35,10 +24,7 @@ public final class PersonState {
             PhysicalState physicalState,
             SocialState socialState
     ) {
-        this.affectState = Objects.requireNonNull(
-                affectState,
-                "affectState cannot be null"
-        );
+        this.affectState = Objects.requireNonNull(affectState, "affectState cannot be null");
         this.cognitiveState = Objects.requireNonNull(
                 cognitiveState,
                 "cognitiveState cannot be null"
@@ -47,10 +33,7 @@ public final class PersonState {
                 physicalState,
                 "physicalState cannot be null"
         );
-        this.socialState = Objects.requireNonNull(
-                socialState,
-                "socialState cannot be null"
-        );
+        this.socialState = Objects.requireNonNull(socialState, "socialState cannot be null");
     }
 
     public static PersonState baseline() {
@@ -60,5 +43,42 @@ public final class PersonState {
                 PhysicalState.baseline(),
                 SocialState.baseline()
         );
+    }
+
+    public AffectState getAffectState() {
+        return affectState;
+    }
+
+    public CognitiveState getCognitiveState() {
+        return cognitiveState;
+    }
+
+    public PhysicalState getPhysicalState() {
+        return physicalState;
+    }
+
+    public SocialState getSocialState() {
+        return socialState;
+    }
+
+    public PersonState copy() {
+        return new PersonState(
+                affectState.copy(),
+                cognitiveState.copy(),
+                physicalState.copy(),
+                socialState.copy()
+        );
+    }
+
+    public PersonStateSnapshot snapshot() {
+        return PersonStateSnapshot.from(this);
+    }
+
+    @Override
+    public String toString() {
+        return "PersonState[affectState=" + affectState
+                + ", cognitiveState=" + cognitiveState
+                + ", physicalState=" + physicalState
+                + ", socialState=" + socialState + "]";
     }
 }
