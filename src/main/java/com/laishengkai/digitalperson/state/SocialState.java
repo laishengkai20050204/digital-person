@@ -31,6 +31,14 @@ public final class SocialState {
         this.socialNeed = validateUnitValue(socialNeed, "socialNeed");
     }
 
+    /**
+     * Applies relative changes while keeping every dimension inside [0, 1].
+     */
+    public void adjust(double lonelinessDelta, double socialNeedDelta) {
+        loneliness = applyDelta(loneliness, lonelinessDelta, "lonelinessDelta");
+        socialNeed = applyDelta(socialNeed, socialNeedDelta, "socialNeedDelta");
+    }
+
     private static double validateUnitValue(double value, String name) {
         if (!Double.isFinite(value) || value < 0.0 || value > 1.0) {
             throw new IllegalArgumentException(
@@ -38,5 +46,12 @@ public final class SocialState {
             );
         }
         return value;
+    }
+
+    private static double applyDelta(double current, double delta, String name) {
+        if (!Double.isFinite(delta)) {
+            throw new IllegalArgumentException(name + " must be finite");
+        }
+        return Math.clamp(current + delta, 0.0, 1.0);
     }
 }
