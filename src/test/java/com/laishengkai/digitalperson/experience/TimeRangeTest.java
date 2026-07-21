@@ -2,14 +2,15 @@ package com.laishengkai.digitalperson.experience;
 
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Modifier;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TimeRangeTest {
-
     private static final Instant START = Instant.parse("2026-07-21T02:00:00Z");
     private static final Instant END = Instant.parse("2026-07-21T03:00:00Z");
 
@@ -31,10 +32,23 @@ class TimeRangeTest {
     }
 
     @Test
-    void openRangeCanOnlyBeFinishedOnce() {
-        TimeRange range = TimeRange.openEnded(START);
-        range.finish(END);
+    void finishingOpenRangeReturnsNewImmutableValue() {
+        TimeRange open = TimeRange.openEnded(START);
+        TimeRange finished = open.finishAt(END);
 
-        assertThrows(IllegalStateException.class, () -> range.finish(END.plusSeconds(3600)));
+        assertNotSame(open, finished);
+        assertTrue(open.isOpenEnded());
+        assertFalse(finished.isOpenEnded());
+        assertThrows(
+                IllegalStateException.class,
+                () -> finished.finishAt(END.plusSeconds(3600))
+        );
+    }
+
+    @Test
+    void allFieldsAreFinal() {
+        for (var field : TimeRange.class.getDeclaredFields()) {
+            assertTrue(Modifier.isFinal(field.getModifiers()));
+        }
     }
 }

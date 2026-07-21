@@ -1,27 +1,23 @@
 package com.laishengkai.digitalperson.experience;
 
-import lombok.ToString;
-
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * A half-open time interval: {@code [start, end)}.
+ * Immutable half-open time interval: {@code [start, end)}.
  *
- * <p>An absent end represents an open-ended interval.
+ * <p>An absent end represents an open-ended interval.</p>
  */
-@ToString
 public final class TimeRange {
-
     private final Instant start;
-    private Instant end;
+    private final Instant end;
 
     private TimeRange(Instant start, Instant end) {
         this.start = Objects.requireNonNull(start, "start cannot be null");
-        if (end != null) {
-            validateEnd(end);
+        if (end != null && !end.isAfter(start)) {
+            throw new IllegalArgumentException("end must be after start");
         }
         this.end = end;
     }
@@ -53,32 +49,25 @@ public final class TimeRange {
 
     public boolean overlaps(TimeRange other) {
         Objects.requireNonNull(other, "other cannot be null");
-
         boolean startsBeforeOtherEnds = other.end == null || start.isBefore(other.end);
         boolean otherStartsBeforeThisEnds = end == null || other.start.isBefore(end);
         return startsBeforeOtherEnds && otherStartsBeforeThisEnds;
     }
 
     public Optional<Duration> duration() {
-        return end == null
-                ? Optional.empty()
-                : Optional.of(Duration.between(start, end));
+        return end == null ? Optional.empty() : Optional.of(Duration.between(start, end));
     }
 
-    public void finish(Instant endTime) {
+    TimeRange finishAt(Instant endTime) {
         Objects.requireNonNull(endTime, "endTime cannot be null");
-
         if (end != null) {
             throw new IllegalStateException("time range has already finished");
         }
-
-        validateEnd(endTime);
-        end = endTime;
+        return closed(start, endTime);
     }
 
-    private void validateEnd(Instant endTime) {
-        if (!endTime.isAfter(start)) {
-            throw new IllegalArgumentException("end must be after start");
-        }
+    @Override
+    public String toString() {
+        return "TimeRange[start=" + start + ", end=" + end + "]";
     }
 }

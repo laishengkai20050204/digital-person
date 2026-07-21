@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!--
+        Logging is intentionally console-only. Deployment environments can
+        collect stdout without the application managing log files itself.
+    -->
+    <property name="LOG_LEVEL" value="${LOG_LEVEL:-INFO}"/>
+    <property name="STATE_LOG_LEVEL" value="${STATE_LOG_LEVEL:-INFO}"/>
+    <property name="EVENT_LOG_LEVEL" value="${EVENT_LOG_LEVEL:-INFO}"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="com.laishengkai.digitalperson.state" level="${STATE_LOG_LEVEL}"/>
+    <logger name="com.laishengkai.digitalperson.experience" level="${EVENT_LOG_LEVEL}"/>
+
+    <root level="${LOG_LEVEL}">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

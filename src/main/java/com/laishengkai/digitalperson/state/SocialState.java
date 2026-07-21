@@ -1,16 +1,10 @@
 package com.laishengkai.digitalperson.state;
 
-import lombok.Getter;
-import lombok.ToString;
-
 /**
  * Short-term social condition.
  * Every value is represented from {@code 0.0} to {@code 1.0}.
  */
-@Getter
-@ToString
 public final class SocialState {
-
     private double loneliness;
     private double socialNeed;
 
@@ -23,20 +17,29 @@ public final class SocialState {
         return new SocialState(0.0, 0.5);
     }
 
-    public void setLoneliness(double loneliness) {
+    public double getLoneliness() {
+        return loneliness;
+    }
+
+    public double getSocialNeed() {
+        return socialNeed;
+    }
+
+    void setLoneliness(double loneliness) {
         this.loneliness = validateUnitValue(loneliness, "loneliness");
     }
 
-    public void setSocialNeed(double socialNeed) {
+    void setSocialNeed(double socialNeed) {
         this.socialNeed = validateUnitValue(socialNeed, "socialNeed");
     }
 
-    /**
-     * Applies relative changes while keeping every dimension inside [0, 1].
-     */
-    public void adjust(double lonelinessDelta, double socialNeedDelta) {
+    void adjust(double lonelinessDelta, double socialNeedDelta) {
         loneliness = applyDelta(loneliness, lonelinessDelta, "lonelinessDelta");
         socialNeed = applyDelta(socialNeed, socialNeedDelta, "socialNeedDelta");
+    }
+
+    SocialState copy() {
+        return new SocialState(loneliness, socialNeed);
     }
 
     private static double validateUnitValue(double value, String name) {
@@ -53,5 +56,11 @@ public final class SocialState {
             throw new IllegalArgumentException(name + " must be finite");
         }
         return Math.max(0.0, Math.min(1.0, current + delta));
+    }
+
+    @Override
+    public String toString() {
+        return "SocialState[loneliness=" + loneliness
+                + ", socialNeed=" + socialNeed + "]";
     }
 }

@@ -1,12 +1,7 @@
 package com.laishengkai.digitalperson.state;
 
-import lombok.Getter;
-import lombok.ToString;
-
-@Getter
-@ToString
+/** Short-term emotional condition. */
 public final class AffectState {
-
     private double valence;
     private double energy;
     private double tension;
@@ -17,29 +12,38 @@ public final class AffectState {
         setTension(tension);
     }
 
-    public void setValence(double valence) {
+    public double getValence() {
+        return valence;
+    }
+
+    public double getEnergy() {
+        return energy;
+    }
+
+    public double getTension() {
+        return tension;
+    }
+
+    void setValence(double valence) {
         this.valence = validateValence(valence);
     }
 
-    public void setEnergy(double energy) {
+    void setEnergy(double energy) {
         this.energy = validateUnitValue(energy, "energy");
     }
 
-    public void setTension(double tension) {
+    void setTension(double tension) {
         this.tension = validateUnitValue(tension, "tension");
     }
 
-    /**
-     * Applies relative changes while keeping every dimension inside its range.
-     */
-    public void adjust(
-            double valenceDelta,
-            double energyDelta,
-            double tensionDelta
-    ) {
+    void adjust(double valenceDelta, double energyDelta, double tensionDelta) {
         valence = applyDelta(valence, valenceDelta, -1.0, 1.0, "valenceDelta");
         energy = applyDelta(energy, energyDelta, 0.0, 1.0, "energyDelta");
         tension = applyDelta(tension, tensionDelta, 0.0, 1.0, "tensionDelta");
+    }
+
+    AffectState copy() {
+        return new AffectState(valence, energy, tension);
     }
 
     private static double validateValence(double value) {
@@ -71,5 +75,12 @@ public final class AffectState {
             throw new IllegalArgumentException(name + " must be finite");
         }
         return Math.max(minimum, Math.min(maximum, current + delta));
+    }
+
+    @Override
+    public String toString() {
+        return "AffectState[valence=" + valence
+                + ", energy=" + energy
+                + ", tension=" + tension + "]";
     }
 }

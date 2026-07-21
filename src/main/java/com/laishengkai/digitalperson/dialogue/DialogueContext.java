@@ -13,12 +13,23 @@ public record DialogueContext(
         EventTimeline personTimeline,
         EventTimeline userTimeline
 ) {
-
     public DialogueContext {
-        userMessage = Objects.requireNonNull(userMessage, "userMessage cannot be null").strip();
-        personality = Objects.requireNonNull(personality, "personality cannot be null");
-        state = Objects.requireNonNull(state, "state cannot be null");
-        personTimeline = Objects.requireNonNull(personTimeline, "personTimeline cannot be null");
-        userTimeline = Objects.requireNonNull(userTimeline, "userTimeline cannot be null");
+        userMessage = Objects.requireNonNull(
+                userMessage,
+                "userMessage cannot be null"
+        ).strip();
+        personality = Objects.requireNonNull(
+                personality,
+                "personality cannot be null"
+        );
+        state = Objects.requireNonNull(state, "state cannot be null").copy();
+        personTimeline = Objects.requireNonNull(
+                personTimeline,
+                "personTimeline cannot be null"
+        ).copy();
+        userTimeline = Objects.requireNonNull(
+                userTimeline,
+                "userTimeline cannot be null"
+        ).copy();
     }
 }
