@@ -1,11 +1,9 @@
 package com.laishengkai.digitalperson.state;
 
 import lombok.Getter;
-import lombok.Setter;
 import lombok.ToString;
 
 @Getter
-@Setter
 @ToString
 public final class AffectState {
 
@@ -31,17 +29,47 @@ public final class AffectState {
         this.tension = validateUnitValue(tension, "tension");
     }
 
+    /**
+     * Applies relative changes while keeping every dimension inside its range.
+     */
+    public void adjust(
+            double valenceDelta,
+            double energyDelta,
+            double tensionDelta
+    ) {
+        valence = applyDelta(valence, valenceDelta, -1.0, 1.0, "valenceDelta");
+        energy = applyDelta(energy, energyDelta, 0.0, 1.0, "energyDelta");
+        tension = applyDelta(tension, tensionDelta, 0.0, 1.0, "tensionDelta");
+    }
+
     private static double validateValence(double value) {
         if (!Double.isFinite(value) || value < -1.0 || value > 1.0) {
-            throw new IllegalArgumentException("valence must be a finite value between -1.0 and 1.0");
+            throw new IllegalArgumentException(
+                    "valence must be a finite value between -1.0 and 1.0"
+            );
         }
         return value;
     }
 
     private static double validateUnitValue(double value, String name) {
         if (!Double.isFinite(value) || value < 0.0 || value > 1.0) {
-            throw new IllegalArgumentException(name + " must be a finite value between 0.0 and 1.0");
+            throw new IllegalArgumentException(
+                    name + " must be a finite value between 0.0 and 1.0"
+            );
         }
         return value;
+    }
+
+    private static double applyDelta(
+            double current,
+            double delta,
+            double minimum,
+            double maximum,
+            String name
+    ) {
+        if (!Double.isFinite(delta)) {
+            throw new IllegalArgumentException(name + " must be finite");
+        }
+        return Math.clamp(current + delta, minimum, maximum);
     }
 }
