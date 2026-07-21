@@ -1,25 +1,61 @@
 package com.laishengkai.digitalperson.experience;
 
-import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 @Getter
 @ToString
-@EqualsAndHashCode
 public final class PersonEvent {
 
     private final ActivityType activityType;
     private final String title;
     private final String location;
-    private final LocalDateTime startTime;
-    private final LocalDateTime endTime;
+    private final TimeRange timeRange;
     private final List<String> participants;
     private final String notes;
+
+    public PersonEvent(
+            ActivityType activityType,
+            String title,
+            String location,
+            TimeRange timeRange,
+            List<String> participants,
+            String notes
+    ) {
+        this.activityType = Objects.requireNonNull(
+                activityType,
+                "activityType cannot be null"
+        );
+        this.title = requireText(title, "title");
+        this.location = normalize(location);
+        this.timeRange = Objects.requireNonNull(
+                timeRange,
+                "timeRange cannot be null"
+        );
+        this.participants = normalizeParticipants(participants);
+        this.notes = normalize(notes);
+    }
+
+    public PersonEvent(
+            ActivityType activityType,
+            String title,
+            String location,
+            TimeRange timeRange
+    ) {
+        this(
+                activityType,
+                title,
+                location,
+                timeRange,
+                List.of(),
+                ""
+        );
+    }
 
     public PersonEvent(
             ActivityType activityType,
@@ -30,26 +66,14 @@ public final class PersonEvent {
             List<String> participants,
             String notes
     ) {
-        this.activityType = Objects.requireNonNull(
+        this(
                 activityType,
-                "activityType cannot be null"
+                title,
+                location,
+                TimeRange.closed(startTime, endTime),
+                participants,
+                notes
         );
-        this.title = requireText(title, "title");
-        this.location = normalize(location);
-        this.startTime = Objects.requireNonNull(
-                startTime,
-                "startTime cannot be null"
-        );
-        this.endTime = Objects.requireNonNull(
-                endTime,
-                "endTime cannot be null"
-        );
-        this.participants = normalizeParticipants(participants);
-        this.notes = normalize(notes);
-
-        if (!endTime.isAfter(startTime)) {
-            throw new IllegalArgumentException("endTime must be after startTime");
-        }
     }
 
     public PersonEvent(
@@ -63,34 +87,47 @@ public final class PersonEvent {
                 activityType,
                 title,
                 location,
-                startTime,
-                endTime,
-                List.of(),
-                ""
+                TimeRange.closed(startTime, endTime)
         );
     }
 
+    public static PersonEvent openEnded(
+            ActivityType activityType,
+            String title,
+            String location,
+            LocalDateTime startTime
+    ) {
+        return new PersonEvent(
+                activityType,
+                title,
+                location,
+                TimeRange.openEnded(startTime)
+        );
+    }
+
+    public LocalDateTime getStartTime() {
+        return timeRange.getStart();
+    }
+
+    public Optional<LocalDateTime> getEndTime() {
+        return timeRange.getEnd();
+    }
+
     public boolean contains(LocalDateTime time) {
-        Objects.requireNonNull(time, "time cannot be null");
-        return !time.isBefore(startTime) && time.isBefore(endTime);
+        return timeRange.contains(time);
     }
 
     public EventStatus getStatusAt(LocalDateTime time) {
-        Objects.requireNonNull(time, "time cannot be null");
-
-        if (time.isBefore(startTime)) {
-            return EventStatus.PLANNED;
-        }
-        if (time.isBefore(endTime)) {
-            return EventStatus.IN_PROGRESS;
-        }
-        return EventStatus.COMPLETED;
+        return timeRange.getStatusAt(time);
     }
 
     public boolean overlaps(PersonEvent other) {
         Objects.requireNonNull(other, "other cannot be null");
-        return startTime.isBefore(other.endTime)
-                && other.startTime.isBefore(endTime);
+        return timeRange.overlaps(other.timeRange);
+    }
+
+    public void finish(LocalDateTime endTime) {
+        timeRange.finish(endTime);
     }
 
     private static List<String> normalizeParticipants(List<String> participants) {
