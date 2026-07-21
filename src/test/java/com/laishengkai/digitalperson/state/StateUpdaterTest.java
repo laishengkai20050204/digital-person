@@ -5,7 +5,6 @@ import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,16 +31,37 @@ class StateUpdaterTest {
             );
         });
 
-        updater.update(state, List.of(eating), Duration.ZERO);
+        updater.update(state, List.of(eating), NOW);
 
         assertEquals(1, calls.get());
         assertEquals(0.7, state.getPhysicalState().getHunger(), EPSILON);
 
-        updater.update(state, List.of(eating), Duration.ofMinutes(30));
+        updater.update(state, List.of(eating), NOW.plusMinutes(30));
 
         assertEquals(1, calls.get());
         assertEquals(
                 0.7 * Math.exp(-0.5),
+                state.getPhysicalState().getHunger(),
+                EPSILON
+        );
+    }
+
+    @Test
+    void calculatesElapsedTimeFromConsecutiveUpdateTimes() {
+        PersonState state = stateWithHunger(0.7);
+        PersonEvent eating = event(ActivityType.EAT, "吃饭");
+        StateUpdater updater = new StateUpdater(
+                (currentState, newEvent) -> List.of(
+                        new StateTransition(StateDimension.HUNGER, -1.0)
+                )
+        );
+
+        updater.update(state, List.of(eating), NOW);
+        updater.update(state, List.of(eating), NOW.plusMinutes(30));
+        updater.update(state, List.of(eating), NOW.plusMinutes(45));
+
+        assertEquals(
+                0.7 * Math.exp(-0.75),
                 state.getPhysicalState().getHunger(),
                 EPSILON
         );
@@ -74,17 +94,17 @@ class StateUpdaterTest {
         updater.update(
                 state,
                 List.of(studying, calmMusic),
-                Duration.ZERO
+                NOW
         );
         updater.update(
                 state,
                 List.of(studying, distractingMusic),
-                Duration.ofHours(1)
+                NOW.plusHours(1)
         );
         updater.update(
                 state,
                 List.of(studying, distractingMusic),
-                Duration.ofHours(1)
+                NOW.plusHours(2)
         );
 
         double afterOldEffects = 1.0 - 0.5 * Math.exp(-1.0);
@@ -112,10 +132,10 @@ class StateUpdaterTest {
             );
         });
 
-        updater.update(state, List.of(eating), Duration.ZERO);
-        updater.update(state, List.of(), Duration.ofMinutes(30));
+        updater.update(state, List.of(eating), NOW);
+        updater.update(state, List.of(), NOW.plusMinutes(30));
         double hungerAfterRemoval = state.getPhysicalState().getHunger();
-        updater.update(state, List.of(), Duration.ofMinutes(30));
+        updater.update(state, List.of(), NOW.plusMinutes(60));
 
         assertEquals(1, calls.get());
         assertEquals(
@@ -143,7 +163,25 @@ class StateUpdaterTest {
                 () -> updater.update(
                         PersonState.baseline(),
                         List.of(studying, eating),
-                        Duration.ZERO
+                        NOW
+                )
+        );
+    }
+
+    @Test
+    void rejectsTimeBeforePreviousUpdate() {
+        StateUpdater updater = new StateUpdater(
+                (state, event) -> List.of()
+        );
+
+        updater.update(PersonState.baseline(), List.of(), NOW);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> updater.update(
+                        PersonState.baseline(),
+                        List.of(),
+                        NOW.minusSeconds(1)
                 )
         );
     }
@@ -163,15 +201,17 @@ class StateUpdaterTest {
                 () -> updater.update(
                         PersonState.baseline(),
                         List.of(event),
-                        Duration.ZERO
+                        NOW
                 )
         );
         assertThrows(
-                IllegalArgumentException.class,
-                () -> updater.update(
+                NullPointerException.class,
+                () -> new StateUpdater(
+                        (state, newEvent) -> List.of()
+                ).update(
                         PersonState.baseline(),
                         List.of(),
-                        Duration.ofMinutes(-1)
+                        null
                 )
         );
     }
