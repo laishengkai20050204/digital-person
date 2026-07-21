@@ -3,6 +3,8 @@ package com.laishengkai.digitalperson.state;
 import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -19,8 +21,13 @@ import java.util.Objects;
  * before asynchronous event evaluation, then use
  * {@link #complete(StateUpdatePreparation, Collection)} to commit evaluated
  * channel effects.</p>
+ *
+ * <p>The service contains no person-specific mutable fields and can therefore
+ * be shared safely between different person aggregates.</p>
  */
 public final class StateUpdater {
+    private static final Logger LOGGER = LoggerFactory.getLogger(StateUpdater.class);
+
     private final StateTransitionModel transitionModel;
     private final StateTransitionMerger transitionMerger;
 
@@ -42,6 +49,14 @@ public final class StateUpdater {
         );
     }
 
+    /**
+     * Settles previously active effects up to {@code now} and detects current
+     * events that still require external evaluation.
+     *
+     * <p>The supplied {@link PersonState} is a caller-owned working copy. It is
+     * updated deterministically, while the returned preparation object remains
+     * immutable and safe to pass across asynchronous boundaries.</p>
+     */
     public StateUpdatePreparation prepare(
             PersonState state,
             List<PersonEvent> currentEvents,
@@ -58,6 +73,14 @@ public final class StateUpdater {
                 "context cannot be null"
         );
         Map<ActivityChannel, PersonEvent> eventsByChannel = indexByChannel(currentEvents);
+
+        LOGGER.debug(
+                "Preparing state evolution: updateTime={}, currentEventCount={}, activeEffectCount={}, previousUpdateTime={}",
+                currentTime,
+                eventsByChannel.size(),
+                currentContext.channelEffects().size(),
+                currentContext.lastUpdatedAt()
+        );
 
         settleUntil(currentState, currentTime, currentContext);
 
@@ -82,12 +105,25 @@ public final class StateUpdater {
             pendingEvents.put(channel, currentEvent);
         }
 
+        LOGGER.debug(
+                "Prepared state evolution: retainedChannels={}, pendingChannels={}",
+                retainedEffects.keySet(),
+                pendingEvents.keySet()
+        );
+
         return new StateUpdatePreparation(
                 new StateEvolutionContext(currentTime, retainedEffects),
                 pendingEvents
         );
     }
 
+    /**
+     * Validates asynchronous evaluation results and combines them with retained
+     * effects from {@link #prepare(PersonState, List, Instant, StateEvolutionContext)}.
+     *
+     * <p>Every pending channel must have exactly one result and that result must
+     * reference the event that was prepared for the same channel.</p>
+     */
     public StateEvolutionContext complete(
             StateUpdatePreparation preparation,
             Collection<ChannelStateEffect> evaluatedEffects
@@ -145,12 +181,19 @@ public final class StateUpdater {
         );
         completedEffects.putAll(effectsByChannel);
 
+        LOGGER.debug(
+                "Completed state evolution context: updateTime={}, activeChannels={}",
+                requestedPreparation.settledContext().lastUpdatedAt(),
+                completedEffects.keySet()
+        );
+
         return new StateEvolutionContext(
                 requestedPreparation.settledContext().lastUpdatedAt(),
                 completedEffects
         );
     }
 
+    /** Applies cached effects for the elapsed period before new events are evaluated. */
     private void settleUntil(
             PersonState state,
             Instant now,
@@ -158,6 +201,7 @@ public final class StateUpdater {
     ) {
         Instant lastUpdatedAt = context.lastUpdatedAt();
         if (lastUpdatedAt == null) {
+            LOGGER.trace("Skipping state settlement because no previous update exists");
             return;
         }
         if (now.isBefore(lastUpdatedAt)) {
@@ -168,15 +212,25 @@ public final class StateUpdater {
 
         Duration elapsed = Duration.between(lastUpdatedAt, now);
         if (elapsed.isZero()) {
+            LOGGER.trace("Skipping state settlement because no time elapsed");
             return;
         }
 
         List<StateTransition> mergedTransitions = transitionMerger.merge(
                 context.channelEffects().values()
         );
+
+        LOGGER.debug(
+                "Settling cached state effects: elapsedMs={}, activeEffectCount={}, mergedTransitionCount={}",
+                elapsed.toMillis(),
+                context.channelEffects().size(),
+                mergedTransitions.size()
+        );
+
         transitionModel.applyAll(state, mergedTransitions, elapsed);
     }
 
+    /** Indexes current events while enforcing the one-event-per-channel invariant. */
     private static Map<ActivityChannel, PersonEvent> indexByChannel(
             List<PersonEvent> currentEvents
     ) {
