@@ -1,7 +1,12 @@
 package com.laishengkai.digitalperson.state;
 
+import lombok.Getter;
+import lombok.ToString;
+
 import java.util.Objects;
 
+@Getter
+@ToString
 public final class PersonState {
 
     private final AffectState affectState;
@@ -11,9 +16,5 @@ public final class PersonState {
                 affectState,
                 "affectState cannot be null"
         );
-    }
-
-    public AffectState getAffectState() {
-        return affectState;
     }
 }
