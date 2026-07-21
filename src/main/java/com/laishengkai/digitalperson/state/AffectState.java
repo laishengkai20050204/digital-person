@@ -70,6 +70,6 @@ public final class AffectState {
         if (!Double.isFinite(delta)) {
             throw new IllegalArgumentException(name + " must be finite");
         }
-        return Math.clamp(current + delta, minimum, maximum);
+        return Math.max(minimum, Math.min(maximum, current + delta));
     }
 }
