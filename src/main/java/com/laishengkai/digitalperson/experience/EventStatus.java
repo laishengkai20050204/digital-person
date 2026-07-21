@@ -1,10 +1,9 @@
 package com.laishengkai.digitalperson.experience;
 
 /**
- * Describes an actual event at a specific point in time.
+ * Describes the lifecycle state of an actual event.
  */
 public enum EventStatus {
-    NOT_STARTED,
     IN_PROGRESS,
     FINISHED
 }
