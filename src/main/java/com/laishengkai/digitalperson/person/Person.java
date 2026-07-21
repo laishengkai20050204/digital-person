@@ -17,6 +17,18 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 
+/**
+ * Aggregate root for one persistent digital person.
+ *
+ * <p>The aggregate owns stable personality data, mutable short-term state and
+ * two independent event timelines: one for the digital person and one for the
+ * user. Mutable internals are never returned directly; callers receive defensive
+ * copies or immutable snapshots.</p>
+ *
+ * <p>Infrastructure concerns such as LLM invocation, memory retrieval and
+ * repository transactions are intentionally coordinated by application
+ * services rather than stored inside this entity.</p>
+ */
 public final class Person {
     private final PersonId id;
     private final Personality personality;
@@ -63,6 +75,12 @@ public final class Person {
         );
     }
 
+    /**
+     * Reconstitutes a complete aggregate from persistence.
+     *
+     * <p>Every mutable value is copied so repository implementations cannot
+     * retain aliases to the aggregate's internal state.</p>
+     */
     public Person(
             PersonId id,
             Personality personality,
@@ -99,10 +117,12 @@ public final class Person {
         return personality;
     }
 
+    /** Returns a detached mutable copy for controlled application workflows. */
     public PersonState getState() {
         return state.copy();
     }
 
+    /** Returns the preferred read-only representation for prompts and APIs. */
     public PersonStateSnapshot getStateSnapshot() {
         return state.snapshot();
     }
@@ -111,10 +131,12 @@ public final class Person {
         return stateEvolutionContext;
     }
 
+    /** Returns a detached copy; mutations on it do not affect this aggregate. */
     public EventTimeline getPersonTimeline() {
         return personTimeline.copy();
     }
 
+    /** Returns a detached copy; mutations on it do not affect this aggregate. */
     public EventTimeline getUserTimeline() {
         return userTimeline.copy();
     }
@@ -127,14 +149,17 @@ public final class Person {
         return personTimeline.getRecentEvents(now, duration);
     }
 
+    /** Starts an event experienced by the digital person. */
     public void startPersonEvent(PersonEvent event, Instant now) {
         personTimeline.start(event, now);
     }
 
+    /** Records a completed event experienced by the digital person. */
     public void recordPersonEvent(PersonEvent event, Instant now) {
         personTimeline.record(event, now);
     }
 
+    /** Finishes an active event experienced by the digital person. */
     public void finishPersonEvent(
             EventId eventId,
             Instant endTime,
@@ -144,14 +169,17 @@ public final class Person {
         personTimeline.finish(eventId, endTime, reason, now);
     }
 
+    /** Starts an event attributed to the user. */
     public void startUserEvent(PersonEvent event, Instant now) {
         userTimeline.start(event, now);
     }
 
+    /** Records a completed event attributed to the user. */
     public void recordUserEvent(PersonEvent event, Instant now) {
         userTimeline.record(event, now);
     }
 
+    /** Finishes an active event attributed to the user. */
     public void finishUserEvent(
             EventId eventId,
             Instant endTime,
@@ -171,6 +199,13 @@ public final class Person {
         );
     }
 
+    /**
+     * Atomically replaces the short-term state and its evolution context.
+     *
+     * <p>Application services should call this only after external evaluations
+     * have completed and {@code StateUpdater.complete(...)} has validated the
+     * resulting effects.</p>
+     */
     public void commitStateUpdate(
             PersonState updatedState,
             StateEvolutionContext updatedContext
