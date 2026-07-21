@@ -7,47 +7,61 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Applies the normalized exponential transition model to short-term state.
+ * Applies a signed normalized exponential transition to short-term state.
  *
- * <p>The model is:</p>
- *
- * <pre>
- * next = target + (current - target) * exp(-shape * elapsedHours)
- * </pre>
- *
- * <p>The current value determines the implicit starting point on the curve,
- * so callers do not need to store or calculate {@code t0} explicitly.</p>
+ * <p>The current value determines the implicit starting point {@code t0} on
+ * the curve. A positive shape moves toward the dimension maximum; a negative
+ * shape moves toward its minimum. Only the signed shape and elapsed time are
+ * required.</p>
  */
 public final class StateTransitionModel {
 
     public double calculate(
+            StateDimension dimension,
             double current,
-            double target,
             double shape,
             Duration elapsed
     ) {
-        if (!Double.isFinite(current)) {
-            throw new IllegalArgumentException("current must be finite");
+        StateDimension requestedDimension = Objects.requireNonNull(
+                dimension,
+                "dimension cannot be null"
+        );
+
+        if (!requestedDimension.contains(current)) {
+            throw new IllegalArgumentException(
+                    "current must be between "
+                            + requestedDimension.getMinimum()
+                            + " and "
+                            + requestedDimension.getMaximum()
+            );
         }
-        if (!Double.isFinite(target)) {
-            throw new IllegalArgumentException("target must be finite");
-        }
-        if (!Double.isFinite(shape) || shape <= 0.0) {
-            throw new IllegalArgumentException("shape must be a finite positive value");
+        if (!Double.isFinite(shape) || shape == 0.0) {
+            throw new IllegalArgumentException("shape must be finite and non-zero");
         }
 
         Duration elapsedTime = Objects.requireNonNull(elapsed, "elapsed cannot be null");
         if (elapsedTime.isNegative()) {
             throw new IllegalArgumentException("elapsed cannot be negative");
         }
-        if (elapsedTime.isZero() || current == target) {
+        if (elapsedTime.isZero()) {
             return current;
         }
 
-        double elapsedHours = toHours(elapsedTime);
-        return target
-                + (current - target)
-                * Math.exp(-shape * elapsedHours);
+        double minimum = requestedDimension.getMinimum();
+        double maximum = requestedDimension.getMaximum();
+        double normalized = (current - minimum) / (maximum - minimum);
+        double decay = Math.exp(-Math.abs(shape) * toHours(elapsedTime));
+
+        double nextNormalized;
+        if (shape > 0.0) {
+            nextNormalized = 1.0 - (1.0 - normalized) * decay;
+        } else {
+            nextNormalized = normalized * decay;
+        }
+
+        return requestedDimension.clamp(
+                minimum + (maximum - minimum) * nextNormalized
+        );
     }
 
     public void apply(
@@ -63,8 +77,8 @@ public final class StateTransitionModel {
 
         StateDimension dimension = requestedTransition.dimension();
         double nextValue = calculate(
+                dimension,
                 dimension.read(currentState),
-                requestedTransition.target(),
                 requestedTransition.shape(),
                 elapsed
         );
