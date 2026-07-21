@@ -227,6 +227,7 @@ public final class StateUpdater {
 
     private static double scale(Duration duration, double fullEffectHours) {
         double hours = duration.toSeconds() / 3600.0;
-        return Math.clamp(hours / fullEffectHours, 0.0, 1.0);
+        double rawScale = hours / fullEffectHours;
+        return Math.max(0.0, Math.min(1.0, rawScale));
     }
 }
