@@ -1,0 +1,112 @@
+name: Test SSH Secrets
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-ssh:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check secret values exist
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          [ -n "$SERVER_HOST" ] || {
+            echo "SERVER_HOST 没有填写"
+            exit 1
+          }
+
+          [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || {
+            echo "SERVER_PORT 不是有效端口"
+            exit 1
+          }
+
+          [ "$SERVER_USER" = "deploy" ] || {
+            echo "SERVER_USER 应当填写 deploy"
+            exit 1
+          }
+
+          [ -n "$SERVER_SSH_KEY" ] || {
+            echo "SERVER_SSH_KEY 没有填写"
+            exit 1
+          }
+
+          [ -n "$SERVER_KNOWN_HOSTS" ] || {
+            echo "SERVER_KNOWN_HOSTS 没有填写"
+            exit 1
+          }
+
+          echo "五个 Secret 都已读取"
+
+      - name: Validate SSH private key
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          install -d -m 700 ~/.ssh
+
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+          chmod 600 ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/known_hosts
+
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+          echo "SSH 私钥格式正确"
+
+      - name: Test server connection
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$SERVER_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            "$SERVER_USER@$SERVER_HOST" '
+              set -eu
+
+              if [ "$(whoami)" != "deploy" ]; then
+                echo "登录用户不是 deploy"
+                exit 1
+              fi
+
+              test -d /opt/person-ai
+              test -w /opt/person-ai
+
+              touch /opt/person-ai/.github-actions-test
+              rm /opt/person-ai/.github-actions-test
+
+              STATUS_CODE=0
+              sudo -n /usr/bin/systemctl status person-ai \
+                >/dev/null 2>&1 || STATUS_CODE=$?
+
+              if [ "$STATUS_CODE" -ne 0 ] &&
+                 [ "$STATUS_CODE" -ne 3 ]; then
+                echo "person-ai 服务或 sudo 权限验证失败"
+                exit 1
+              fi
+
+              echo "SSH、目录和 systemd 权限全部验证成功"
+            '
