@@ -5,16 +5,17 @@ import com.laishengkai.digitalperson.experience.PersonEvent;
 import java.util.List;
 
 /**
- * Evaluates recent events and returns the state transitions that should be applied.
+ * Evaluates one newly active event and returns that event's channel-specific
+ * state transitions.
  *
- * <p>The implementation may later call a large language model. The state layer only
- * depends on this interface and does not depend on a specific AI framework.</p>
+ * <p>An implementation may later call a large language model. The updater calls
+ * this interface only when a different event becomes current in a channel.</p>
  */
 @FunctionalInterface
 public interface StateTransitionEvaluator {
 
     List<StateTransition> evaluate(
             PersonState currentState,
-            List<PersonEvent> recentEvents
+            PersonEvent newEvent
     );
 }
