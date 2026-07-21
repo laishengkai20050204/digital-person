@@ -6,16 +6,8 @@ import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
 
-/**
- * Applies a signed normalized exponential transition to short-term state.
- *
- * <p>The current value determines the implicit starting point {@code t0} on
- * the curve. A positive shape moves toward the dimension maximum; a negative
- * shape moves toward its minimum. Only the signed shape and elapsed time are
- * required.</p>
- */
+/** Applies signed normalized exponential transitions to short-term state. */
 public final class StateTransitionModel {
-
     public double calculate(
             StateDimension dimension,
             double current,
@@ -26,7 +18,6 @@ public final class StateTransitionModel {
                 dimension,
                 "dimension cannot be null"
         );
-
         if (!requestedDimension.contains(current)) {
             throw new IllegalArgumentException(
                     "current must be between "
@@ -51,30 +42,21 @@ public final class StateTransitionModel {
         double maximum = requestedDimension.getMaximum();
         double normalized = (current - minimum) / (maximum - minimum);
         double decay = Math.exp(-Math.abs(shape) * toHours(elapsedTime));
-
-        double nextNormalized;
-        if (shape > 0.0) {
-            nextNormalized = 1.0 - (1.0 - normalized) * decay;
-        } else {
-            nextNormalized = normalized * decay;
-        }
+        double nextNormalized = shape > 0.0
+                ? 1.0 - (1.0 - normalized) * decay
+                : normalized * decay;
 
         return requestedDimension.clamp(
                 minimum + (maximum - minimum) * nextNormalized
         );
     }
 
-    public void apply(
-            PersonState state,
-            StateTransition transition,
-            Duration elapsed
-    ) {
+    void apply(PersonState state, StateTransition transition, Duration elapsed) {
         PersonState currentState = Objects.requireNonNull(state, "state cannot be null");
         StateTransition requestedTransition = Objects.requireNonNull(
                 transition,
                 "transition cannot be null"
         );
-
         StateDimension dimension = requestedTransition.dimension();
         double nextValue = calculate(
                 dimension,
@@ -82,14 +64,10 @@ public final class StateTransitionModel {
                 requestedTransition.shape(),
                 elapsed
         );
-
         dimension.write(currentState, nextValue);
     }
 
-    /**
-     * Applies one resolved transition per state dimension.
-     */
-    public void applyAll(
+    void applyAll(
             PersonState state,
             Collection<StateTransition> transitions,
             Duration elapsed
@@ -102,13 +80,11 @@ public final class StateTransitionModel {
         Objects.requireNonNull(elapsed, "elapsed cannot be null");
 
         Set<StateDimension> seenDimensions = EnumSet.noneOf(StateDimension.class);
-
         for (StateTransition transition : requestedTransitions) {
             StateTransition requestedTransition = Objects.requireNonNull(
                     transition,
                     "transition cannot be null"
             );
-
             if (!seenDimensions.add(requestedTransition.dimension())) {
                 throw new IllegalArgumentException(
                         "only one transition is allowed per state dimension"
