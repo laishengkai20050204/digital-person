@@ -19,13 +19,19 @@ public final class EventTimeline {
     private final List<PersonEvent> events = new ArrayList<>();
 
     /**
-     * Starts an actual open event. Earlier open events in the same channel are
-     * ended with {@link EventEndReason#REPLACED} at the new event's start time.
+     * Starts an actual open event. The event must already have begun by
+     * {@code now}. Earlier open events in the same channel are ended with
+     * {@link EventEndReason#REPLACED} at the new event's start time.
      */
-    public void start(PersonEvent event) {
+    public void start(PersonEvent event, Instant now) {
         PersonEvent newEvent = requireNewEvent(event);
+        Instant registrationTime = Objects.requireNonNull(now, "now cannot be null");
+
         if (!newEvent.isOpen()) {
             throw new IllegalArgumentException("a started event must be open-ended");
+        }
+        if (newEvent.getStartTime().isAfter(registrationTime)) {
+            throw new IllegalArgumentException("an event cannot start in the future");
         }
 
         List<PersonEvent> sameChannelOpenEvents = events.stream()
@@ -54,19 +60,28 @@ public final class EventTimeline {
     /**
      * Records an actual event whose start and end are already known.
      */
-    public void record(PersonEvent event) {
-        record(event, EventEndReason.COMPLETED);
+    public void record(PersonEvent event, Instant now) {
+        record(event, EventEndReason.COMPLETED, now);
     }
 
     /**
-     * Records an actual event with an explicit end reason.
+     * Records an actual event with an explicit end reason. Its end time must
+     * not be later than {@code now}.
      */
-    public void record(PersonEvent event, EventEndReason reason) {
+    public void record(
+            PersonEvent event,
+            EventEndReason reason,
+            Instant now
+    ) {
         PersonEvent recordedEvent = requireNewEvent(event);
         Objects.requireNonNull(reason, "reason cannot be null");
+        Instant registrationTime = Objects.requireNonNull(now, "now cannot be null");
 
-        if (recordedEvent.getEndTime().isEmpty()) {
-            throw new IllegalArgumentException("a recorded event must have an end time");
+        Instant endTime = recordedEvent.getEndTime().orElseThrow(
+                () -> new IllegalArgumentException("a recorded event must have an end time")
+        );
+        if (endTime.isAfter(registrationTime)) {
+            throw new IllegalArgumentException("a recorded event cannot end in the future");
         }
         if (recordedEvent.isFinished()) {
             throw new IllegalArgumentException("a recorded event must not already be finished");
@@ -77,11 +92,23 @@ public final class EventTimeline {
         addInternal(recordedEvent);
     }
 
+    /**
+     * Finishes an open event. The supplied end time must not be later than
+     * {@code now}.
+     */
     public void finish(
             EventId eventId,
             Instant endTime,
-            EventEndReason reason
+            EventEndReason reason,
+            Instant now
     ) {
+        Objects.requireNonNull(endTime, "endTime cannot be null");
+        Instant registrationTime = Objects.requireNonNull(now, "now cannot be null");
+
+        if (endTime.isAfter(registrationTime)) {
+            throw new IllegalArgumentException("an event cannot finish in the future");
+        }
+
         getRequired(eventId).finish(endTime, reason);
     }
 
@@ -125,7 +152,7 @@ public final class EventTimeline {
     /**
      * Returns the first actual event that started after the supplied time.
      */
-    public Optional<PersonEvent> getNext(Instant time) {
+    public Optional<PersonEvent> getFirstStartedAfter(Instant time) {
         Objects.requireNonNull(time, "time cannot be null");
 
         return events.stream()
