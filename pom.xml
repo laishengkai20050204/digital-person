@@ -10,10 +10,27 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <lombok.version>1.18.36</lombok.version>
+        <slf4j.version>2.0.18</slf4j.version>
+        <logback.version>1.5.38</logback.version>
         <junit.version>5.11.4</junit.version>
         <jacoco.version>0.8.12</jacoco.version>
     </properties>
     <dependencies>
+        <!-- Logging API used by domain and application code. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+
+        <!-- Runtime logging provider. It can later be replaced by Spring Boot logging. -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
