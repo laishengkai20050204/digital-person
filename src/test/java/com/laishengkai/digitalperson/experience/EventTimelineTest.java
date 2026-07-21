@@ -123,21 +123,19 @@ class EventTimelineTest {
     }
 
     @Test
-    void cancelledPlannedEventNeverBecomesCurrent() {
+    void actualEventIsNotStartedBeforeItsStartTime() {
         EventTimeline timeline = new EventTimeline();
-        Instant tomorrow = TEN.plus(1, DAYS);
         PersonEvent classEvent = closedEvent(
                 ActivityType.STUDY,
                 "上课",
-                tomorrow,
-                tomorrow.plus(2, HOURS)
+                TEN,
+                TEN.plus(2, HOURS)
         );
 
-        timeline.schedule(classEvent);
-        timeline.cancel(classEvent.getId(), TEN.plus(1, HOURS));
+        timeline.record(classEvent);
 
-        assertEquals(EventStatus.CANCELLED, classEvent.getStatusAt(tomorrow));
-        assertFalse(classEvent.contains(tomorrow.plus(30, MINUTES)));
+        assertEquals(EventStatus.NOT_STARTED, classEvent.getStatusAt(TEN.minus(1, HOURS)));
+        assertTrue(timeline.getCurrentEvents(TEN.minus(1, HOURS)).isEmpty());
     }
 
     @Test
