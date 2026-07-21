@@ -3,5 +3,6 @@ package com.laishengkai.digitalperson.experience;
 public enum EventStatus {
     PLANNED,
     IN_PROGRESS,
-    COMPLETED
+    FINISHED,
+    CANCELLED
 }
