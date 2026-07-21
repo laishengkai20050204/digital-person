@@ -16,7 +16,7 @@ jobs:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_USER: ${{ secrets.SERVER_USER }}
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
           SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
         shell: bash
         run: |
@@ -37,8 +37,8 @@ jobs:
             exit 1
           }
 
-          [ -n "$SERVER_SSH_KEY" ] || {
-            echo "SERVER_SSH_KEY 没有填写"
+          [ -n "$SERVER_SSH_KEY_B64" ] || {
+            echo "SERVER_SSH_KEY_B64 没有填写"
             exit 1
           }
 
@@ -51,7 +51,7 @@ jobs:
 
       - name: Validate SSH private key
         env:
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
           SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
         shell: bash
         run: |
@@ -59,8 +59,12 @@ jobs:
 
           install -d -m 700 ~/.ssh
 
-          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s' "$SERVER_SSH_KEY_B64" \
+            | base64 --decode \
+            > ~/.ssh/id_ed25519
+
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" \
+            > ~/.ssh/known_hosts
 
           chmod 600 ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/known_hosts
@@ -87,11 +91,7 @@ jobs:
             "$SERVER_USER@$SERVER_HOST" '
               set -eu
 
-              if [ "$(whoami)" != "deploy" ]; then
-                echo "登录用户不是 deploy"
-                exit 1
-              fi
-
+              test "$(whoami)" = "deploy"
               test -d /opt/person-ai
               test -w /opt/person-ai
 
