@@ -42,4 +42,29 @@ public final class EventTimeline {
                 .filter(event -> event.getStartTime().isAfter(time))
                 .findFirst();
     }
+
+    public List<PersonEvent> getBetween(
+            LocalDateTime startTime,
+            LocalDateTime endTime
+    ) {
+        Objects.requireNonNull(startTime, "startTime cannot be null");
+        Objects.requireNonNull(endTime, "endTime cannot be null");
+
+        if (!endTime.isAfter(startTime)) {
+            throw new IllegalArgumentException("endTime must be after startTime");
+        }
+
+        return events.stream()
+                .filter(event -> event.getStartTime().isBefore(endTime)
+                        && startTime.isBefore(event.getEndTime()))
+                .toList();
+    }
+
+    public List<PersonEvent> findConflicts(PersonEvent event) {
+        Objects.requireNonNull(event, "event cannot be null");
+
+        return events.stream()
+                .filter(existing -> existing.overlaps(event))
+                .toList();
+    }
 }
