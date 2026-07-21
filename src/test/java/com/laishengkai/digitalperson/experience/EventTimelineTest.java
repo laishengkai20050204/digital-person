@@ -2,6 +2,7 @@ package com.laishengkai.digitalperson.experience;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
@@ -165,6 +166,60 @@ class EventTimelineTest {
 
         assertEquals(EventEndReason.COMPLETED, event.getEndReason().orElseThrow());
         assertEquals(EventStatus.FINISHED, event.getStatusAt(TEN.plus(1, HOURS)));
+    }
+
+    @Test
+    void last24HoursIncludesOverlappingAndOngoingEvents() {
+        EventTimeline timeline = new EventTimeline();
+        Instant now = TEN.plus(2, DAYS);
+
+        PersonEvent oldEvent = closedEvent(
+                ActivityType.STUDY,
+                "较早的学习",
+                now.minus(30, HOURS),
+                now.minus(25, HOURS)
+        );
+        PersonEvent crossingBoundary = closedEvent(
+                ActivityType.SLEEP,
+                "跨越查询边界的睡眠",
+                now.minus(25, HOURS),
+                now.minus(23, HOURS)
+        );
+        PersonEvent recentChat = closedEvent(
+                ActivityType.CHAT,
+                "最近的聊天",
+                now.minus(2, HOURS),
+                now.minus(1, HOURS)
+        );
+        PersonEvent ongoingMusic = openEvent(
+                ActivityType.LISTEN_MUSIC,
+                "正在听音乐",
+                now.minus(30, MINUTES)
+        );
+
+        timeline.record(oldEvent);
+        timeline.record(crossingBoundary);
+        timeline.record(recentChat);
+        timeline.start(ongoingMusic);
+
+        List<PersonEvent> recentEvents = timeline.getLast24Hours(now);
+
+        assertEquals(List.of(crossingBoundary, recentChat, ongoingMusic), recentEvents);
+        assertFalse(recentEvents.contains(oldEvent));
+    }
+
+    @Test
+    void recentEventsRequiresPositiveDuration() {
+        EventTimeline timeline = new EventTimeline();
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> timeline.getRecentEvents(TEN, Duration.ZERO)
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> timeline.getRecentEvents(TEN, Duration.ofHours(-1))
+        );
     }
 
     private static PersonEvent openEvent(
