@@ -4,6 +4,7 @@
 
 ## 当前能力
 
+- Spring Boot 可执行服务与 Actuator 健康检查
 - HEXACO 稳定人格模型
 - 人物与用户的独立事件时间线
 - 按活动渠道处理并发活动
@@ -13,13 +14,14 @@
 - 异步 `StateTransitionEvaluator` 边界
 - `PersonId`、`PersonRepository` 和应用层状态更新服务
 - 防御性复制，避免调用方绕过时间线和状态规则
-- 基于 SLF4J 与 Logback 的结构化运行日志
+- Spring Boot 默认日志体系下的结构化运行日志
 - LangChain4j 1.18.0 与 OpenAI-compatible 模型的最小连接层
 
 ## 架构
 
 ```text
 src/main/java/com/laishengkai/digitalperson/
+├── DigitalPersonApplication.java
 ├── application/
 │   ├── UpdatePersonStateService.java
 │   ├── StateUpdateResult.java
@@ -49,7 +51,36 @@ src/main/java/com/laishengkai/digitalperson/
     └── StateTransitionEvaluator.java
 ```
 
-领域层不依赖 LangChain4j、Mem0、数据库或微信。`dialogue.LanguageModelGateway` 是系统自己的模型边界，LangChain4j 只存在于 `infrastructure.langchain4j` 中。
+领域层不依赖 Spring、LangChain4j、Mem0、数据库或微信。Spring Boot 只负责应用启动和运行时基础设施；`dialogue.LanguageModelGateway` 是系统自己的模型边界，LangChain4j 只存在于 `infrastructure.langchain4j` 中。
+
+## Spring Boot 最小运行方式
+
+本项目使用 Java 21 和 Spring Boot 4.1，默认监听 `8080` 端口。
+
+```bash
+mvn spring-boot:run
+```
+
+打包并运行可执行 JAR：
+
+```bash
+mvn clean verify
+java -jar target/digital-person-0.3.0-SNAPSHOT.jar
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:8080/actuator/health
+```
+
+可以通过环境变量修改端口：
+
+```bash
+SERVER_PORT=8081 java -jar target/digital-person-0.3.0-SNAPSHOT.jar
+```
+
+当前 Spring Boot 层只提供启动入口、嵌入式 Web 服务器和健康检查，不提前加入 Controller、数据库或复杂 Bean 配置。
 
 ## LangChain4j 最小连接
 
@@ -125,7 +156,7 @@ PersonRepository.save
 
 ## 日志
 
-项目代码通过 SLF4J API 写日志，当前运行时实现为 Logback。默认输出到标准输出，方便 Docker、systemd 或云平台统一采集；项目本身不直接管理日志文件。
+项目代码通过 SLF4J API 写日志，由 Spring Boot 管理 Logback 运行时。默认输出到标准输出，方便 Docker、systemd 或云平台统一采集；项目本身不直接管理日志文件。
 
 默认日志级别为 `INFO`，可以使用环境变量调整：
 
@@ -159,7 +190,7 @@ export EVENT_LOG_LEVEL=DEBUG
 mvn verify
 ```
 
-GitHub Actions 会使用 Java 21 执行编译、单元测试和 JaCoCo 报告生成。单元测试不会向真实模型供应商发送网络请求。
+GitHub Actions 会使用 Java 21 执行编译、Spring 上下文启动测试、单元测试和 JaCoCo 报告生成。单元测试不会向真实模型供应商发送网络请求。
 
 ## 下一步
 
