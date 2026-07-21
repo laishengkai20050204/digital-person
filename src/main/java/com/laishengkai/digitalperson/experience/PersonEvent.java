@@ -120,16 +120,21 @@ public final class PersonEvent {
         return timeRange.contains(time);
     }
 
-    public EventStatus getStatusAt(Instant time) {
+    /**
+     * Returns no status before the event actually began.
+     */
+    public Optional<EventStatus> getStatusAt(Instant time) {
         Objects.requireNonNull(time, "time cannot be null");
 
         if (time.isBefore(getStartTime())) {
-            return EventStatus.NOT_STARTED;
+            return Optional.empty();
         }
-        if (timeRange.contains(time)) {
-            return EventStatus.IN_PROGRESS;
-        }
-        return EventStatus.FINISHED;
+
+        return Optional.of(
+                timeRange.contains(time)
+                        ? EventStatus.IN_PROGRESS
+                        : EventStatus.FINISHED
+        );
     }
 
     public boolean overlaps(PersonEvent other) {
