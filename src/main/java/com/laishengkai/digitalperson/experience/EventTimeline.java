@@ -47,16 +47,10 @@ public final class EventTimeline {
             LocalDateTime startTime,
             LocalDateTime endTime
     ) {
-        Objects.requireNonNull(startTime, "startTime cannot be null");
-        Objects.requireNonNull(endTime, "endTime cannot be null");
-
-        if (!endTime.isAfter(startTime)) {
-            throw new IllegalArgumentException("endTime must be after startTime");
-        }
+        TimeRange queryRange = TimeRange.closed(startTime, endTime);
 
         return events.stream()
-                .filter(event -> event.getStartTime().isBefore(endTime)
-                        && startTime.isBefore(event.getEndTime()))
+                .filter(event -> event.getTimeRange().overlaps(queryRange))
                 .toList();
     }
 
@@ -64,6 +58,7 @@ public final class EventTimeline {
         Objects.requireNonNull(event, "event cannot be null");
 
         return events.stream()
+                .filter(existing -> existing != event)
                 .filter(existing -> existing.overlaps(event))
                 .toList();
     }
