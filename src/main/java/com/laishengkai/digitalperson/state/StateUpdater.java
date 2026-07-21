@@ -4,6 +4,7 @@ import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,10 @@ import java.util.Objects;
  * <p>Each channel keeps the effect of its current event. The evaluator is called
  * only when a different event becomes current in that channel. Effects from all
  * channels are merged before the person state is modified.</p>
+ *
+ * <p>The updater records its own last settlement time. Every call settles state
+ * only through the supplied {@code now}; it never projects state to an event's
+ * future end time.</p>
  */
 public final class StateUpdater {
 
@@ -23,6 +28,8 @@ public final class StateUpdater {
     private final StateTransitionMerger transitionMerger;
     private final Map<ActivityChannel, ChannelStateEffect> channelEffects =
             new EnumMap<>(ActivityChannel.class);
+
+    private Instant lastUpdatedAt;
 
     public StateUpdater(StateTransitionEvaluator evaluator) {
         this(
@@ -52,43 +59,60 @@ public final class StateUpdater {
     }
 
     /**
-     * First settles the previously cached channel effects for {@code elapsed},
-     * then detects channel event changes. A newly evaluated shape starts taking
-     * effect after this call and is reused by later calls.
+     * Settles cached channel effects from the previous update time through
+     * {@code now}, then detects channel event changes. Newly evaluated shapes
+     * begin at {@code now} and are reused by later calls.
      */
     public synchronized void update(
             PersonState state,
             List<PersonEvent> currentEvents,
-            Duration elapsed
+            Instant now
     ) {
         PersonState currentState = Objects.requireNonNull(
                 state,
                 "state cannot be null"
         );
-        Duration elapsedTime = Objects.requireNonNull(
-                elapsed,
-                "elapsed cannot be null"
+        Instant currentTime = Objects.requireNonNull(
+                now,
+                "now cannot be null"
         );
-        if (elapsedTime.isNegative()) {
-            throw new IllegalArgumentException("elapsed cannot be negative");
-        }
-
         Map<ActivityChannel, PersonEvent> eventsByChannel = indexByChannel(
                 currentEvents
         );
 
-        if (!elapsedTime.isZero()) {
-            List<StateTransition> mergedTransitions = transitionMerger.merge(
-                    channelEffects.values()
-            );
-            transitionModel.applyAll(
-                    currentState,
-                    mergedTransitions,
-                    elapsedTime
+        settleUntil(currentState, currentTime);
+
+        // The old cached effects have now been fully settled through currentTime.
+        // Record the time before LLM evaluation so a failed evaluation cannot make
+        // a retry apply the same elapsed interval twice.
+        lastUpdatedAt = currentTime;
+
+        refreshChangedChannels(currentState, eventsByChannel);
+    }
+
+    private void settleUntil(PersonState state, Instant now) {
+        if (lastUpdatedAt == null) {
+            return;
+        }
+        if (now.isBefore(lastUpdatedAt)) {
+            throw new IllegalArgumentException(
+                    "now cannot be before the previous update time"
             );
         }
 
-        refreshChangedChannels(currentState, eventsByChannel);
+        Duration elapsed = Duration.between(lastUpdatedAt, now);
+        if (elapsed.isZero()) {
+            return;
+        }
+
+        List<StateTransition> mergedTransitions = transitionMerger.merge(
+                channelEffects.values()
+        );
+        transitionModel.applyAll(
+                state,
+                mergedTransitions,
+                elapsed
+        );
     }
 
     private void refreshChangedChannels(
