@@ -2,6 +2,7 @@ package com.laishengkai.digitalperson.experience;
 
 import lombok.ToString;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -158,6 +159,29 @@ public final class EventTimeline {
         return events.stream()
                 .filter(event -> event.overlaps(queryRange))
                 .toList();
+    }
+
+    /**
+     * Returns every event that overlaps the interval ending at {@code now}.
+     * This includes events that began before the interval but continued into it,
+     * as well as events that are still in progress.
+     */
+    public List<PersonEvent> getRecentEvents(
+            Instant now,
+            Duration duration
+    ) {
+        Objects.requireNonNull(now, "now cannot be null");
+        Objects.requireNonNull(duration, "duration cannot be null");
+
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException("duration must be positive");
+        }
+
+        return getBetween(now.minus(duration), now);
+    }
+
+    public List<PersonEvent> getLast24Hours(Instant now) {
+        return getRecentEvents(now, Duration.ofHours(24));
     }
 
     public List<PersonEvent> findOverlappingEvents(PersonEvent event) {
