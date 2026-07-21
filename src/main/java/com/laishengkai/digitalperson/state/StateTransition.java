@@ -3,31 +3,22 @@ package com.laishengkai.digitalperson.state;
 import java.util.Objects;
 
 /**
- * Describes one state dimension moving toward a target value.
+ * Describes one state dimension changing along the normalized exponential curve.
  *
- * <p>{@code shape} is a positive speed measured per hour. The target decides
- * whether the value rises or falls.</p>
+ * <p>A positive {@code shape} moves the value toward the dimension maximum.
+ * A negative {@code shape} moves it toward the dimension minimum. A larger
+ * absolute value means faster change.</p>
  */
 public record StateTransition(
         StateDimension dimension,
-        double target,
         double shape
 ) {
 
     public StateTransition {
         Objects.requireNonNull(dimension, "dimension cannot be null");
 
-        if (!dimension.contains(target)) {
-            throw new IllegalArgumentException(
-                    "target must be between "
-                            + dimension.getMinimum()
-                            + " and "
-                            + dimension.getMaximum()
-            );
-        }
-
-        if (!Double.isFinite(shape) || shape <= 0.0) {
-            throw new IllegalArgumentException("shape must be a finite positive value");
+        if (!Double.isFinite(shape) || shape == 0.0) {
+            throw new IllegalArgumentException("shape must be finite and non-zero");
         }
     }
 }
