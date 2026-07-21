@@ -24,8 +24,8 @@ class EventTimelineTest {
         PersonEvent study = openEvent(ActivityType.STUDY, "学习", TEN);
         PersonEvent game = openEvent(ActivityType.ENTERTAINMENT, "打游戏", TEN.plus(2, HOURS));
 
-        timeline.start(study);
-        timeline.start(game);
+        timeline.start(study, TEN);
+        timeline.start(game, TEN.plus(2, HOURS));
 
         assertEquals(TEN.plus(2, HOURS), study.getEndTime().orElseThrow());
         assertEquals(EventEndReason.REPLACED, study.getEndReason().orElseThrow());
@@ -40,9 +40,9 @@ class EventTimelineTest {
         PersonEvent chat = openEvent(ActivityType.CHAT, "聊天", TEN.plus(5, MINUTES));
         PersonEvent music = openEvent(ActivityType.LISTEN_MUSIC, "听音乐", TEN.plus(10, MINUTES));
 
-        timeline.start(eat);
-        timeline.start(chat);
-        timeline.start(music);
+        timeline.start(eat, TEN);
+        timeline.start(chat, TEN.plus(5, MINUTES));
+        timeline.start(music, TEN.plus(10, MINUTES));
 
         List<PersonEvent> current = timeline.getCurrentEvents(TEN.plus(15, MINUTES));
         assertEquals(3, current.size());
@@ -56,9 +56,9 @@ class EventTimelineTest {
         PersonEvent firstChat = openEvent(ActivityType.CHAT, "第一次聊天", TEN.plus(5, MINUTES));
         PersonEvent secondChat = openEvent(ActivityType.CHAT, "第二次聊天", TEN.plus(20, MINUTES));
 
-        timeline.start(eat);
-        timeline.start(firstChat);
-        timeline.start(secondChat);
+        timeline.start(eat, TEN);
+        timeline.start(firstChat, TEN.plus(5, MINUTES));
+        timeline.start(secondChat, TEN.plus(20, MINUTES));
 
         assertTrue(eat.isOpen());
         assertFalse(firstChat.isOpen());
@@ -67,13 +67,32 @@ class EventTimelineTest {
     }
 
     @Test
+    void rejectsFutureOpenEvent() {
+        EventTimeline timeline = new EventTimeline();
+        PersonEvent futureStudy = openEvent(
+                ActivityType.STUDY,
+                "未来的学习",
+                TEN.plus(1, HOURS)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> timeline.start(futureStudy, TEN)
+        );
+        assertTrue(timeline.getAll().isEmpty());
+    }
+
+    @Test
     void rejectsOutOfOrderOpenEventInSameChannelWithoutMutatingTimeline() {
         EventTimeline timeline = new EventTimeline();
         PersonEvent study = openEvent(ActivityType.STUDY, "学习", TEN);
         PersonEvent earlierSleep = openEvent(ActivityType.SLEEP, "睡觉", TEN.minus(1, HOURS));
-        timeline.start(study);
+        timeline.start(study, TEN);
 
-        assertThrows(IllegalStateException.class, () -> timeline.start(earlierSleep));
+        assertThrows(
+                IllegalStateException.class,
+                () -> timeline.start(earlierSleep, TEN)
+        );
         assertTrue(study.isOpen());
         assertEquals(1, timeline.getAll().size());
     }
@@ -101,8 +120,11 @@ class EventTimelineTest {
                 ""
         );
 
-        timeline.record(first);
-        assertThrows(IllegalArgumentException.class, () -> timeline.record(duplicate));
+        timeline.record(first, TEN.plus(1, HOURS));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> timeline.record(duplicate, TEN.plus(1, HOURS))
+        );
     }
 
     @Test
@@ -116,14 +138,14 @@ class EventTimelineTest {
                 TEN.plus(30, MINUTES)
         );
 
-        timeline.record(eat);
+        timeline.record(eat, TEN.plus(1, HOURS));
 
         assertEquals(List.of(eat), timeline.findOverlappingEvents(chat));
         assertTrue(timeline.findConflictingEvents(chat).isEmpty());
     }
 
     @Test
-    void actualEventIsNotStartedBeforeItsStartTime() {
+    void statusDoesNotExistBeforeActualEventBegins() {
         EventTimeline timeline = new EventTimeline();
         PersonEvent classEvent = closedEvent(
                 ActivityType.STUDY,
@@ -132,22 +154,68 @@ class EventTimelineTest {
                 TEN.plus(2, HOURS)
         );
 
-        timeline.record(classEvent);
+        timeline.record(classEvent, TEN.plus(2, HOURS));
 
-        assertEquals(EventStatus.NOT_STARTED, classEvent.getStatusAt(TEN.minus(1, HOURS)));
-        assertTrue(timeline.getCurrentEvents(TEN.minus(1, HOURS)).isEmpty());
+        assertTrue(classEvent.getStatusAt(TEN.minus(1, HOURS)).isEmpty());
+        assertEquals(
+                EventStatus.FINISHED,
+                classEvent.getStatusAt(TEN.plus(2, HOURS)).orElseThrow()
+        );
+    }
+
+    @Test
+    void rejectsRecordedEventThatEndsInFuture() {
+        EventTimeline timeline = new EventTimeline();
+        PersonEvent futureEvent = closedEvent(
+                ActivityType.EXERCISE,
+                "尚未结束的跑步",
+                TEN,
+                TEN.plus(2, HOURS)
+        );
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> timeline.record(futureEvent, TEN.plus(1, HOURS))
+        );
+        assertTrue(timeline.getAll().isEmpty());
     }
 
     @Test
     void finishingOpenEventStoresExplicitReason() {
         EventTimeline timeline = new EventTimeline();
         PersonEvent study = openEvent(ActivityType.STUDY, "学习", TEN);
-        timeline.start(study);
+        timeline.start(study, TEN);
 
-        timeline.finish(study.getId(), TEN.plus(1, HOURS), EventEndReason.COMPLETED);
+        timeline.finish(
+                study.getId(),
+                TEN.plus(1, HOURS),
+                EventEndReason.COMPLETED,
+                TEN.plus(1, HOURS)
+        );
 
-        assertEquals(EventStatus.FINISHED, study.getStatusAt(TEN.plus(1, HOURS)));
+        assertEquals(
+                EventStatus.FINISHED,
+                study.getStatusAt(TEN.plus(1, HOURS)).orElseThrow()
+        );
         assertEquals(EventEndReason.COMPLETED, study.getEndReason().orElseThrow());
+    }
+
+    @Test
+    void rejectsFinishingEventInFuture() {
+        EventTimeline timeline = new EventTimeline();
+        PersonEvent study = openEvent(ActivityType.STUDY, "学习", TEN);
+        timeline.start(study, TEN);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> timeline.finish(
+                        study.getId(),
+                        TEN.plus(2, HOURS),
+                        EventEndReason.COMPLETED,
+                        TEN.plus(1, HOURS)
+                )
+        );
+        assertTrue(study.isOpen());
     }
 
     @Test
@@ -160,10 +228,13 @@ class EventTimelineTest {
                 TEN.plus(1, HOURS)
         );
 
-        timeline.record(event);
+        timeline.record(event, TEN.plus(1, HOURS));
 
         assertEquals(EventEndReason.COMPLETED, event.getEndReason().orElseThrow());
-        assertEquals(EventStatus.FINISHED, event.getStatusAt(TEN.plus(1, HOURS)));
+        assertEquals(
+                EventStatus.FINISHED,
+                event.getStatusAt(TEN.plus(1, HOURS)).orElseThrow()
+        );
     }
 
     @Test
@@ -195,10 +266,10 @@ class EventTimelineTest {
                 now.minus(30, MINUTES)
         );
 
-        timeline.record(oldEvent);
-        timeline.record(crossingBoundary);
-        timeline.record(recentChat);
-        timeline.start(ongoingMusic);
+        timeline.record(oldEvent, now);
+        timeline.record(crossingBoundary, now);
+        timeline.record(recentChat, now);
+        timeline.start(ongoingMusic, now);
 
         List<PersonEvent> recentEvents = timeline.getLast24Hours(now);
 
