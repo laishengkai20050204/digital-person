@@ -6,6 +6,7 @@ import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
+import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
@@ -50,7 +51,13 @@ class UpdatePersonStateServiceTest {
         service.update(person.getId(), NOW).toCompletableFuture().join();
 
         assertEquals(1, repository.saveCount);
-        assertEquals(1, person.getStateEvolutionContext().channelEffects().size());
+        assertEquals(
+                1,
+                repository.current(person.getId())
+                        .getStateEvolutionContext()
+                        .channelEffects()
+                        .size()
+        );
     }
 
     @Test
@@ -82,26 +89,54 @@ class UpdatePersonStateServiceTest {
         );
 
         assertEquals(0, repository.saveCount);
-        assertEquals(0, person.getStateEvolutionContext().channelEffects().size());
+        assertEquals(
+                0,
+                repository.current(person.getId())
+                        .getStateEvolutionContext()
+                        .channelEffects()
+                        .size()
+        );
     }
 
     private static final class InMemoryRepository implements PersonRepository {
-        private final Map<PersonId, Person> people = new HashMap<>();
+        private final Map<PersonId, StoredPerson> people = new HashMap<>();
         private int saveCount;
 
         private InMemoryRepository(Person person) {
-            people.put(person.getId(), person);
+            people.put(person.getId(), new StoredPerson(person.copy(), 0));
         }
 
         @Override
-        public Optional<Person> findById(PersonId personId) {
-            return Optional.ofNullable(people.get(personId));
+        public Optional<VersionedPerson> findById(PersonId personId) {
+            StoredPerson stored = people.get(personId);
+            if (stored == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new VersionedPerson(
+                    stored.person().copy(),
+                    stored.version()
+            ));
         }
 
         @Override
-        public void save(Person person) {
-            people.put(person.getId(), person);
+        public boolean save(Person person, long expectedVersion) {
+            StoredPerson stored = people.get(person.getId());
+            if (stored == null || stored.version() != expectedVersion) {
+                return false;
+            }
+            people.put(
+                    person.getId(),
+                    new StoredPerson(person.copy(), expectedVersion + 1)
+            );
             saveCount++;
+            return true;
         }
+
+        private Person current(PersonId personId) {
+            return people.get(personId).person().copy();
+        }
+    }
+
+    private record StoredPerson(Person person, long version) {
     }
 }
