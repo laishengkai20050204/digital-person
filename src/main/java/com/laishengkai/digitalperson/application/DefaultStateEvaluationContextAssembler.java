@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 /** Default application-layer context assembly using memory and conversation ports. */
@@ -76,6 +77,16 @@ public final class DefaultStateEvaluationContextAssembler
         }
         this.maxMemoryItems = maxMemoryItems;
         this.maxConversationTurns = maxConversationTurns;
+    }
+
+    /** Convenience fallback that preserves behavior before external providers exist. */
+    public static DefaultStateEvaluationContextAssembler withoutExternalSources() {
+        return new DefaultStateEvaluationContextAssembler(
+                query -> CompletableFuture.completedFuture(
+                        PersonMemoryContext.disabled()
+                ),
+                query -> CompletableFuture.completedFuture(List.of())
+        );
     }
 
     @Override
