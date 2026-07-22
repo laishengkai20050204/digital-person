@@ -7,6 +7,7 @@ import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
+import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
@@ -23,18 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Executes one complete person-state update use case.
- *
- * <p>This application service coordinates persistence, deterministic state
- * settlement and asynchronous event evaluation. Domain calculations remain in
- * {@link StateUpdater}; model-specific work remains behind
- * {@link StateTransitionEvaluator}.</p>
- *
- * <p>Logs deliberately contain identifiers and timing information only. Event
- * titles, locations, participants, notes and conversation text must not be
- * written here because they may contain private user data.</p>
- */
+/** Executes one complete person-state update use case. */
 public final class UpdatePersonStateService {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             UpdatePersonStateService.class
@@ -43,11 +33,30 @@ public final class UpdatePersonStateService {
     private final PersonRepository personRepository;
     private final StateUpdater stateUpdater;
     private final StateTransitionEvaluator evaluator;
+    private final StateEvaluationContextAssembler contextAssembler;
 
+    /**
+     * Compatibility constructor for callers that have not connected memory or
+     * conversation providers yet.
+     */
     public UpdatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
             StateTransitionEvaluator evaluator
+    ) {
+        this(
+                personRepository,
+                stateUpdater,
+                evaluator,
+                DefaultStateEvaluationContextAssembler.withoutExternalSources()
+        );
+    }
+
+    public UpdatePersonStateService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            StateTransitionEvaluator evaluator,
+            StateEvaluationContextAssembler contextAssembler
     ) {
         this.personRepository = Objects.requireNonNull(
                 personRepository,
@@ -61,19 +70,12 @@ public final class UpdatePersonStateService {
                 evaluator,
                 "evaluator cannot be null"
         );
+        this.contextAssembler = Objects.requireNonNull(
+                contextAssembler,
+                "contextAssembler cannot be null"
+        );
     }
 
-    /**
-     * Updates one person's short-term state at the supplied time.
-     *
-     * <p>The person is modified and saved only after every asynchronous event
-     * evaluation succeeds and the returned effects pass domain validation. A
-     * failed evaluation therefore leaves the persisted aggregate unchanged.</p>
-     *
-     * @param personId person aggregate to update
-     * @param now      logical update time
-     * @return asynchronous state-update result
-     */
     public CompletionStage<StateUpdateResult> update(PersonId personId, Instant now) {
         PersonId requestedPersonId = Objects.requireNonNull(
                 personId,
@@ -98,8 +100,6 @@ public final class UpdatePersonStateService {
                         return new PersonNotFoundException(requestedPersonId);
                     });
 
-            // Work on a defensive copy so asynchronous failures cannot partially
-            // mutate the aggregate loaded from the repository.
             PersonState workingState = person.getState();
             StateUpdatePreparation preparation = stateUpdater.prepare(
                     workingState,
@@ -118,7 +118,12 @@ public final class UpdatePersonStateService {
 
             List<CompletableFuture<ChannelStateEffect>> evaluations =
                     preparation.eventsToEvaluate().stream()
-                            .map(event -> evaluate(evaluationSnapshot, event))
+                            .map(event -> evaluate(
+                                    person,
+                                    evaluationSnapshot,
+                                    event,
+                                    currentTime
+                            ))
                             .map(CompletionStage::toCompletableFuture)
                             .toList();
 
@@ -137,8 +142,6 @@ public final class UpdatePersonStateService {
                         effects
                 );
 
-                // This is the commit point: nothing before it changes the loaded
-                // aggregate or writes it back to persistence.
                 person.commitStateUpdate(workingState, completedContext);
                 personRepository.save(person);
 
@@ -178,14 +181,11 @@ public final class UpdatePersonStateService {
         }
     }
 
-    /**
-     * Converts an evaluator response into the channel-scoped domain effect that
-     * {@link StateUpdater#complete(StateUpdatePreparation, java.util.Collection)}
-     * expects.
-     */
     private CompletionStage<ChannelStateEffect> evaluate(
+            Person person,
             PersonStateSnapshot state,
-            PersonEvent event
+            PersonEvent event,
+            Instant evaluationTime
     ) {
         LOGGER.debug(
                 "Evaluating event state effect: eventId={}, channel={}, activityType={}",
@@ -194,32 +194,44 @@ public final class UpdatePersonStateService {
                 event.getActivityType()
         );
 
-        CompletionStage<List<StateTransition>> result = Objects.requireNonNull(
-                evaluator.evaluate(state, event.copy()),
-                "evaluator stage cannot be null"
+        CompletionStage<StateEvaluationContext> contextStage = Objects.requireNonNull(
+                contextAssembler.assemble(
+                        person,
+                        state,
+                        event.copy(),
+                        evaluationTime
+                ),
+                "contextAssembler stage cannot be null"
         );
 
-        return result.thenApply(transitions -> {
-            List<StateTransition> safeTransitions = List.copyOf(
-                    Objects.requireNonNull(
-                            transitions,
-                            "evaluator result cannot be null"
-                    )
-            );
+        return contextStage.thenCompose(context -> Objects.requireNonNull(
+                        evaluator.evaluate(Objects.requireNonNull(
+                                context,
+                                "assembled context cannot be null"
+                        )),
+                        "evaluator stage cannot be null"
+                ))
+                .thenApply(transitions -> {
+                    List<StateTransition> safeTransitions = List.copyOf(
+                            Objects.requireNonNull(
+                                    transitions,
+                                    "evaluator result cannot be null"
+                            )
+                    );
 
-            LOGGER.debug(
-                    "Evaluated event state effect: eventId={}, channel={}, transitionCount={}",
-                    event.getId(),
-                    event.getChannel(),
-                    safeTransitions.size()
-            );
+                    LOGGER.debug(
+                            "Evaluated event state effect: eventId={}, channel={}, transitionCount={}",
+                            event.getId(),
+                            event.getChannel(),
+                            safeTransitions.size()
+                    );
 
-            return new ChannelStateEffect(
-                    event.getChannel(),
-                    event.getId(),
-                    safeTransitions
-            );
-        });
+                    return new ChannelStateEffect(
+                            event.getChannel(),
+                            event.getId(),
+                            safeTransitions
+                    );
+                });
     }
 
     private static long elapsedMillis(long startedAtNanos) {

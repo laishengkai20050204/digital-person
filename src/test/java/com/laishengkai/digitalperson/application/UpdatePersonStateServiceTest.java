@@ -42,7 +42,7 @@ class UpdatePersonStateServiceTest {
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
                 new StateUpdater(),
-                (state, event) -> CompletableFuture.completedFuture(
+                context -> CompletableFuture.completedFuture(
                         List.of(new StateTransition(StateDimension.HUNGER, -1.0))
                 )
         );
@@ -69,7 +69,7 @@ class UpdatePersonStateServiceTest {
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
                 new StateUpdater(),
-                (state, event) -> CompletableFuture.failedFuture(
+                context -> CompletableFuture.failedFuture(
                         new IllegalStateException("LLM unavailable")
                 )
         );

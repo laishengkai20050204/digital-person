@@ -149,6 +149,14 @@ public final class Person {
         return personTimeline.getRecentEvents(now, duration);
     }
 
+    public List<PersonEvent> getCurrentUserEvents(Instant now) {
+        return userTimeline.getCurrentEvents(now);
+    }
+
+    public List<PersonEvent> getRecentUserEvents(Instant now, Duration duration) {
+        return userTimeline.getRecentEvents(now, duration);
+    }
+
     /** Starts an event experienced by the digital person. */
     public void startPersonEvent(PersonEvent event, Instant now) {
         personTimeline.start(event, now);
