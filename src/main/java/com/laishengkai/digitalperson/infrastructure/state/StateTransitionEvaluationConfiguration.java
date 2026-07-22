@@ -23,4 +23,12 @@ public class StateTransitionEvaluationConfiguration {
     ) {
         return new LanguageModelStateTransitionEvaluator(languageModelGateway);
     }
+
+    @Bean
+    @ConditionalOnMissingBean(StateTransitionEvaluationDiagnostic.class)
+    StateTransitionEvaluationDiagnostic stateTransitionEvaluationDiagnostic(
+            LanguageModelGateway languageModelGateway
+    ) {
+        return new StateTransitionEvaluationDiagnostic(languageModelGateway);
+    }
 }

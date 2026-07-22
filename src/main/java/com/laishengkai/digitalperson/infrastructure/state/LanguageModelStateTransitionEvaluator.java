@@ -75,34 +75,41 @@ public final class LanguageModelStateTransitionEvaluator
     public CompletionStage<List<StateTransition>> evaluate(
             StateEvaluationContext context
     ) {
-        StateEvaluationContext safeContext = Objects.requireNonNull(
-                context,
-                "context cannot be null"
-        );
-
         try {
-            LanguageModelRequest request = new LanguageModelRequest(
-                    List.of(
-                            new SystemModelMessage(SYSTEM_MESSAGE),
-                            new UserModelMessage(serializeInput(safeContext))
-                    ),
-                    INVOCATION_OPTIONS,
-                    List.of(SUBMISSION_TOOL)
-            );
-
+            LanguageModelRequest request = createRequest(context);
             CompletionStage<LanguageModelResponse> responseStage =
                     Objects.requireNonNull(
                             languageModelGateway.invoke(request),
                             "languageModelGateway stage cannot be null"
                     );
 
-            return responseStage.thenApply(this::readTransitions);
+            return responseStage.thenApply(
+                    LanguageModelStateTransitionEvaluator::parseResponse
+            );
         } catch (RuntimeException error) {
             return CompletableFuture.failedFuture(error);
         }
     }
 
-    private List<StateTransition> readTransitions(LanguageModelResponse response) {
+    /** Builds the exact provider-neutral request used by production evaluation. */
+    static LanguageModelRequest createRequest(StateEvaluationContext context) {
+        StateEvaluationContext safeContext = Objects.requireNonNull(
+                context,
+                "context cannot be null"
+        );
+
+        return new LanguageModelRequest(
+                List.of(
+                        new SystemModelMessage(SYSTEM_MESSAGE),
+                        new UserModelMessage(serializeInput(safeContext))
+                ),
+                INVOCATION_OPTIONS,
+                List.of(SUBMISSION_TOOL)
+        );
+    }
+
+    /** Parses and validates the exact provider-neutral response used by production. */
+    static List<StateTransition> parseResponse(LanguageModelResponse response) {
         LanguageModelResponse safeResponse = Objects.requireNonNull(
                 response,
                 "languageModelGateway response cannot be null"
@@ -127,7 +134,7 @@ public final class LanguageModelStateTransitionEvaluator
         return parseSubmission(toolCall.argumentsJson());
     }
 
-    private List<StateTransition> parseSubmission(String argumentsJson) {
+    private static List<StateTransition> parseSubmission(String argumentsJson) {
         final TransitionSubmission submission;
         try {
             submission = OBJECT_MAPPER.readValue(
@@ -153,7 +160,7 @@ public final class LanguageModelStateTransitionEvaluator
                 .toList();
     }
 
-    private StateTransition toTransition(
+    private static StateTransition toTransition(
             TransitionItem item,
             Set<StateDimension> seenDimensions
     ) {
@@ -195,7 +202,7 @@ public final class LanguageModelStateTransitionEvaluator
         }
     }
 
-    private String serializeInput(StateEvaluationContext context) {
+    private static String serializeInput(StateEvaluationContext context) {
         try {
             return OBJECT_MAPPER.writeValueAsString(context);
         } catch (JsonProcessingException error) {
