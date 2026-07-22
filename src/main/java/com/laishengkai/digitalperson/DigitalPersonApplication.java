@@ -2,14 +2,9 @@ package com.laishengkai.digitalperson;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration;
-import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 
-/** Application entry point with persistence configured explicitly and conditionally. */
-@SpringBootApplication(exclude = {
-        DataSourceAutoConfiguration.class,
-        FlywayAutoConfiguration.class
-})
+/** Application entry point. Optional persistence is configured by project-owned beans. */
+@SpringBootApplication
 public class DigitalPersonApplication {
 
     public static void main(String[] args) {
