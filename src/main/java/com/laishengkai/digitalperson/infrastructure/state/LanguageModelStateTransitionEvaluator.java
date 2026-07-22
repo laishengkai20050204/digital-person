@@ -36,6 +36,7 @@ public final class LanguageModelStateTransitionEvaluator
         implements StateTransitionEvaluator {
 
     static final String TOOL_NAME = "submit_state_transitions";
+    static final int MAX_OUTPUT_TOKENS = 4_096;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .findAndRegisterModules()
@@ -55,7 +56,7 @@ public final class LanguageModelStateTransitionEvaluator
     private static final ModelInvocationOptions INVOCATION_OPTIONS =
             new ModelInvocationOptions(
                     0.0,
-                    512,
+                    MAX_OUTPUT_TOKENS,
                     List.of(),
                     ModelToolChoice.REQUIRED,
                     ModelResponseFormat.text()
