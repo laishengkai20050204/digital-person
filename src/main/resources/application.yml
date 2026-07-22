@@ -1,6 +1,9 @@
 spring:
   application:
     name: digital-person
+  mvc:
+    async:
+      request-timeout: ${SPRING_MVC_ASYNC_REQUEST_TIMEOUT:210s}
 
 server:
   port: ${SERVER_PORT:8080}

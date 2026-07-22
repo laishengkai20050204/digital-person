@@ -77,7 +77,7 @@ class StateEvaluationDiagnosticControllerTest {
         assertEquals("UP", body.status());
         assertNotNull(body.request());
         assertTrue(body.request().systemPrompt().contains(
-                "Call submit_state_transitions exactly once"
+                "必须且只能调用 submit_state_transitions 一次"
         ));
         assertTrue(body.request().userPrompt().contains(
                 "\"title\":\"Romantic partner sends a reassuring affectionate message\""
