@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.infrastructure.langchain4j;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
 import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -17,25 +18,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class LangChain4jLanguageModelEmptyAssistantRetryTest {
 
     @Test
     void shouldRetryOneEmptyAssistantResponseAndReturnTheSecondResponse() {
-        ChatModel chatModel = mock(ChatModel.class);
-        when(chatModel.chat(any(ChatRequest.class)))
-                .thenReturn(emptyResponse(), textResponse("recovered"));
-
-        LangChain4jLanguageModel model = new LangChain4jLanguageModel(
-                chatModel,
-                "provider/model",
-                "openrouter.ai"
+        SequenceChatModel chatModel = new SequenceChatModel(
+                emptyResponse(),
+                textResponse("recovered")
         );
+        LangChain4jLanguageModel model = adapter(chatModel);
 
         LanguageModelResponse response = model.invoke(
                         LanguageModelRequest.userMessage("hello")
@@ -44,20 +36,16 @@ class LangChain4jLanguageModelEmptyAssistantRetryTest {
                 .join();
 
         assertEquals("recovered", response.text());
-        verify(chatModel, times(2)).chat(any(ChatRequest.class));
+        assertEquals(2, chatModel.invocationCount());
     }
 
     @Test
     void shouldFailAfterTwoConsecutiveEmptyAssistantResponses() {
-        ChatModel chatModel = mock(ChatModel.class);
-        when(chatModel.chat(any(ChatRequest.class)))
-                .thenReturn(emptyResponse(), emptyResponse());
-
-        LangChain4jLanguageModel model = new LangChain4jLanguageModel(
-                chatModel,
-                "provider/model",
-                "openrouter.ai"
+        SequenceChatModel chatModel = new SequenceChatModel(
+                emptyResponse(),
+                emptyResponse()
         );
+        LangChain4jLanguageModel model = adapter(chatModel);
 
         CompletionException error = assertThrows(
                 CompletionException.class,
@@ -72,20 +60,15 @@ class LangChain4jLanguageModelEmptyAssistantRetryTest {
 
         assertTrue(failure.getMessage().contains("after 2 attempts"));
         assertTrue(failure.getMessage().contains("provider/model"));
-        verify(chatModel, times(2)).chat(any(ChatRequest.class));
+        assertEquals(2, chatModel.invocationCount());
     }
 
     @Test
     void shouldNotRetryUnrelatedProviderFailures() {
-        ChatModel chatModel = mock(ChatModel.class);
-        when(chatModel.chat(any(ChatRequest.class)))
-                .thenThrow(new IllegalStateException("provider failure"));
-
-        LangChain4jLanguageModel model = new LangChain4jLanguageModel(
-                chatModel,
-                "provider/model",
-                "openrouter.ai"
+        SequenceChatModel chatModel = new SequenceChatModel(
+                new IllegalStateException("provider failure")
         );
+        LangChain4jLanguageModel model = adapter(chatModel);
 
         CompletionException error = assertThrows(
                 CompletionException.class,
@@ -93,29 +76,68 @@ class LangChain4jLanguageModelEmptyAssistantRetryTest {
                         .toCompletableFuture()
                         .join()
         );
+
         assertInstanceOf(LanguageModelException.class, error.getCause());
-        verify(chatModel, times(1)).chat(any(ChatRequest.class));
+        assertEquals(1, chatModel.invocationCount());
+    }
+
+    private static LangChain4jLanguageModel adapter(ChatModel chatModel) {
+        return new LangChain4jLanguageModel(
+                chatModel,
+                "provider/model",
+                "openrouter.ai"
+        );
     }
 
     private static ChatResponse emptyResponse() {
-        AiMessage message = mock(AiMessage.class);
-        when(message.text()).thenReturn("");
-        when(message.toolExecutionRequests()).thenReturn(List.of());
-
-        ChatResponse response = mock(ChatResponse.class);
-        when(response.aiMessage()).thenReturn(message);
-        when(response.finishReason()).thenReturn(FinishReason.STOP);
-        return response;
+        return ChatResponse.builder()
+                .aiMessage(new EmptyAiMessage())
+                .finishReason(FinishReason.STOP)
+                .build();
     }
 
     private static ChatResponse textResponse(String text) {
-        AiMessage message = mock(AiMessage.class);
-        when(message.text()).thenReturn(text);
-        when(message.toolExecutionRequests()).thenReturn(List.of());
+        return ChatResponse.builder()
+                .aiMessage(AiMessage.from(text))
+                .finishReason(FinishReason.STOP)
+                .build();
+    }
 
-        ChatResponse response = mock(ChatResponse.class);
-        when(response.aiMessage()).thenReturn(message);
-        when(response.finishReason()).thenReturn(FinishReason.STOP);
-        return response;
+    private static final class EmptyAiMessage extends AiMessage {
+        private EmptyAiMessage() {
+            super("placeholder");
+        }
+
+        @Override
+        public String text() {
+            return "";
+        }
+
+        @Override
+        public List<ToolExecutionRequest> toolExecutionRequests() {
+            return List.of();
+        }
+    }
+
+    private static final class SequenceChatModel implements ChatModel {
+        private final List<Object> outcomes;
+        private int invocationCount;
+
+        private SequenceChatModel(Object... outcomes) {
+            this.outcomes = List.of(outcomes);
+        }
+
+        @Override
+        public ChatResponse chat(ChatRequest chatRequest) {
+            Object outcome = outcomes.get(invocationCount++);
+            if (outcome instanceof RuntimeException error) {
+                throw error;
+            }
+            return (ChatResponse) outcome;
+        }
+
+        private int invocationCount() {
+            return invocationCount;
+        }
     }
 }
