@@ -7,6 +7,7 @@ DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 REPOSITORY_URL="${REPOSITORY_URL:-git@github.com:laishengkai20050204/digital-person.git}"
 SERVICE_NAME="${SERVICE_NAME:-person-ai}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}"
+DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/github-readonly}"
 
 SOURCE_REPO="$APP_DIR/source.git"
 BUILD_ROOT="$APP_DIR/builds"
@@ -29,6 +30,11 @@ for command_name in git mvn java curl flock; do
   fi
 done
 
+if [ ! -r "$DEPLOY_KEY" ]; then
+  echo "缺少只读 GitHub Deploy Key：$DEPLOY_KEY"
+  exit 1
+fi
+
 mkdir -p "$APP_DIR" "$BUILD_ROOT" "$RELEASE_DIR" "$MAVEN_CACHE"
 
 exec 9>"$LOCK_FILE"
@@ -37,7 +43,9 @@ if ! flock -n 9; then
   exit 1
 fi
 
-export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=yes}"
+if [ -z "${GIT_SSH_COMMAND:-}" ]; then
+  export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes"
+fi
 
 if [ ! -d "$SOURCE_REPO" ]; then
   echo "首次部署：克隆只读源仓库"
