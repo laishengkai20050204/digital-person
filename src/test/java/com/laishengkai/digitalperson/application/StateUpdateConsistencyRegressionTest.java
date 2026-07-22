@@ -8,6 +8,7 @@ import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
+import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
 import com.laishengkai.digitalperson.state.CognitiveState;
@@ -25,9 +26,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Regression coverage for state consistency across event and asynchronous boundaries. */
 class StateUpdateConsistencyRegressionTest {
@@ -60,12 +65,15 @@ class StateUpdateConsistencyRegressionTest {
         service.update(person.getId(), START).toCompletableFuture().join();
 
         Instant eventEnd = START.plusSeconds(600);
-        person.finishPersonEvent(
+        VersionedPerson loaded = repository.findById(person.getId()).orElseThrow();
+        Person endedEventPerson = loaded.person().copy();
+        endedEventPerson.finishPersonEvent(
                 eating.getId(),
                 eventEnd,
                 EventEndReason.COMPLETED,
                 eventEnd
         );
+        assertTrue(repository.save(endedEventPerson, loaded.version()));
 
         service.update(person.getId(), START.plusSeconds(1800))
                 .toCompletableFuture()
@@ -74,7 +82,10 @@ class StateUpdateConsistencyRegressionTest {
         double expectedAfterTenMinutes = 0.7 * Math.exp(-1.0 / 6.0);
         assertEquals(
                 expectedAfterTenMinutes,
-                person.getState().getPhysicalState().getHunger(),
+                repository.current(person.getId())
+                        .getState()
+                        .getPhysicalState()
+                        .getHunger(),
                 EPSILON,
                 "a cached event effect must not continue after the event has ended"
         );
@@ -114,7 +125,11 @@ class StateUpdateConsistencyRegressionTest {
 
         Instant replacementTime = START.plusSeconds(1);
         PersonEvent resting = event(ActivityType.REST, "休息", replacementTime);
-        person.startPersonEvent(resting, replacementTime);
+        VersionedPerson beforeReplacement = repository.findById(person.getId())
+                .orElseThrow();
+        Person replacementPerson = beforeReplacement.person().copy();
+        replacementPerson.startPersonEvent(resting, replacementTime);
+        assertTrue(repository.save(replacementPerson, beforeReplacement.version()));
 
         CompletionStage<StateUpdateResult> newerUpdate = service.update(
                 person.getId(),
@@ -127,7 +142,8 @@ class StateUpdateConsistencyRegressionTest {
 
         assertEquals(
                 resting.getId(),
-                person.getStateEvolutionContext()
+                repository.current(person.getId())
+                        .getStateEvolutionContext()
                         .channelEffects()
                         .get(ActivityChannel.PRIMARY)
                         .eventId()
@@ -136,13 +152,16 @@ class StateUpdateConsistencyRegressionTest {
         eatingEvaluation.complete(
                 List.of(new StateTransition(StateDimension.HUNGER, -1.0))
         );
-        staleUpdate.handle((result, error) -> null)
-                .toCompletableFuture()
-                .join();
+        CompletionException conflict = assertThrows(
+                CompletionException.class,
+                () -> staleUpdate.toCompletableFuture().join()
+        );
+        assertInstanceOf(PersonVersionConflictException.class, conflict.getCause());
 
         assertEquals(
                 resting.getId(),
-                person.getStateEvolutionContext()
+                repository.current(person.getId())
+                        .getStateEvolutionContext()
                         .channelEffects()
                         .get(ActivityChannel.PRIMARY)
                         .eventId(),
@@ -173,20 +192,42 @@ class StateUpdateConsistencyRegressionTest {
     }
 
     private static final class InMemoryRepository implements PersonRepository {
-        private final Map<PersonId, Person> people = new HashMap<>();
+        private final Map<PersonId, StoredPerson> people = new HashMap<>();
 
         private InMemoryRepository(Person person) {
-            people.put(person.getId(), person);
+            people.put(person.getId(), new StoredPerson(person.copy(), 0));
         }
 
         @Override
-        public Optional<Person> findById(PersonId personId) {
-            return Optional.ofNullable(people.get(personId));
+        public synchronized Optional<VersionedPerson> findById(PersonId personId) {
+            StoredPerson stored = people.get(personId);
+            if (stored == null) {
+                return Optional.empty();
+            }
+            return Optional.of(new VersionedPerson(
+                    stored.person().copy(),
+                    stored.version()
+            ));
         }
 
         @Override
-        public void save(Person person) {
-            people.put(person.getId(), person);
+        public synchronized boolean save(Person person, long expectedVersion) {
+            StoredPerson stored = people.get(person.getId());
+            if (stored == null || stored.version() != expectedVersion) {
+                return false;
+            }
+            people.put(
+                    person.getId(),
+                    new StoredPerson(person.copy(), expectedVersion + 1)
+            );
+            return true;
         }
+
+        private synchronized Person current(PersonId personId) {
+            return people.get(personId).person().copy();
+        }
+    }
+
+    private record StoredPerson(Person person, long version) {
     }
 }
