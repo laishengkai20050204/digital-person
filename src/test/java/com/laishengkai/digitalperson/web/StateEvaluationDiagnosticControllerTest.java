@@ -82,6 +82,7 @@ class StateEvaluationDiagnosticControllerTest {
         assertTrue(body.request().userPrompt().contains(
                 "\"title\":\"Romantic partner sends a reassuring affectionate message\""
         ));
+        assertEquals(4_096, body.request().maxOutputTokens());
         assertEquals("REQUIRED", body.request().toolChoice());
         assertEquals(1, body.request().tools().size());
         assertEquals("submit_state_transitions", body.request().tools().getFirst().name());
