@@ -11,7 +11,6 @@ import com.laishengkai.digitalperson.dialogue.ModelToolSpecification;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import com.laishengkai.digitalperson.infrastructure.langchain4j.LanguageModelProperties;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -36,7 +35,6 @@ import java.util.concurrent.CompletionStage;
  */
 @RestController
 @RequestMapping("/internal/agent")
-@ConditionalOnBean(AgentExecutor.class)
 @ConditionalOnProperty(
         prefix = "digital-person.llm.connection-test",
         name = "enabled",
