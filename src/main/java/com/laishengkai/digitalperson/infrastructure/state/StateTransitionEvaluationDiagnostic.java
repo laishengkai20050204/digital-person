@@ -18,6 +18,8 @@ import java.util.concurrent.CompletionStage;
  */
 public final class StateTransitionEvaluationDiagnostic {
 
+    private static final int MAX_DIAGNOSTIC_MESSAGE_LENGTH = 1_000;
+
     private final LanguageModelGateway languageModelGateway;
 
     public StateTransitionEvaluationDiagnostic(
@@ -49,7 +51,7 @@ public final class StateTransitionEvaluationDiagnostic {
 
         return responseStage.handle((response, invocationError) -> {
             if (invocationError != null) {
-                return Result.failure(request, response, unwrap(invocationError));
+                return Result.failure(request, response, invocationError);
             }
 
             try {
@@ -62,12 +64,43 @@ public final class StateTransitionEvaluationDiagnostic {
         });
     }
 
-    private static Throwable unwrap(Throwable error) {
-        Throwable current = error;
+    private static Throwable unwrapAsync(Throwable error) {
+        Throwable current = Objects.requireNonNull(error, "error cannot be null");
         while (current instanceof CompletionException && current.getCause() != null) {
             current = current.getCause();
         }
         return current;
+    }
+
+    private static Throwable rootCause(Throwable error) {
+        Throwable current = unwrapAsync(error);
+        for (int depth = 0; depth < 32; depth++) {
+            Throwable next = current.getCause();
+            if (next == null || next == current) {
+                break;
+            }
+            current = next;
+        }
+        return current;
+    }
+
+    private static String safeMessage(Throwable error) {
+        String message = normalize(error == null ? null : error.getMessage());
+        if (message.isEmpty()) {
+            return "";
+        }
+
+        String redacted = message
+                .replaceAll("(?i)Bearer\\s+[^\\s,;]+", "Bearer <redacted>")
+                .replaceAll("\\bsk-[A-Za-z0-9_-]{8,}\\b", "<redacted>");
+        if (redacted.length() <= MAX_DIAGNOSTIC_MESSAGE_LENGTH) {
+            return redacted;
+        }
+        return redacted.substring(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH) + "…";
+    }
+
+    private static String normalize(String value) {
+        return value == null ? "" : value.strip();
     }
 
     public record Result(
@@ -75,12 +108,16 @@ public final class StateTransitionEvaluationDiagnostic {
             LanguageModelResponse response,
             List<StateTransition> transitions,
             String errorType,
-            String errorMessage
+            String errorMessage,
+            String rootCauseType,
+            String rootCauseMessage
     ) {
         public Result {
             transitions = List.copyOf(Objects.requireNonNullElse(transitions, List.of()));
             errorType = normalize(errorType);
             errorMessage = normalize(errorMessage);
+            rootCauseType = normalize(rootCauseType);
+            rootCauseMessage = normalize(rootCauseMessage);
         }
 
         public static Result success(
@@ -93,6 +130,8 @@ public final class StateTransitionEvaluationDiagnostic {
                     Objects.requireNonNull(response, "response cannot be null"),
                     transitions,
                     "",
+                    "",
+                    "",
                     ""
             );
         }
@@ -102,13 +141,16 @@ public final class StateTransitionEvaluationDiagnostic {
                 LanguageModelResponse response,
                 Throwable error
         ) {
-            Throwable safeError = Objects.requireNonNull(error, "error cannot be null");
+            Throwable exposedError = unwrapAsync(error);
+            Throwable rootCause = rootCause(exposedError);
             return new Result(
                     request,
                     response,
                     List.of(),
-                    safeError.getClass().getSimpleName(),
-                    safeError.getMessage()
+                    exposedError.getClass().getSimpleName(),
+                    safeMessage(exposedError),
+                    rootCause.getClass().getSimpleName(),
+                    safeMessage(rootCause)
             );
         }
 
@@ -116,11 +158,9 @@ public final class StateTransitionEvaluationDiagnostic {
             return request != null
                     && response != null
                     && errorType.isEmpty()
-                    && errorMessage.isEmpty();
-        }
-
-        private static String normalize(String value) {
-            return value == null ? "" : value.strip();
+                    && errorMessage.isEmpty()
+                    && rootCauseType.isEmpty()
+                    && rootCauseMessage.isEmpty();
         }
     }
 }
