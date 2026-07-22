@@ -8,7 +8,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -53,15 +55,38 @@ public final class StateUpdater {
      * Settles previously active effects up to {@code now} and detects current
      * events that still require external evaluation.
      *
-     * <p>The supplied {@link PersonState} is a caller-owned working copy. It is
-     * updated deterministically, while the returned preparation object remains
-     * immutable and safe to pass across asynchronous boundaries.</p>
+     * <p>This compatibility overload assumes no cached effect ended between
+     * the previous update and {@code now}. Application workflows that own an
+     * event timeline should call the overload accepting effect end times.</p>
      */
     public StateUpdatePreparation prepare(
             PersonState state,
             List<PersonEvent> currentEvents,
             Instant now,
             StateEvolutionContext context
+    ) {
+        return prepare(state, currentEvents, now, context, Map.of());
+    }
+
+    /**
+     * Settles previously active effects up to {@code now} and detects current
+     * events that still require external evaluation.
+     *
+     * <p>The supplied {@link PersonState} is a caller-owned working copy. It is
+     * updated deterministically, while the returned preparation object remains
+     * immutable and safe to pass across asynchronous boundaries.</p>
+     *
+     * <p>{@code cachedEffectEndTimes} contains known end boundaries for events
+     * referenced by the persisted channel effects. Effects are merged and
+     * applied separately for each interval so an event that ended before
+     * {@code now} cannot continue changing state after its actual end time.</p>
+     */
+    public StateUpdatePreparation prepare(
+            PersonState state,
+            List<PersonEvent> currentEvents,
+            Instant now,
+            StateEvolutionContext context,
+            Map<EventId, Instant> cachedEffectEndTimes
     ) {
         PersonState currentState = Objects.requireNonNull(
                 state,
@@ -72,17 +97,19 @@ public final class StateUpdater {
                 context,
                 "context cannot be null"
         );
+        Map<EventId, Instant> effectEndTimes = copyEndTimes(cachedEffectEndTimes);
         Map<ActivityChannel, PersonEvent> eventsByChannel = indexByChannel(currentEvents);
 
         LOGGER.debug(
-                "Preparing state evolution: updateTime={}, currentEventCount={}, activeEffectCount={}, previousUpdateTime={}",
+                "Preparing state evolution: updateTime={}, currentEventCount={}, activeEffectCount={}, previousUpdateTime={}, knownEffectEndCount={}",
                 currentTime,
                 eventsByChannel.size(),
                 currentContext.channelEffects().size(),
-                currentContext.lastUpdatedAt()
+                currentContext.lastUpdatedAt(),
+                effectEndTimes.size()
         );
 
-        settleUntil(currentState, currentTime, currentContext);
+        settleUntil(currentState, currentTime, currentContext, effectEndTimes);
 
         Map<ActivityChannel, ChannelStateEffect> retainedEffects =
                 new EnumMap<>(ActivityChannel.class);
@@ -193,11 +220,12 @@ public final class StateUpdater {
         );
     }
 
-    /** Applies cached effects for the elapsed period before new events are evaluated. */
+    /** Applies cached effects only across intervals in which their events remained active. */
     private void settleUntil(
             PersonState state,
             Instant now,
-            StateEvolutionContext context
+            StateEvolutionContext context,
+            Map<EventId, Instant> effectEndTimes
     ) {
         Instant lastUpdatedAt = context.lastUpdatedAt();
         if (lastUpdatedAt == null) {
@@ -216,18 +244,86 @@ public final class StateUpdater {
             return;
         }
 
-        List<StateTransition> mergedTransitions = transitionMerger.merge(
-                context.channelEffects().values()
+        List<Instant> boundaries = settlementBoundaries(
+                lastUpdatedAt,
+                now,
+                context,
+                effectEndTimes
         );
+        Instant intervalStart = lastUpdatedAt;
+        int appliedIntervalCount = 0;
+
+        for (Instant intervalEnd : boundaries) {
+            List<ChannelStateEffect> activeEffects = context.channelEffects()
+                    .values()
+                    .stream()
+                    .filter(effect -> remainsActiveAfter(
+                            effect,
+                            intervalStart,
+                            effectEndTimes
+                    ))
+                    .toList();
+            List<StateTransition> mergedTransitions = transitionMerger.merge(
+                    activeEffects
+            );
+            Duration intervalDuration = Duration.between(intervalStart, intervalEnd);
+
+            if (!intervalDuration.isZero() && !mergedTransitions.isEmpty()) {
+                transitionModel.applyAll(state, mergedTransitions, intervalDuration);
+                appliedIntervalCount++;
+            }
+            intervalStart = intervalEnd;
+        }
 
         LOGGER.debug(
-                "Settling cached state effects: elapsedMs={}, activeEffectCount={}, mergedTransitionCount={}",
+                "Settled cached state effects: elapsedMs={}, activeEffectCount={}, boundaryCount={}, appliedIntervalCount={}",
                 elapsed.toMillis(),
                 context.channelEffects().size(),
-                mergedTransitions.size()
+                boundaries.size(),
+                appliedIntervalCount
         );
+    }
 
-        transitionModel.applyAll(state, mergedTransitions, elapsed);
+    private static List<Instant> settlementBoundaries(
+            Instant start,
+            Instant end,
+            StateEvolutionContext context,
+            Map<EventId, Instant> effectEndTimes
+    ) {
+        List<Instant> boundaries = new ArrayList<>();
+        context.channelEffects().values().stream()
+                .map(ChannelStateEffect::eventId)
+                .map(effectEndTimes::get)
+                .filter(Objects::nonNull)
+                .filter(boundary -> boundary.isAfter(start) && boundary.isBefore(end))
+                .distinct()
+                .forEach(boundaries::add);
+        boundaries.add(end);
+        boundaries.sort(Comparator.naturalOrder());
+        return List.copyOf(boundaries);
+    }
+
+    private static boolean remainsActiveAfter(
+            ChannelStateEffect effect,
+            Instant intervalStart,
+            Map<EventId, Instant> effectEndTimes
+    ) {
+        Instant endTime = effectEndTimes.get(effect.eventId());
+        return endTime == null || endTime.isAfter(intervalStart);
+    }
+
+    private static Map<EventId, Instant> copyEndTimes(
+            Map<EventId, Instant> cachedEffectEndTimes
+    ) {
+        Map<EventId, Instant> copy = new java.util.HashMap<>();
+        Objects.requireNonNull(
+                cachedEffectEndTimes,
+                "cachedEffectEndTimes cannot be null"
+        ).forEach((eventId, endTime) -> copy.put(
+                Objects.requireNonNull(eventId, "effect event id cannot be null"),
+                Objects.requireNonNull(endTime, "effect end time cannot be null")
+        ));
+        return Map.copyOf(copy);
     }
 
     /** Indexes current events while enforcing the one-event-per-channel invariant. */
