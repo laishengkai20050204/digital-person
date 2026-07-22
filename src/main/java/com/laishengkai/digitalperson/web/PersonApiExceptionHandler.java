@@ -82,8 +82,8 @@ public final class PersonApiExceptionHandler {
         if (cause instanceof UnsettledPersonEventException unsettled) {
             return unsettledEvent(unsettled);
         }
-        if (cause instanceof IllegalStateException stateConflict) {
-            return stateConflict(stateConflict);
+        if (cause instanceof IllegalStateException eventState) {
+            return stateConflict(eventState);
         }
         if (cause instanceof RuntimeException invalid) {
             return invalidRequest(invalid);
