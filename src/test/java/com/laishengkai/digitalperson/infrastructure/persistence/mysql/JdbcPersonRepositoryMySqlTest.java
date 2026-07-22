@@ -43,7 +43,7 @@ class JdbcPersonRepositoryMySqlTest {
     private static final Instant NOW = Instant.parse("2026-07-22T12:00:00Z");
 
     @Container
-    private static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
+    private static final MySQLContainer MYSQL = new MySQLContainer("mysql:8.4")
             .withDatabaseName("digital_person")
             .withUsername("digital_person")
             .withPassword("digital_person_test");
