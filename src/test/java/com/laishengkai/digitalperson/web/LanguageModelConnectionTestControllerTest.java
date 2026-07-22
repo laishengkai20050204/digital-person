@@ -9,6 +9,7 @@ import org.springframework.http.ResponseEntity;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -26,7 +27,9 @@ class LanguageModelConnectionTestControllerTest {
         );
 
         ResponseEntity<LanguageModelConnectionTestController.ConnectionTestResponse>
-                response = controller.testConnection("wrong-token");
+                response = controller.testConnection("wrong-token")
+                .toCompletableFuture()
+                .join();
 
         assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         assertNotNull(response.getBody());
@@ -36,14 +39,18 @@ class LanguageModelConnectionTestControllerTest {
     @Test
     void shouldReturnUpWhenOpenRouterStyleGatewayRespondsAsExpected() {
         LanguageModelGateway gateway = request ->
-                new LanguageModelResponse("CONNECTION_OK");
+                CompletableFuture.completedFuture(
+                        LanguageModelResponse.text("CONNECTION_OK")
+                );
         LanguageModelConnectionTestController controller = controller(
                 gateway,
                 "expected-token"
         );
 
         ResponseEntity<LanguageModelConnectionTestController.ConnectionTestResponse>
-                response = controller.testConnection("expected-token");
+                response = controller.testConnection("expected-token")
+                .toCompletableFuture()
+                .join();
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertNotNull(response.getBody());
@@ -53,16 +60,19 @@ class LanguageModelConnectionTestControllerTest {
 
     @Test
     void shouldReturnBadGatewayWhenProviderCallFails() {
-        LanguageModelGateway gateway = request -> {
-            throw new IllegalStateException("provider unavailable");
-        };
+        LanguageModelGateway gateway = request ->
+                CompletableFuture.failedFuture(
+                        new IllegalStateException("provider unavailable")
+                );
         LanguageModelConnectionTestController controller = controller(
                 gateway,
                 "expected-token"
         );
 
         ResponseEntity<LanguageModelConnectionTestController.ConnectionTestResponse>
-                response = controller.testConnection("expected-token");
+                response = controller.testConnection("expected-token")
+                .toCompletableFuture()
+                .join();
 
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
         assertNotNull(response.getBody());
