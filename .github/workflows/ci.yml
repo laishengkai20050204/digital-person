@@ -24,5 +24,8 @@ jobs:
           java-version: "21"
           cache: maven
 
+      - name: Validate deployment script
+        run: bash -n ops/deploy-from-git.sh
+
       - name: Verify
         run: mvn --batch-mode --no-transfer-progress verify
