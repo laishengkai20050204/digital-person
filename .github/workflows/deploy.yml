@@ -205,10 +205,11 @@ jobs:
           mkdir -p "$RELEASE_DIR"
 
           if [ -L "$APP_DIR/current.jar" ]; then
-            PREVIOUS_JAR="$(readlink -f "$APP_DIR/current.jar")"
+            PREVIOUS_JAR="$(readlink -f "$APP_DIR/current.jar" 2>/dev/null || true)"
           fi
 
           mv "$UPLOADED_JAR" "$NEW_JAR"
+          touch "$NEW_JAR"
           ln -sfn "$NEW_JAR" "$APP_DIR/current.jar"
 
           sudo -n /usr/bin/systemctl restart person-ai
@@ -240,6 +241,12 @@ jobs:
             exit 1
           fi
 
+          CURRENT_RELEASE="$(readlink -f "$APP_DIR/current.jar")"
+          if [ ! -f "$CURRENT_RELEASE" ]; then
+            echo "拒绝清理：current.jar 未指向现存文件"
+            exit 1
+          fi
+
           echo "部署成功：$APP_SHA"
           rm -f /tmp/person-ai-upload.jar
           find /tmp -maxdepth 1 -type f \
@@ -247,9 +254,18 @@ jobs:
             -mtime +2 \
             -delete
 
-          cd "$RELEASE_DIR"
-          ls -1t person-ai-*.jar 2>/dev/null \
-            | tail -n +6 \
+          find "$RELEASE_DIR" -maxdepth 1 -type f \
+            -name 'person-ai-*.jar' \
+            ! -path "$CURRENT_RELEASE" \
+            -printf '%C@ %p\n' \
+            | sort -nr \
+            | tail -n +5 \
+            | cut -d' ' -f2- \
             | xargs -r rm -f
+
+          if [ ! -f "$CURRENT_RELEASE" ]; then
+            echo "发布清理错误：当前版本被删除"
+            exit 1
+          fi
 
           DEPLOY_SCRIPT
