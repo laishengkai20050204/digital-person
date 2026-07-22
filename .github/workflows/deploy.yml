@@ -52,8 +52,12 @@ jobs:
             exit 1
           fi
 
+          JAR_SHA256="$(sha256sum "$JAR_FILE" | awk '{print $1}')"
+
           echo "path=$JAR_FILE" >> "$GITHUB_OUTPUT"
+          echo "sha256=$JAR_SHA256" >> "$GITHUB_OUTPUT"
           echo "将部署：$JAR_FILE"
+          echo "SHA-256：$JAR_SHA256"
 
       - name: Configure SSH
         env:
@@ -76,21 +80,10 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+          command -v rsync >/dev/null
 
-      - name: Upload JAR
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          scp \
-            -i ~/.ssh/id_ed25519 \
-            -P "$SERVER_PORT" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            "${{ steps.jar.outputs.path }}" \
-            "$SERVER_USER@$SERVER_HOST:/tmp/person-ai-$GITHUB_SHA.jar"
-
-      - name: Deploy, restart and health check
+      - name: Prepare remote rsync basis
+        timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail
@@ -101,17 +94,108 @@ jobs:
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
             "$SERVER_USER@$SERVER_HOST" \
-            "APP_SHA='$GITHUB_SHA' bash -s" <<'DEPLOY_SCRIPT'
+            'bash -s' <<'PREPARE_SCRIPT'
+
+          set -euo pipefail
+
+          APP_DIR="/opt/person-ai"
+          UPLOAD_JAR="/tmp/person-ai-upload.jar"
+          CURRENT_JAR="$(readlink -f "$APP_DIR/current.jar" 2>/dev/null || true)"
+
+          if [ -n "$CURRENT_JAR" ] && [ -f "$CURRENT_JAR" ]; then
+            cp --force "$CURRENT_JAR" "$UPLOAD_JAR"
+            echo "已使用当前版本作为增量同步基准：$CURRENT_JAR"
+          else
+            rm -f "$UPLOAD_JAR"
+            echo "没有可用的旧版本，本次将完整上传"
+          fi
+
+          PREPARE_SCRIPT
+
+      - name: Incrementally upload JAR
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RSYNC_RSH="ssh -i ~/.ssh/id_ed25519 -p $SERVER_PORT \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            -o TCPKeepAlive=yes"
+
+          SUCCESS=false
+          for attempt in 1 2 3; do
+            echo "增量上传尝试：$attempt/3"
+
+            if rsync \
+              --archive \
+              --checksum \
+              --no-whole-file \
+              --inplace \
+              --partial \
+              --timeout=60 \
+              --human-readable \
+              --info=progress2,stats1 \
+              -e "$RSYNC_RSH" \
+              "${{ steps.jar.outputs.path }}" \
+              "$SERVER_USER@$SERVER_HOST:/tmp/person-ai-upload.jar"; then
+              SUCCESS=true
+              break
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              WAIT_SECONDS=$((attempt * 10))
+              echo "上传中断，${WAIT_SECONDS} 秒后重试"
+              sleep "$WAIT_SECONDS"
+            fi
+          done
+
+          if [ "$SUCCESS" != "true" ]; then
+            echo "三次增量上传均失败"
+            exit 1
+          fi
+
+      - name: Deploy, restart and health check
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i ~/.ssh/id_ed25519 \
+            -p "$SERVER_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            "$SERVER_USER@$SERVER_HOST" \
+            "APP_SHA='$GITHUB_SHA' EXPECTED_SHA='${{ steps.jar.outputs.sha256 }}' bash -s" <<'DEPLOY_SCRIPT'
 
           set -euo pipefail
 
           APP_DIR="/opt/person-ai"
           RELEASE_DIR="$APP_DIR/releases"
-          UPLOADED_JAR="/tmp/person-ai-$APP_SHA.jar"
+          UPLOADED_JAR="/tmp/person-ai-upload.jar"
           NEW_JAR="$RELEASE_DIR/person-ai-$APP_SHA.jar"
           PREVIOUS_JAR=""
 
+          ACTUAL_SHA="$(sha256sum "$UPLOADED_JAR" | awk '{print $1}')"
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "上传文件 SHA-256 校验失败"
+            echo "预期：$EXPECTED_SHA"
+            echo "实际：$ACTUAL_SHA"
+            rm -f "$UPLOADED_JAR"
+            exit 1
+          fi
+
+          echo "上传文件 SHA-256 校验通过"
           mkdir -p "$RELEASE_DIR"
 
           if [ -L "$APP_DIR/current.jar" ]; then
