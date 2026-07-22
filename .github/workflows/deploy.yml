@@ -97,15 +97,21 @@ jobs:
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=3 \
             "$SERVER_USER@$SERVER_HOST" \
-            'bash -s' <<'PREPARE_SCRIPT'
+            "APP_SHA='$GITHUB_SHA' bash -s" <<'PREPARE_SCRIPT'
 
           set -euo pipefail
 
           APP_DIR="/opt/person-ai"
-          UPLOAD_JAR="/tmp/person-ai-upload.jar"
+          UPLOAD_JAR="/tmp/person-ai-$APP_SHA.upload.jar"
+          LEGACY_UPLOAD_JAR="/tmp/person-ai-upload.jar"
           CURRENT_JAR="$(readlink -f "$APP_DIR/current.jar" 2>/dev/null || true)"
 
-          if [ -n "$CURRENT_JAR" ] && [ -f "$CURRENT_JAR" ]; then
+          if [ -f "$UPLOAD_JAR" ]; then
+            echo "保留同一提交的未完成文件并继续续传：$UPLOAD_JAR"
+          elif [ -f "$LEGACY_UPLOAD_JAR" ]; then
+            cp --force "$LEGACY_UPLOAD_JAR" "$UPLOAD_JAR"
+            echo "已使用上一次未完成上传作为同步基准"
+          elif [ -n "$CURRENT_JAR" ] && [ -f "$CURRENT_JAR" ]; then
             cp --force "$CURRENT_JAR" "$UPLOAD_JAR"
             echo "已使用当前版本作为增量同步基准：$CURRENT_JAR"
           else
@@ -116,7 +122,7 @@ jobs:
           PREPARE_SCRIPT
 
       - name: Incrementally upload JAR
-        timeout-minutes: 12
+        timeout-minutes: 45
         shell: bash
         run: |
           set -euo pipefail
@@ -129,6 +135,7 @@ jobs:
             -o ServerAliveCountMax=3 \
             -o TCPKeepAlive=yes"
 
+          REMOTE_UPLOAD="/tmp/person-ai-$GITHUB_SHA.upload.jar"
           SUCCESS=false
           for attempt in 1 2 3; do
             echo "增量上传尝试：$attempt/3"
@@ -139,25 +146,25 @@ jobs:
               --no-whole-file \
               --inplace \
               --partial \
-              --timeout=60 \
+              --timeout=120 \
               --human-readable \
               --info=progress2,stats1 \
               -e "$RSYNC_RSH" \
               "${{ steps.jar.outputs.path }}" \
-              "$SERVER_USER@$SERVER_HOST:/tmp/person-ai-upload.jar"; then
+              "$SERVER_USER@$SERVER_HOST:$REMOTE_UPLOAD"; then
               SUCCESS=true
               break
             fi
 
             if [ "$attempt" -lt 3 ]; then
               WAIT_SECONDS=$((attempt * 10))
-              echo "上传中断，${WAIT_SECONDS} 秒后重试"
+              echo "上传中断，${WAIT_SECONDS} 秒后从现有文件继续"
               sleep "$WAIT_SECONDS"
             fi
           done
 
           if [ "$SUCCESS" != "true" ]; then
-            echo "三次增量上传均失败"
+            echo "三次增量上传均失败；远端文件会保留供同一提交重跑续传"
             exit 1
           fi
 
@@ -182,7 +189,7 @@ jobs:
 
           APP_DIR="/opt/person-ai"
           RELEASE_DIR="$APP_DIR/releases"
-          UPLOADED_JAR="/tmp/person-ai-upload.jar"
+          UPLOADED_JAR="/tmp/person-ai-$APP_SHA.upload.jar"
           NEW_JAR="$RELEASE_DIR/person-ai-$APP_SHA.jar"
           PREVIOUS_JAR=""
 
@@ -191,7 +198,6 @@ jobs:
             echo "上传文件 SHA-256 校验失败"
             echo "预期：$EXPECTED_SHA"
             echo "实际：$ACTUAL_SHA"
-            rm -f "$UPLOADED_JAR"
             exit 1
           fi
 
@@ -235,6 +241,11 @@ jobs:
           fi
 
           echo "部署成功：$APP_SHA"
+          rm -f /tmp/person-ai-upload.jar
+          find /tmp -maxdepth 1 -type f \
+            -name 'person-ai-*.upload.jar' \
+            -mtime +2 \
+            -delete
 
           cd "$RELEASE_DIR"
           ls -1t person-ai-*.jar 2>/dev/null \
