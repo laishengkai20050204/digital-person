@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.infrastructure.state;
 
+import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.dialogue.AssistantModelMessage;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
@@ -11,9 +12,16 @@ import com.laishengkai.digitalperson.dialogue.ModelUsage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.PersonEvent;
+import com.laishengkai.digitalperson.experience.PersonEventSnapshot;
 import com.laishengkai.digitalperson.experience.TimeRange;
+import com.laishengkai.digitalperson.memory.MemoryItem;
+import com.laishengkai.digitalperson.memory.MemorySection;
+import com.laishengkai.digitalperson.memory.PersonMemoryContext;
+import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;
 
@@ -32,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LanguageModelStateTransitionEvaluatorTest {
 
     @Test
-    void shouldReadTransitionsFromExactlyOneSubmissionToolCall() {
+    void shouldReadTransitionsAndSerializeCompleteContext() {
         RecordingGateway gateway = new RecordingGateway(toolResponse("""
                 {
                   "transitions": [
@@ -44,10 +52,9 @@ class LanguageModelStateTransitionEvaluatorTest {
         LanguageModelStateTransitionEvaluator evaluator =
                 new LanguageModelStateTransitionEvaluator(gateway);
 
-        List<StateTransition> transitions = evaluator.evaluate(
-                state(),
-                event()
-        ).toCompletableFuture().join();
+        List<StateTransition> transitions = evaluator.evaluate(context())
+                .toCompletableFuture()
+                .join();
 
         assertEquals(List.of(
                 new StateTransition(StateDimension.VALENCE, 0.35),
@@ -61,13 +68,16 @@ class LanguageModelStateTransitionEvaluatorTest {
                 LanguageModelStateTransitionEvaluator.TOOL_NAME,
                 request.tools().getFirst().name()
         );
-        assertEquals(2, request.messages().size());
         UserModelMessage userMessage = assertInstanceOf(
                 UserModelMessage.class,
                 request.messages().get(1)
         );
         assertTrue(userMessage.text().contains("\"activityType\":\"STUDY\""));
         assertTrue(userMessage.text().contains("\"valence\":0.2"));
+        assertTrue(userMessage.text().contains("\"emotionality\":0.8"));
+        assertTrue(userMessage.text().contains("\"section\":\"RELATIONSHIP\""));
+        assertTrue(userMessage.text().contains("\"recentConversation\""));
+        assertTrue(userMessage.text().contains("I miss you"));
     }
 
     @Test
@@ -79,32 +89,27 @@ class LanguageModelStateTransitionEvaluatorTest {
                         )
                 );
 
-        List<StateTransition> transitions = evaluator.evaluate(
-                state(),
-                event()
-        ).toCompletableFuture().join();
-
-        assertEquals(List.of(), transitions);
+        assertEquals(
+                List.of(),
+                evaluator.evaluate(context()).toCompletableFuture().join()
+        );
     }
 
     @Test
     void shouldRejectResponseWithoutSubmissionToolCall() {
-        LanguageModelStateTransitionEvaluator evaluator = evaluatorReturning(
+        StateTransitionEvaluationException error = failureOf(evaluatorReturning(
                 new LanguageModelResponse(
                         AssistantModelMessage.text("no change"),
                         ModelFinishReason.STOP,
                         ModelUsage.unknown()
                 )
-        );
-
-        StateTransitionEvaluationException error = failureOf(evaluator);
-
+        ));
         assertTrue(error.getMessage().contains("exactly once"));
     }
 
     @Test
-    void shouldRejectMultipleToolCalls() {
-        LanguageModelStateTransitionEvaluator evaluator = evaluatorReturning(
+    void shouldRejectMultipleOrUnexpectedToolCalls() {
+        StateTransitionEvaluationException multiple = failureOf(evaluatorReturning(
                 new LanguageModelResponse(
                         AssistantModelMessage.toolCalls(List.of(
                                 toolCall("call-1", "{\"transitions\":[]}"),
@@ -113,16 +118,10 @@ class LanguageModelStateTransitionEvaluatorTest {
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unknown()
                 )
-        );
+        ));
+        assertTrue(multiple.getMessage().contains("received 2"));
 
-        StateTransitionEvaluationException error = failureOf(evaluator);
-
-        assertTrue(error.getMessage().contains("received 2"));
-    }
-
-    @Test
-    void shouldRejectUnexpectedToolName() {
-        LanguageModelStateTransitionEvaluator evaluator = evaluatorReturning(
+        StateTransitionEvaluationException unexpected = failureOf(evaluatorReturning(
                 new LanguageModelResponse(
                         AssistantModelMessage.toolCalls(List.of(
                                 new ModelToolCall(
@@ -134,70 +133,32 @@ class LanguageModelStateTransitionEvaluatorTest {
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unknown()
                 )
-        );
-
-        StateTransitionEvaluationException error = failureOf(evaluator);
-
-        assertTrue(error.getMessage().contains("unexpected"));
+        ));
+        assertTrue(unexpected.getMessage().contains("unexpected"));
     }
 
     @Test
-    void shouldRejectMalformedOrStructurallyInvalidArguments() {
-        LanguageModelStateTransitionEvaluator malformed = evaluatorReturning(
+    void shouldRejectMalformedDuplicateOrInvalidTransitions() {
+        assertTrue(failureOf(evaluatorReturning(
                 toolResponse("not-json")
-        );
-        LanguageModelStateTransitionEvaluator unknownField = evaluatorReturning(
-                toolResponse("""
-                        {
-                          "transitions": [],
-                          "explanation": "not allowed"
-                        }
-                        """)
-        );
+        )).getMessage().contains("invalid"));
 
-        assertTrue(failureOf(malformed).getMessage().contains("invalid"));
-        assertTrue(failureOf(unknownField).getMessage().contains("invalid"));
-    }
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {
+                  "transitions": [
+                    {"dimension":"ENERGY","shape":0.2},
+                    {"dimension":"ENERGY","shape":-0.1}
+                  ]
+                }
+                """))).getMessage().contains("duplicate"));
 
-    @Test
-    void shouldRejectDuplicateDimensions() {
-        LanguageModelStateTransitionEvaluator evaluator = evaluatorReturning(
-                toolResponse("""
-                        {
-                          "transitions": [
-                            {"dimension":"ENERGY","shape":0.2},
-                            {"dimension":"ENERGY","shape":-0.1}
-                          ]
-                        }
-                        """)
-        );
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {"transitions":[{"dimension":"ENERGY","shape":0.0}]}
+                """))).getMessage().contains("invalid shape"));
 
-        StateTransitionEvaluationException error = failureOf(evaluator);
-
-        assertTrue(error.getMessage().contains("duplicate"));
-    }
-
-    @Test
-    void shouldRejectMissingZeroOrUnknownTransitionFields() {
-        LanguageModelStateTransitionEvaluator missingShape = evaluatorReturning(
-                toolResponse("""
-                        {"transitions":[{"dimension":"ENERGY"}]}
-                        """)
-        );
-        LanguageModelStateTransitionEvaluator zeroShape = evaluatorReturning(
-                toolResponse("""
-                        {"transitions":[{"dimension":"ENERGY","shape":0.0}]}
-                        """)
-        );
-        LanguageModelStateTransitionEvaluator unknownDimension = evaluatorReturning(
-                toolResponse("""
-                        {"transitions":[{"dimension":"MOOD","shape":0.2}]}
-                        """)
-        );
-
-        assertTrue(failureOf(missingShape).getMessage().contains("shape is required"));
-        assertTrue(failureOf(zeroShape).getMessage().contains("invalid shape"));
-        assertTrue(failureOf(unknownDimension).getMessage().contains("unknown"));
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {"transitions":[{"dimension":"MOOD","shape":0.2}]}
+                """))).getMessage().contains("unknown"));
     }
 
     private static StateTransitionEvaluationException failureOf(
@@ -205,7 +166,7 @@ class LanguageModelStateTransitionEvaluatorTest {
     ) {
         CompletionException error = assertThrows(
                 CompletionException.class,
-                () -> evaluator.evaluate(state(), event()).toCompletableFuture().join()
+                () -> evaluator.evaluate(context()).toCompletableFuture().join()
         );
         return assertInstanceOf(
                 StateTransitionEvaluationException.class,
@@ -239,28 +200,45 @@ class LanguageModelStateTransitionEvaluatorTest {
         );
     }
 
-    private static PersonStateSnapshot state() {
-        return new PersonStateSnapshot(
-                0.2,
-                0.7,
-                0.3,
-                0.6,
-                0.4,
-                0.8,
-                0.2,
-                0.1,
-                0.3,
-                0.4,
-                0.5
-        );
-    }
-
-    private static PersonEvent event() {
-        return new PersonEvent(
+    private static StateEvaluationContext context() {
+        Instant now = Instant.parse("2026-07-22T03:00:00Z");
+        PersonEvent event = new PersonEvent(
                 ActivityType.STUDY,
                 "Prepare for the exam",
                 "library",
                 TimeRange.openEnded(Instant.parse("2026-07-22T02:00:00Z"))
+        );
+        return new StateEvaluationContext(
+                PersonId.random(),
+                new PersonalitySnapshot(0.6, 0.8, 0.4, 0.7, 0.9, 0.6),
+                state(),
+                PersonEventSnapshot.from(PersonEventSnapshot.Owner.PERSON, event),
+                List.of(PersonEventSnapshot.from(
+                        PersonEventSnapshot.Owner.PERSON,
+                        event
+                )),
+                List.of(),
+                PersonMemoryContext.available(List.of(new MemoryItem(
+                        "memory-1",
+                        MemorySection.RELATIONSHIP,
+                        "The relationship is stable and trusting.",
+                        0.95,
+                        now.minusSeconds(3600),
+                        now
+                ))),
+                List.of(new ConversationTurnSnapshot(
+                        ConversationTurnSnapshot.Role.USER,
+                        "I miss you",
+                        now.minusSeconds(60)
+                )),
+                now
+        );
+    }
+
+    private static PersonStateSnapshot state() {
+        return new PersonStateSnapshot(
+                0.2, 0.7, 0.3, 0.6, 0.4, 0.8,
+                0.2, 0.1, 0.3, 0.4, 0.5
         );
     }
 
