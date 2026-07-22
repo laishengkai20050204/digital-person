@@ -1,6 +1,6 @@
 # Digital Person
 
-一个以领域模型为核心的 Java 21 数字人物原型。当前重点是把人物的性格、事件时间线、短期状态和模型调用建立成可持久化、可测试、可替换基础设施的内核。
+一个以领域模型为核心的 Java 21 数字人物原型。当前重点是把人物的性格、事件时间线、短期状态、模型调用和持久化建立成可测试、可替换基础设施的内核。
 
 ## 当前能力
 
@@ -12,7 +12,9 @@
 - 指数状态变化模型
 - 可复用、无状态的 `StateUpdater`
 - 异步 `StateTransitionEvaluator` 边界
-- `PersonId`、`PersonRepository` 和应用层状态更新服务
+- 统一的实时事件开始、替换、结束和历史补录应用服务
+- 基于版本号 CAS 的并发覆盖保护
+- MySQL 8.4、InnoDB、JSON 聚合文档和 Flyway 持久化适配器
 - 防御性复制，避免调用方绕过时间线和状态规则
 - Spring Boot 默认日志体系下的结构化运行日志
 - LangChain4j 1.18.0 与 OpenAI-compatible 模型连接层
@@ -26,8 +28,9 @@ src/main/java/com/laishengkai/digitalperson/
 ├── DigitalPersonApplication.java
 ├── application/
 │   ├── UpdatePersonStateService.java
-│   ├── StateUpdateResult.java
-│   └── PersonNotFoundException.java
+│   ├── PersonEventCommandService.java
+│   ├── StateEvaluationContextAssembler.java
+│   └── PersonVersionConflictException.java
 ├── dialogue/
 │   ├── LanguageModelGateway.java
 │   ├── LanguageModelRequest.java
@@ -42,13 +45,15 @@ src/main/java/com/laishengkai/digitalperson/
 │   └── LanguageModelException.java
 ├── experience/
 ├── infrastructure/
-│   └── langchain4j/
-│       ├── LangChain4jLanguageModel.java
-│       ├── LangChain4jModelConfig.java
-│       ├── LanguageModelConfiguration.java
-│       └── LanguageModelProperties.java
+│   ├── langchain4j/
+│   ├── persistence/mysql/
+│   │   ├── JdbcPersonRepository.java
+│   │   ├── PersonAggregateJsonMapper.java
+│   │   ├── MySqlPersonPersistenceConfiguration.java
+│   │   └── MySqlPersonPersistenceProperties.java
+│   └── spring/
+│       └── PersonApplicationConfiguration.java
 ├── web/
-│   └── LanguageModelConnectionTestController.java
 ├── person/
 ├── personality/
 └── state/
@@ -58,7 +63,7 @@ src/main/java/com/laishengkai/digitalperson/
     └── StateTransitionEvaluator.java
 ```
 
-领域层不依赖 Spring、LangChain4j、Mem0、数据库或微信。Spring Boot 负责应用启动和运行时装配；`dialogue.LanguageModelGateway` 是系统自己的模型边界，LangChain4j 只存在于 `infrastructure.langchain4j` 中。
+领域层和应用层不依赖 Spring、LangChain4j、Jackson、JDBC、Flyway、MySQL、Mem0 或微信。Spring Boot 负责运行时装配；`dialogue.LanguageModelGateway` 是系统自己的模型边界；数据库实现只存在于 `infrastructure.persistence.mysql`。
 
 ## Spring Boot 运行方式
 
@@ -87,6 +92,45 @@ curl http://127.0.0.1:8080/actuator/health
 SERVER_PORT=8081 java -jar target/digital-person-0.3.0-SNAPSHOT.jar
 ```
 
+## MySQL 人物持久化
+
+持久化默认关闭，因此现有部署在没有数据库配置时仍能正常启动。启用时使用 MySQL 8.4、InnoDB 和原生 `JSON` 列：
+
+```bash
+export MYSQL_PERSISTENCE_ENABLED=true
+export MYSQL_JDBC_URL='jdbc:mysql://127.0.0.1:3306/digital_person?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC'
+export MYSQL_USERNAME='digital_person'
+export MYSQL_PASSWORD='replace-with-a-strong-password'
+export MYSQL_MAXIMUM_POOL_SIZE=10
+export MYSQL_CONNECTION_TIMEOUT=30s
+```
+
+启动时 Flyway 自动执行 `db/migration/mysql` 下的迁移。首个版本创建：
+
+```text
+digital_person
+├── person_id        CHAR(36) PRIMARY KEY
+├── version          BIGINT
+├── aggregate_json   JSON
+├── created_at       TIMESTAMP(6)
+└── updated_at       TIMESTAMP(6)
+```
+
+一个 JSON 文档保存完整聚合：人格、当前状态、人物事件、用户事件、状态更新时间以及每个活动渠道的当前状态效果。文档包含独立的 `schemaVersion`，以后修改结构时必须增加显式迁移或兼容读取逻辑。
+
+保存使用原子乐观锁：
+
+```sql
+UPDATE digital_person
+SET aggregate_json = ?,
+    version = version + 1,
+    updated_at = CURRENT_TIMESTAMP(6)
+WHERE person_id = ?
+  AND version = ?;
+```
+
+受影响行数为 `1` 表示提交成功；为 `0` 表示人物不存在或已有更新先提交。应用层会把后者转换为版本冲突，不会让较慢的旧 LLM 结果覆盖新状态。
+
 ## 模型边界
 
 `LanguageModelGateway` 表示一次模型调用，不保存历史，也不执行工具循环：
@@ -107,7 +151,7 @@ OpenRouter / OpenAI-compatible API
 - `ModelInvocationOptions`：temperature、最大输出 token、停止序列、工具选择和响应格式
 - `List<ModelToolSpecification>`：本次调用允许模型请求的工具
 
-工具请求属于 `AssistantModelMessage.toolCalls`，因为它由 assistant 角色产生。应用执行工具后，再加入对应的 `ToolResultModelMessage` 并进行下一次模型调用。循环次数、工具执行、超时和权限控制由后续独立的 Agent 执行层负责，不属于单次模型网关。
+工具请求属于 `AssistantModelMessage.toolCalls`，因为它由 assistant 角色产生。应用执行工具后，再加入对应的 `ToolResultModelMessage` 并进行下一次模型调用。循环次数、工具执行、超时和权限控制由独立的 Agent 执行层负责，不属于单次模型网关。
 
 响应保留 assistant 文本、工具请求、结束原因和 token 使用量。状态评估可以只使用单次结构化调用；聊天历史由应用服务加载后作为消息列表传入。
 
@@ -175,12 +219,12 @@ curl -X POST \
 ## 状态更新流程
 
 ```text
-读取 Person
-  ↓
-复制当前 PersonState
+PersonRepository.findById
+  ↓ Person + version
+复制完整 Person 和当前 PersonState
   ↓
 StateUpdater.prepare
-  ├─ 结算旧活动效果
+  ├─ 按事件真实结束时间分段结算旧活动效果
   └─ 找出需要重新评估的新活动
   ↓
 异步 StateTransitionEvaluator
@@ -189,12 +233,20 @@ StateUpdater.complete
   ↓
 Person.commitStateUpdate
   ↓
-PersonRepository.save
+PersonRepository.save(person, expectedVersion)
+  ├─ CAS 成功：version + 1
+  └─ CAS 失败：拒绝过期结果
 ```
 
 `StateUpdater` 不保存任何人物专属状态。`lastUpdatedAt` 和每个活动渠道的效果保存在不可变的 `StateEvolutionContext` 中，并与人物一起持久化。
 
-如果 LLM 评估失败，工作副本不会提交到 `Person`，也不会调用 Repository 保存。
+如果 LLM 评估失败，工作副本不会提交；如果评估期间人物被其他请求更新，旧结果也不会覆盖数据库中的新版本。
+
+实时人物事件必须通过 `PersonEventCommandService`：
+
+- `start`：先结算旧效果，再开始或替换事件并评估新效果
+- `finish`：把效果精确结算到结束时间，再移除对应渠道效果
+- `recordHistorical`：只记录过去事件，不回放、不修改当前短期状态
 
 ## 日志
 
@@ -208,7 +260,7 @@ export STATE_LOG_LEVEL=DEBUG
 export EVENT_LOG_LEVEL=DEBUG
 ```
 
-日志只记录标识符、模型名、服务端主机、活动类型、渠道、时间、文本长度和数量等结构化信息。禁止记录聊天正文、事件标题、地点、参与者、备注、提示词、API Key、工具参数、工具结果、内部测试令牌和长期记忆内容。
+日志只记录标识符、模型名、服务端主机、活动类型、渠道、时间、文本长度和数量等结构化信息。禁止记录聊天正文、事件标题、地点、参与者、备注、提示词、API Key、工具参数、工具结果、数据库密码、内部测试令牌和长期记忆内容。
 
 测试使用独立的 `logback-test.xml`，默认只输出 `WARN` 和 `ERROR`。
 
@@ -218,13 +270,13 @@ export EVENT_LOG_LEVEL=DEBUG
 mvn verify
 ```
 
-GitHub Actions 会使用 Java 21 执行编译、Spring 上下文启动测试、单元测试和 JaCoCo 报告生成。单元测试不会向真实模型供应商发送网络请求。
+GitHub Actions 使用 Java 21 执行编译、Spring 上下文启动测试、单元测试、MySQL 8.4 Testcontainers 集成测试和 JaCoCo 报告生成。测试不会向真实模型供应商发送网络请求。
 
 ## 下一步
 
-1. 使用 `LanguageModelGateway` 实现 `StateTransitionEvaluator`
-2. 增加独立的工具注册与 Agent 循环执行层
-3. 增加聊天应用服务和消息历史接口
-4. 实现数据库版 `PersonRepository`
-5. 接入 Mem0 长期记忆
-6. 增加乐观锁，防止同一人物的并发更新覆盖
+1. 增加创建人物和查询人物的应用服务
+2. 增加人物、状态和事件 HTTP 接口
+3. 将所有事件写入口迁移到 `PersonEventCommandService`
+4. 收紧 `Person` 中可绕过应用服务的直接事件修改方法
+5. 为 Agent 增加工具数量、超时、结果大小、幂等性和并行安全限制
+6. 接入 Mem0 长期记忆和聊天历史持久化
