@@ -4,6 +4,7 @@ import com.laishengkai.digitalperson.application.PersonCreationConflictException
 import com.laishengkai.digitalperson.application.PersonNotFoundException;
 import com.laishengkai.digitalperson.application.PersonVersionConflictException;
 import com.laishengkai.digitalperson.application.UnsettledPersonEventException;
+import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -47,6 +48,17 @@ public final class PersonApiExceptionHandler {
         return response(HttpStatus.CONFLICT, "PERSON_EVENT_STATE_UNSETTLED", error.getMessage());
     }
 
+    @ExceptionHandler(LanguageModelException.class)
+    public ResponseEntity<PersonController.ErrorResponse> stateEvaluationFailure(
+            LanguageModelException ignored
+    ) {
+        return response(
+                HttpStatus.BAD_GATEWAY,
+                "STATE_EVALUATION_FAILED",
+                "The configured language model could not evaluate the event"
+        );
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<PersonController.ErrorResponse> stateConflict(
             IllegalStateException error
@@ -72,7 +84,7 @@ public final class PersonApiExceptionHandler {
     public ResponseEntity<PersonController.ErrorResponse> asyncFailure(
             CompletionException error
     ) {
-        Throwable cause = error.getCause();
+        Throwable cause = unwrap(error);
         if (cause instanceof PersonNotFoundException notFound) {
             return notFound(notFound);
         }
@@ -82,10 +94,16 @@ public final class PersonApiExceptionHandler {
         if (cause instanceof UnsettledPersonEventException unsettled) {
             return unsettledEvent(unsettled);
         }
+        if (cause instanceof LanguageModelException modelFailure) {
+            return stateEvaluationFailure(modelFailure);
+        }
         if (cause instanceof IllegalStateException eventState) {
             return stateConflict(eventState);
         }
-        if (cause instanceof RuntimeException invalid) {
+        if (cause instanceof IllegalArgumentException invalid) {
+            return invalidRequest(invalid);
+        }
+        if (cause instanceof NullPointerException invalid) {
             return invalidRequest(invalid);
         }
         return response(
@@ -93,6 +111,14 @@ public final class PersonApiExceptionHandler {
                 "INTERNAL_ERROR",
                 "Person command failed"
         );
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private static ResponseEntity<PersonController.ErrorResponse> response(
