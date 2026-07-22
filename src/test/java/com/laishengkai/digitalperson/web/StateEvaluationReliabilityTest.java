@@ -7,6 +7,8 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
 import com.laishengkai.digitalperson.dialogue.ModelFinishReason;
 import com.laishengkai.digitalperson.dialogue.ModelToolCall;
 import com.laishengkai.digitalperson.dialogue.ModelUsage;
+import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
+import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import com.laishengkai.digitalperson.infrastructure.langchain4j.LanguageModelProperties;
 import com.laishengkai.digitalperson.infrastructure.state.StateTransitionEvaluationDiagnostic;
 import org.junit.jupiter.api.Test;
@@ -41,8 +43,16 @@ class StateEvaluationReliabilityTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         LanguageModelRequest request = captured.get();
-        String systemPrompt = request.messages().getFirst().text();
-        String userPrompt = request.messages().get(1).text();
+        SystemModelMessage systemMessage = assertInstanceOf(
+                SystemModelMessage.class,
+                request.messages().getFirst()
+        );
+        UserModelMessage userMessage = assertInstanceOf(
+                UserModelMessage.class,
+                request.messages().get(1)
+        );
+        String systemPrompt = systemMessage.text();
+        String userPrompt = userMessage.text();
 
         assertTrue(systemPrompt.contains("只提交由 newEvent 直接导致"));
         assertTrue(systemPrompt.contains("证据较弱时应直接省略"));
