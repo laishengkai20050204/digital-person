@@ -15,3 +15,15 @@ management:
     health:
       probes:
         enabled: true
+
+digital-person:
+  llm:
+    enabled: ${LLM_ENABLED:false}
+    base-url: ${LLM_BASE_URL:https://openrouter.ai/api/v1}
+    api-key: ${LLM_API_KEY:}
+    model: ${LLM_MODEL:}
+    timeout: ${LLM_TIMEOUT:60s}
+    max-retries: ${LLM_MAX_RETRIES:2}
+    connection-test:
+      enabled: ${LLM_CONNECTION_TEST_ENABLED:false}
+      token: ${LLM_CONNECTION_TEST_TOKEN:}
