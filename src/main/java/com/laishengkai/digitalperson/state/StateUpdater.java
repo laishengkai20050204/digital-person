@@ -254,19 +254,23 @@ public final class StateUpdater {
         int appliedIntervalCount = 0;
 
         for (Instant intervalEnd : boundaries) {
+            Instant currentIntervalStart = intervalStart;
             List<ChannelStateEffect> activeEffects = context.channelEffects()
                     .values()
                     .stream()
                     .filter(effect -> remainsActiveAfter(
                             effect,
-                            intervalStart,
+                            currentIntervalStart,
                             effectEndTimes
                     ))
                     .toList();
             List<StateTransition> mergedTransitions = transitionMerger.merge(
                     activeEffects
             );
-            Duration intervalDuration = Duration.between(intervalStart, intervalEnd);
+            Duration intervalDuration = Duration.between(
+                    currentIntervalStart,
+                    intervalEnd
+            );
 
             if (!intervalDuration.isZero() && !mergedTransitions.isEmpty()) {
                 transitionModel.applyAll(state, mergedTransitions, intervalDuration);
