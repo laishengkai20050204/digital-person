@@ -8,7 +8,6 @@ import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.PersonId;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,7 +31,6 @@ import java.util.concurrent.CompletionStage;
 /** Token-protected HTTP boundary for person-owned event commands. */
 @RestController
 @RequestMapping("/api/persons/{personId}/events")
-@ConditionalOnBean(PersonEventCommandService.class)
 @ConditionalOnProperty(
         prefix = "digital-person.person-api",
         name = "enabled",
