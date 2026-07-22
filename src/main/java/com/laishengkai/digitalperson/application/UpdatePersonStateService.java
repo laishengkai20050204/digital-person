@@ -1,9 +1,11 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
+import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
@@ -18,7 +20,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -91,7 +95,7 @@ public final class UpdatePersonStateService {
         );
 
         try {
-            Person person = personRepository.findById(requestedPersonId)
+            VersionedPerson loadedPerson = personRepository.findById(requestedPersonId)
                     .orElseThrow(() -> {
                         LOGGER.warn(
                                 "Cannot update missing person: personId={}",
@@ -99,19 +103,24 @@ public final class UpdatePersonStateService {
                         );
                         return new PersonNotFoundException(requestedPersonId);
                     });
+            Person person = loadedPerson.person().copy();
+            long expectedVersion = loadedPerson.version();
 
             PersonState workingState = person.getState();
+            StateEvolutionContext existingContext = person.getStateEvolutionContext();
             StateUpdatePreparation preparation = stateUpdater.prepare(
                     workingState,
                     person.getCurrentPersonEvents(currentTime),
                     currentTime,
-                    person.getStateEvolutionContext()
+                    existingContext,
+                    cachedEffectEndTimes(person, existingContext)
             );
             PersonStateSnapshot evaluationSnapshot = workingState.snapshot();
 
             LOGGER.debug(
-                    "Prepared person state update: personId={}, pendingChannels={}, retainedEffectCount={}",
+                    "Prepared person state update: personId={}, expectedVersion={}, pendingChannels={}, retainedEffectCount={}",
                     requestedPersonId,
+                    expectedVersion,
                     preparation.pendingEvents().keySet(),
                     preparation.settledContext().channelEffects().size()
             );
@@ -143,7 +152,12 @@ public final class UpdatePersonStateService {
                 );
 
                 person.commitStateUpdate(workingState, completedContext);
-                personRepository.save(person);
+                if (!personRepository.save(person, expectedVersion)) {
+                    throw new PersonVersionConflictException(
+                            requestedPersonId,
+                            expectedVersion
+                    );
+                }
 
                 return new StateUpdateResult(
                         person.getId(),
@@ -156,15 +170,17 @@ public final class UpdatePersonStateService {
                 long elapsedMillis = elapsedMillis(startedAtNanos);
                 if (error == null) {
                     LOGGER.info(
-                            "Completed person state update: personId={}, evaluatedEventCount={}, elapsedMs={}",
+                            "Completed person state update: personId={}, expectedVersion={}, evaluatedEventCount={}, elapsedMs={}",
                             requestedPersonId,
+                            expectedVersion,
                             evaluations.size(),
                             elapsedMillis
                     );
                 } else {
                     LOGGER.warn(
-                            "Person state update failed: personId={}, elapsedMs={}",
+                            "Person state update failed: personId={}, expectedVersion={}, elapsedMs={}",
                             requestedPersonId,
+                            expectedVersion,
                             elapsedMillis,
                             error
                     );
@@ -232,6 +248,19 @@ public final class UpdatePersonStateService {
                             safeTransitions
                     );
                 });
+    }
+
+    private static Map<EventId, Instant> cachedEffectEndTimes(
+            Person person,
+            StateEvolutionContext context
+    ) {
+        Map<EventId, Instant> endTimes = new HashMap<>();
+        context.channelEffects().values().forEach(effect ->
+                person.getPersonEventById(effect.eventId())
+                        .flatMap(PersonEvent::getEndTime)
+                        .ifPresent(endTime -> endTimes.put(effect.eventId(), endTime))
+        );
+        return Map.copyOf(endTimes);
     }
 
     private static long elapsedMillis(long startedAtNanos) {

@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 
 /**
@@ -109,6 +110,18 @@ public final class Person {
         );
     }
 
+    /** Returns a fully detached aggregate copy for repository and application boundaries. */
+    public Person copy() {
+        return new Person(
+                id,
+                personality,
+                state,
+                personTimeline,
+                userTimeline,
+                stateEvolutionContext
+        );
+    }
+
     public PersonId getId() {
         return id;
     }
@@ -139,6 +152,11 @@ public final class Person {
     /** Returns a detached copy; mutations on it do not affect this aggregate. */
     public EventTimeline getUserTimeline() {
         return userTimeline.copy();
+    }
+
+    /** Returns one detached person-owned event by identity. */
+    public Optional<PersonEvent> getPersonEventById(EventId eventId) {
+        return personTimeline.getById(eventId);
     }
 
     public List<PersonEvent> getCurrentPersonEvents(Instant now) {
