@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
@@ -57,8 +58,12 @@ public class MySqlPersonPersistenceConfiguration {
     }
 
     @Bean
-    PersonAggregateJsonMapper personAggregateJsonMapper(ObjectMapper objectMapper) {
-        return new PersonAggregateJsonMapper(objectMapper);
+    PersonAggregateJsonMapper personAggregateJsonMapper() {
+        return new PersonAggregateJsonMapper(
+                JsonMapper.builder()
+                        .addModule(new JavaTimeModule())
+                        .build()
+        );
     }
 
     @Bean
