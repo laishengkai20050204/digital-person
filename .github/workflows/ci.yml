@@ -28,4 +28,14 @@ jobs:
         run: bash -n ops/deploy-from-git.sh
 
       - name: Verify
-        run: mvn --batch-mode --no-transfer-progress verify
+        run: |
+          set -o pipefail
+          mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven-verify.log
+
+      - name: Upload Maven log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-verify-log
+          path: maven-verify.log
+          if-no-files-found: error
