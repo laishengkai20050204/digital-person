@@ -57,6 +57,7 @@ public final class LangChain4jLanguageModel implements LanguageModelGateway {
     );
     private static final Executor VIRTUAL_THREAD_EXECUTOR = command ->
             Thread.startVirtualThread(command);
+    private static final int MAX_EMPTY_ASSISTANT_ATTEMPTS = 2;
 
     private final ChatModel chatModel;
     private final String modelName;
@@ -120,6 +121,7 @@ public final class LangChain4jLanguageModel implements LanguageModelGateway {
     private LanguageModelResponse invokeBlocking(LanguageModelRequest request) {
         String invocationId = UUID.randomUUID().toString();
         long startedAtNanos = System.nanoTime();
+        ChatRequest chatRequest = toChatRequest(request);
 
         LOGGER.debug(
                 "Starting language model invocation: invocationId={}, model={}, endpointHost={}, messageCount={}, toolCount={}",
@@ -130,31 +132,58 @@ public final class LangChain4jLanguageModel implements LanguageModelGateway {
                 request.tools().size()
         );
 
-        try {
-            ChatResponse response = chatModel.chat(toChatRequest(request));
-            LanguageModelResponse mappedResponse = toLanguageModelResponse(response);
+        for (int attempt = 1; attempt <= MAX_EMPTY_ASSISTANT_ATTEMPTS; attempt++) {
+            try {
+                ChatResponse response = chatModel.chat(chatRequest);
+                LanguageModelResponse mappedResponse = toLanguageModelResponse(response);
 
-            LOGGER.debug(
-                    "Completed language model invocation: invocationId={}, model={}, responseLength={}, toolCallCount={}, finishReason={}, elapsedMs={}",
-                    invocationId,
-                    modelName,
-                    mappedResponse.text().length(),
-                    mappedResponse.toolCalls().size(),
-                    mappedResponse.finishReason(),
-                    elapsedMillis(startedAtNanos)
-            );
+                LOGGER.debug(
+                        "Completed language model invocation: invocationId={}, model={}, attempt={}, responseLength={}, toolCallCount={}, finishReason={}, elapsedMs={}",
+                        invocationId,
+                        modelName,
+                        attempt,
+                        mappedResponse.text().length(),
+                        mappedResponse.toolCalls().size(),
+                        mappedResponse.finishReason(),
+                        elapsedMillis(startedAtNanos)
+                );
 
-            return mappedResponse;
-        } catch (LanguageModelException error) {
-            logFailure(invocationId, startedAtNanos, error);
-            throw error;
-        } catch (RuntimeException error) {
-            logFailure(invocationId, startedAtNanos, error);
-            throw new LanguageModelException(
-                    "language model invocation failed for model " + modelName,
-                    error
-            );
+                return mappedResponse;
+            } catch (EmptyAssistantMessageException error) {
+                if (attempt < MAX_EMPTY_ASSISTANT_ATTEMPTS) {
+                    LOGGER.warn(
+                            "Retrying empty assistant response: invocationId={}, model={}, endpointHost={}, attempt={}, maxAttempts={}",
+                            invocationId,
+                            modelName,
+                            endpointHost,
+                            attempt,
+                            MAX_EMPTY_ASSISTANT_ATTEMPTS
+                    );
+                    continue;
+                }
+
+                LanguageModelException failure = new LanguageModelException(
+                        "language model returned an empty assistant message after "
+                                + MAX_EMPTY_ASSISTANT_ATTEMPTS
+                                + " attempts for model "
+                                + modelName,
+                        error
+                );
+                logFailure(invocationId, startedAtNanos, failure);
+                throw failure;
+            } catch (LanguageModelException error) {
+                logFailure(invocationId, startedAtNanos, error);
+                throw error;
+            } catch (RuntimeException error) {
+                logFailure(invocationId, startedAtNanos, error);
+                throw new LanguageModelException(
+                        "language model invocation failed for model " + modelName,
+                        error
+                );
+            }
         }
+
+        throw new IllegalStateException("empty-assistant retry loop completed unexpectedly");
     }
 
     private static ChatModel createChatModel(LangChain4jModelConfig config) {
@@ -295,9 +324,14 @@ public final class LangChain4jLanguageModel implements LanguageModelGateway {
                                 request.arguments()
                         ))
                         .toList();
+        String text = Objects.requireNonNullElse(aiMessage.text(), "");
+
+        if (text.isBlank() && toolCalls.isEmpty()) {
+            throw new EmptyAssistantMessageException();
+        }
 
         AssistantModelMessage message = new AssistantModelMessage(
-                aiMessage.text(),
+                text,
                 toolCalls
         );
 
@@ -385,5 +419,11 @@ public final class LangChain4jLanguageModel implements LanguageModelGateway {
             throw new IllegalArgumentException(fieldName + " cannot be blank");
         }
         return normalized;
+    }
+
+    private static final class EmptyAssistantMessageException extends RuntimeException {
+        private EmptyAssistantMessageException() {
+            super("assistant message contained neither text nor tool calls");
+        }
     }
 }
