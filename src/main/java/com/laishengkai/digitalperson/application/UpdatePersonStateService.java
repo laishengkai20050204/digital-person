@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
@@ -18,7 +19,9 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -101,11 +104,13 @@ public final class UpdatePersonStateService {
                     });
 
             PersonState workingState = person.getState();
+            StateEvolutionContext existingContext = person.getStateEvolutionContext();
             StateUpdatePreparation preparation = stateUpdater.prepare(
                     workingState,
                     person.getCurrentPersonEvents(currentTime),
                     currentTime,
-                    person.getStateEvolutionContext()
+                    existingContext,
+                    cachedEffectEndTimes(person, existingContext)
             );
             PersonStateSnapshot evaluationSnapshot = workingState.snapshot();
 
@@ -232,6 +237,19 @@ public final class UpdatePersonStateService {
                             safeTransitions
                     );
                 });
+    }
+
+    private static Map<EventId, Instant> cachedEffectEndTimes(
+            Person person,
+            StateEvolutionContext context
+    ) {
+        Map<EventId, Instant> endTimes = new HashMap<>();
+        context.channelEffects().values().forEach(effect ->
+                person.getPersonEventById(effect.eventId())
+                        .flatMap(PersonEvent::getEndTime)
+                        .ifPresent(endTime -> endTimes.put(effect.eventId(), endTime))
+        );
+        return Map.copyOf(endTimes);
     }
 
     private static long elapsedMillis(long startedAtNanos) {
