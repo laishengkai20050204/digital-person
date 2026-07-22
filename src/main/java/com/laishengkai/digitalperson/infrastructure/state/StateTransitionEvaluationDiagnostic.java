@@ -99,6 +99,26 @@ public final class StateTransitionEvaluationDiagnostic {
         return redacted.substring(0, MAX_DIAGNOSTIC_MESSAGE_LENGTH) + "…";
     }
 
+    private static String diagnosticMessage(
+            Throwable exposedError,
+            Throwable rootCause
+    ) {
+        String outerMessage = safeMessage(exposedError);
+        if (rootCause == exposedError) {
+            return outerMessage;
+        }
+
+        String rootType = rootCause.getClass().getSimpleName();
+        String rootMessage = safeMessage(rootCause);
+        String rootDetails = rootMessage.isEmpty()
+                ? rootType
+                : rootType + ": " + rootMessage;
+        if (outerMessage.isEmpty()) {
+            return "rootCause=" + rootDetails;
+        }
+        return outerMessage + " | rootCause=" + rootDetails;
+    }
+
     private static String normalize(String value) {
         return value == null ? "" : value.strip();
     }
@@ -148,7 +168,7 @@ public final class StateTransitionEvaluationDiagnostic {
                     response,
                     List.of(),
                     exposedError.getClass().getSimpleName(),
-                    safeMessage(exposedError),
+                    diagnosticMessage(exposedError, rootCause),
                     rootCause.getClass().getSimpleName(),
                     safeMessage(rootCause)
             );
