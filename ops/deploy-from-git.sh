@@ -8,6 +8,7 @@ REPOSITORY_URL="${REPOSITORY_URL:-git@github.com:laishengkai20050204/digital-per
 SERVICE_NAME="${SERVICE_NAME:-person-ai}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}"
 DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/github-readonly}"
+REQUIRED_JAVA_MAJOR=21
 
 SOURCE_REPO="$APP_DIR/source.git"
 BUILD_ROOT="$APP_DIR/builds"
@@ -23,12 +24,65 @@ if [[ ! "$APP_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   exit 1
 fi
 
-for command_name in git mvn java curl flock; do
+is_required_jdk() {
+  local candidate="$1"
+  local javac_version
+  local javac_major
+
+  [ -x "$candidate/bin/java" ] && [ -x "$candidate/bin/javac" ] || return 1
+
+  javac_version="$("$candidate/bin/javac" -version 2>&1 | awk '{print $2}')"
+  javac_major="${javac_version%%.*}"
+  [ "$javac_major" = "$REQUIRED_JAVA_MAJOR" ]
+}
+
+SELECTED_JAVA_HOME=""
+JAVA_HOME_CANDIDATES=()
+
+if [ -n "${JAVA_HOME:-}" ]; then
+  JAVA_HOME_CANDIDATES+=("$JAVA_HOME")
+fi
+
+shopt -s nullglob
+JAVA_HOME_CANDIDATES+=(
+  /usr/lib/jvm/java-21-openjdk-*
+  /usr/lib/jvm/temurin-21-*
+  /usr/lib/jvm/jdk-21-*
+)
+shopt -u nullglob
+
+for candidate in "${JAVA_HOME_CANDIDATES[@]}"; do
+  if is_required_jdk "$candidate"; then
+    SELECTED_JAVA_HOME="$candidate"
+    break
+  fi
+done
+
+if [ -z "$SELECTED_JAVA_HOME" ]; then
+  echo "服务器没有可用的完整 JDK 21（必须同时包含 java 和 javac）"
+  echo "Ubuntu 可安装：sudo apt-get install -y openjdk-21-jdk"
+  exit 1
+fi
+
+export JAVA_HOME="$SELECTED_JAVA_HOME"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+echo "部署构建使用 JAVA_HOME：$JAVA_HOME"
+java -version
+javac -version
+
+for command_name in git mvn java javac curl flock; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "服务器缺少命令：$command_name"
     exit 1
   fi
 done
+
+if ! mvn -version | grep -q "Java version: 21"; then
+  echo "Maven 未使用 Java 21，拒绝继续部署"
+  mvn -version || true
+  exit 1
+fi
 
 if [ ! -r "$DEPLOY_KEY" ]; then
   echo "缺少只读 GitHub Deploy Key：$DEPLOY_KEY"
