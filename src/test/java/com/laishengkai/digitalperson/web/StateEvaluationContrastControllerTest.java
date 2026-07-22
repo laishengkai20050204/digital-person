@@ -6,6 +6,7 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
 import com.laishengkai.digitalperson.dialogue.ModelFinishReason;
 import com.laishengkai.digitalperson.dialogue.ModelToolCall;
 import com.laishengkai.digitalperson.dialogue.ModelUsage;
+import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import com.laishengkai.digitalperson.infrastructure.langchain4j.LanguageModelProperties;
 import com.laishengkai.digitalperson.infrastructure.state.StateTransitionEvaluationDiagnostic;
 import org.junit.jupiter.api.Test;
@@ -76,7 +77,11 @@ class StateEvaluationContrastControllerTest {
         assertEquals(2, body.parsedTransitions().size());
         assertEquals("", body.errorType());
 
-        String userPrompt = captured.get().messages().get(1).text();
+        UserModelMessage userMessage = assertInstanceOf(
+                UserModelMessage.class,
+                captured.get().messages().get(1)
+        );
+        String userPrompt = userMessage.text();
         assertTrue(userPrompt.contains("亲密朋友因误会发来严厉指责"));
         assertTrue(userPrompt.contains("\"emotionality\":0.9"));
         assertTrue(userPrompt.contains("\"evaluationTime\":\"2026-07-22T20:00:00Z\""));
