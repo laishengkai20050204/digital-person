@@ -37,6 +37,7 @@ public final class LanguageModelStateTransitionEvaluator
     static final String TOOL_NAME = "submit_state_transitions";
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
+            .findAndRegisterModules()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, true)
             .configure(DeserializationFeature.FAIL_ON_TRAILING_TOKENS, true);
 
