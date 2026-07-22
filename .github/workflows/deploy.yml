@@ -33,31 +33,11 @@ jobs:
           java-version: "21"
           cache: maven
 
+      - name: Validate deployment script
+        run: bash -n ops/deploy-from-git.sh
+
       - name: Build and test
         run: mvn --batch-mode --no-transfer-progress clean verify
-
-      - name: Locate executable JAR
-        id: jar
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          JAR_FILE="$(find target -maxdepth 1 -type f \
-            -name '*.jar' \
-            ! -name 'original-*.jar' \
-            -print -quit)"
-
-          if [ -z "$JAR_FILE" ]; then
-            echo "没有找到可部署的 JAR"
-            exit 1
-          fi
-
-          JAR_SHA256="$(sha256sum "$JAR_FILE" | awk '{print $1}')"
-
-          echo "path=$JAR_FILE" >> "$GITHUB_OUTPUT"
-          echo "sha256=$JAR_SHA256" >> "$GITHUB_OUTPUT"
-          echo "将部署：$JAR_FILE"
-          echo "SHA-256：$JAR_SHA256"
 
       - name: Configure SSH
         env:
@@ -78,12 +58,10 @@ jobs:
 
           chmod 600 ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/known_hosts
-
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
-          command -v rsync >/dev/null
 
-      - name: Prepare remote rsync basis
-        timeout-minutes: 2
+      - name: Build and deploy exact commit on server
+        timeout-minutes: 30
         shell: bash
         run: |
           set -euo pipefail
@@ -96,176 +74,7 @@ jobs:
             -o ConnectTimeout=15 \
             -o ServerAliveInterval=15 \
             -o ServerAliveCountMax=3 \
+            -o TCPKeepAlive=yes \
             "$SERVER_USER@$SERVER_HOST" \
-            "APP_SHA='$GITHUB_SHA' bash -s" <<'PREPARE_SCRIPT'
-
-          set -euo pipefail
-
-          APP_DIR="/opt/person-ai"
-          UPLOAD_JAR="/tmp/person-ai-$APP_SHA.upload.jar"
-          LEGACY_UPLOAD_JAR="/tmp/person-ai-upload.jar"
-          CURRENT_JAR="$(readlink -f "$APP_DIR/current.jar" 2>/dev/null || true)"
-
-          if [ -f "$UPLOAD_JAR" ]; then
-            echo "保留同一提交的未完成文件并继续续传：$UPLOAD_JAR"
-          elif [ -f "$LEGACY_UPLOAD_JAR" ]; then
-            cp --force "$LEGACY_UPLOAD_JAR" "$UPLOAD_JAR"
-            echo "已使用上一次未完成上传作为同步基准"
-          elif [ -n "$CURRENT_JAR" ] && [ -f "$CURRENT_JAR" ]; then
-            cp --force "$CURRENT_JAR" "$UPLOAD_JAR"
-            echo "已使用当前版本作为增量同步基准：$CURRENT_JAR"
-          else
-            rm -f "$UPLOAD_JAR"
-            echo "没有可用的旧版本，本次将完整上传"
-          fi
-
-          PREPARE_SCRIPT
-
-      - name: Incrementally upload JAR
-        timeout-minutes: 45
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          RSYNC_RSH="ssh -i ~/.ssh/id_ed25519 -p $SERVER_PORT \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=3 \
-            -o TCPKeepAlive=yes"
-
-          REMOTE_UPLOAD="/tmp/person-ai-$GITHUB_SHA.upload.jar"
-          SUCCESS=false
-          for attempt in 1 2 3; do
-            echo "增量上传尝试：$attempt/3"
-
-            if rsync \
-              --archive \
-              --checksum \
-              --no-whole-file \
-              --inplace \
-              --partial \
-              --timeout=120 \
-              --human-readable \
-              --info=progress2,stats1 \
-              -e "$RSYNC_RSH" \
-              "${{ steps.jar.outputs.path }}" \
-              "$SERVER_USER@$SERVER_HOST:$REMOTE_UPLOAD"; then
-              SUCCESS=true
-              break
-            fi
-
-            if [ "$attempt" -lt 3 ]; then
-              WAIT_SECONDS=$((attempt * 10))
-              echo "上传中断，${WAIT_SECONDS} 秒后从现有文件继续"
-              sleep "$WAIT_SECONDS"
-            fi
-          done
-
-          if [ "$SUCCESS" != "true" ]; then
-            echo "三次增量上传均失败；远端文件会保留供同一提交重跑续传"
-            exit 1
-          fi
-
-      - name: Deploy, restart and health check
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ssh \
-            -i ~/.ssh/id_ed25519 \
-            -p "$SERVER_PORT" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=3 \
-            "$SERVER_USER@$SERVER_HOST" \
-            "APP_SHA='$GITHUB_SHA' EXPECTED_SHA='${{ steps.jar.outputs.sha256 }}' bash -s" <<'DEPLOY_SCRIPT'
-
-          set -euo pipefail
-
-          APP_DIR="/opt/person-ai"
-          RELEASE_DIR="$APP_DIR/releases"
-          UPLOADED_JAR="/tmp/person-ai-$APP_SHA.upload.jar"
-          NEW_JAR="$RELEASE_DIR/person-ai-$APP_SHA.jar"
-          PREVIOUS_JAR=""
-
-          ACTUAL_SHA="$(sha256sum "$UPLOADED_JAR" | awk '{print $1}')"
-          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-            echo "上传文件 SHA-256 校验失败"
-            echo "预期：$EXPECTED_SHA"
-            echo "实际：$ACTUAL_SHA"
-            exit 1
-          fi
-
-          echo "上传文件 SHA-256 校验通过"
-          mkdir -p "$RELEASE_DIR"
-
-          if [ -L "$APP_DIR/current.jar" ]; then
-            PREVIOUS_JAR="$(readlink -f "$APP_DIR/current.jar" 2>/dev/null || true)"
-          fi
-
-          mv "$UPLOADED_JAR" "$NEW_JAR"
-          touch "$NEW_JAR"
-          ln -sfn "$NEW_JAR" "$APP_DIR/current.jar"
-
-          sudo -n /usr/bin/systemctl restart person-ai
-
-          HEALTHY=false
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error \
-              http://127.0.0.1:8080/actuator/health \
-              | grep -q '"status":"UP"'; then
-              HEALTHY=true
-              break
-            fi
-
-            echo "等待应用启动：$attempt/20"
-            sleep 3
-          done
-
-          if [ "$HEALTHY" != "true" ]; then
-            echo "新版本健康检查失败"
-            sudo -n /usr/bin/systemctl status person-ai --no-pager || true
-            sudo -n /usr/bin/systemctl is-active person-ai || true
-
-            if [ -n "$PREVIOUS_JAR" ] && [ -f "$PREVIOUS_JAR" ]; then
-              echo "回滚到上一个版本：$PREVIOUS_JAR"
-              ln -sfn "$PREVIOUS_JAR" "$APP_DIR/current.jar"
-              sudo -n /usr/bin/systemctl restart person-ai
-            fi
-
-            exit 1
-          fi
-
-          CURRENT_RELEASE="$(readlink -f "$APP_DIR/current.jar")"
-          if [ ! -f "$CURRENT_RELEASE" ]; then
-            echo "拒绝清理：current.jar 未指向现存文件"
-            exit 1
-          fi
-
-          echo "部署成功：$APP_SHA"
-          rm -f /tmp/person-ai-upload.jar
-          find /tmp -maxdepth 1 -type f \
-            -name 'person-ai-*.upload.jar' \
-            -mtime +2 \
-            -delete
-
-          find "$RELEASE_DIR" -maxdepth 1 -type f \
-            -name 'person-ai-*.jar' \
-            ! -path "$CURRENT_RELEASE" \
-            -printf '%C@ %p\n' \
-            | sort -nr \
-            | tail -n +5 \
-            | cut -d' ' -f2- \
-            | xargs -r rm -f
-
-          if [ ! -f "$CURRENT_RELEASE" ]; then
-            echo "发布清理错误：当前版本被删除"
-            exit 1
-          fi
-
-          DEPLOY_SCRIPT
+            "APP_SHA='$GITHUB_SHA' DEPLOY_BRANCH='main' bash -s" \
+            < ops/deploy-from-git.sh
