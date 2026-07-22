@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
 import com.laishengkai.digitalperson.person.Person;
+import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
@@ -11,7 +12,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /** MySQL/InnoDB adapter that stores one complete aggregate as a JSON document. */
-public final class JdbcPersonRepository implements PersonRepository {
+public final class JdbcPersonRepository
+        implements PersonRepository, PersonCreationRepository {
     private static final String FIND_SQL = """
             SELECT version, aggregate_json
             FROM digital_person
@@ -59,6 +61,7 @@ public final class JdbcPersonRepository implements PersonRepository {
      *
      * @return {@code false} when the person identifier already exists
      */
+    @Override
     public boolean insert(Person person) {
         Person source = Objects.requireNonNull(person, "person cannot be null");
         try {

@@ -28,6 +28,9 @@ digital-person:
       password: ${MYSQL_PASSWORD:}
       maximum-pool-size: ${MYSQL_MAXIMUM_POOL_SIZE:10}
       connection-timeout: ${MYSQL_CONNECTION_TIMEOUT:30s}
+  person-api:
+    enabled: ${PERSON_API_ENABLED:false}
+    token: ${PERSON_API_TOKEN:}
   llm:
     enabled: ${LLM_ENABLED:false}
     base-url: ${LLM_BASE_URL:https://openrouter.ai/api/v1}

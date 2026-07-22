@@ -1,9 +1,11 @@
 package com.laishengkai.digitalperson.infrastructure.spring;
 
 import com.laishengkai.digitalperson.application.DefaultStateEvaluationContextAssembler;
+import com.laishengkai.digitalperson.application.PersonDirectoryService;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.application.UpdatePersonStateService;
+import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -26,6 +28,16 @@ public class PersonApplicationConfiguration {
     @ConditionalOnMissingBean(StateEvaluationContextAssembler.class)
     StateEvaluationContextAssembler stateEvaluationContextAssembler() {
         return DefaultStateEvaluationContextAssembler.withoutExternalSources();
+    }
+
+    @Bean
+    @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
+    @ConditionalOnMissingBean(PersonDirectoryService.class)
+    PersonDirectoryService personDirectoryService(
+            PersonRepository personRepository,
+            PersonCreationRepository creationRepository
+    ) {
+        return new PersonDirectoryService(personRepository, creationRepository);
     }
 
     @Bean
