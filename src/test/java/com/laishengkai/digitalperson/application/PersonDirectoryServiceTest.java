@@ -18,12 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PersonDirectoryServiceTest {
     private static final Personality PERSONALITY = new Personality(
-            0.4,
-            0.7,
-            0.3,
-            0.8,
-            0.6,
-            0.9
+            0.4, 0.7, 0.3, 0.8, 0.6, 0.9
     );
 
     @Test
@@ -38,7 +33,7 @@ class PersonDirectoryServiceTest {
         assertEquals(0, result.userEventCount());
         assertEquals(0.4, result.personality().honestyHumility());
         assertEquals(0.5, result.state().energy());
-        assertTrue(result.activeEffectChannels().isEmpty());
+        assertTrue(result.activeEffects().isEmpty());
         assertTrue(repository.findById(result.personId()).isPresent());
     }
 
@@ -57,6 +52,7 @@ class PersonDirectoryServiceTest {
         assertEquals(person.getStateSnapshot(), details.state());
         assertEquals(person.getId(), state.personId());
         assertEquals(details.state(), state.state());
+        assertEquals(details.activeEffects(), state.activeEffects());
     }
 
     @Test
