@@ -7,7 +7,7 @@ import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler
 import com.laishengkai.digitalperson.application.UpdatePersonStateService;
 import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import com.laishengkai.digitalperson.person.PersonRepository;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -41,12 +41,12 @@ public class PersonApplicationConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean({PersonRepository.class, StateTransitionEvaluator.class})
+    @ConditionalOnBean({PersonRepository.class, EventStateImpactEvaluator.class})
     @ConditionalOnMissingBean(UpdatePersonStateService.class)
     UpdatePersonStateService updatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
-            StateTransitionEvaluator evaluator,
+            EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
         return new UpdatePersonStateService(
@@ -58,12 +58,12 @@ public class PersonApplicationConfiguration {
     }
 
     @Bean
-    @ConditionalOnBean({PersonRepository.class, StateTransitionEvaluator.class})
+    @ConditionalOnBean({PersonRepository.class, EventStateImpactEvaluator.class})
     @ConditionalOnMissingBean(PersonEventCommandService.class)
     PersonEventCommandService personEventCommandService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
-            StateTransitionEvaluator evaluator,
+            EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
         return new PersonEventCommandService(
