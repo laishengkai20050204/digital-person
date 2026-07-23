@@ -105,6 +105,8 @@ class LanguageModelStateTransitionEvaluatorTest {
         assertTrue(schema.contains("cause"));
         assertTrue(schema.contains("endPolicy"));
         assertTrue(schema.contains("durationMinutes"));
+        assertTrue(schema.contains("\"minimum\":-3.0"));
+        assertTrue(schema.contains("\"maximum\":3.0"));
         UserModelMessage userMessage = assertInstanceOf(
                 UserModelMessage.class,
                 request.messages().get(1)
@@ -200,6 +202,16 @@ class LanguageModelStateTransitionEvaluatorTest {
                   "transitions":[{"dimension":"ENERGY","shape":0.0}],
                   "endPolicy":"EVENT_END",
                   "durationMinutes":0
+                }]}
+                """))).getMessage().contains("invalid shape"));
+
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"超出速率上限",
+                  "transitions":[{"dimension":"VALENCE","shape":3.01}],
+                  "endPolicy":"FIXED_TIME",
+                  "durationMinutes":60
                 }]}
                 """))).getMessage().contains("invalid shape"));
 
