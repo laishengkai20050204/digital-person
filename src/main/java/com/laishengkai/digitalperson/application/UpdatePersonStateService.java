@@ -7,11 +7,12 @@ import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
+import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
-import com.laishengkai.digitalperson.state.StateTransition;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdatePreparation;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -36,13 +37,10 @@ public final class UpdatePersonStateService {
 
     private final PersonRepository personRepository;
     private final StateUpdater stateUpdater;
-    private final StateTransitionEvaluator evaluator;
+    private final EventStateImpactEvaluator evaluator;
     private final StateEvaluationContextAssembler contextAssembler;
 
-    /**
-     * Compatibility constructor for callers that have not connected memory or
-     * conversation providers yet.
-     */
+    /** Compatibility constructor for active-only evaluators. */
     public UpdatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
@@ -51,15 +49,25 @@ public final class UpdatePersonStateService {
         this(
                 personRepository,
                 stateUpdater,
-                evaluator,
+                adapt(evaluator),
                 DefaultStateEvaluationContextAssembler.withoutExternalSources()
         );
+    }
+
+    /** Compatibility constructor for active-only evaluators with custom context. */
+    public UpdatePersonStateService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            StateTransitionEvaluator evaluator,
+            StateEvaluationContextAssembler contextAssembler
+    ) {
+        this(personRepository, stateUpdater, adapt(evaluator), contextAssembler);
     }
 
     public UpdatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
-            StateTransitionEvaluator evaluator,
+            EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
         this.personRepository = Objects.requireNonNull(
@@ -118,11 +126,12 @@ public final class UpdatePersonStateService {
             PersonStateSnapshot evaluationSnapshot = workingState.snapshot();
 
             LOGGER.debug(
-                    "Prepared person state update: personId={}, expectedVersion={}, pendingChannels={}, retainedEffectCount={}",
+                    "Prepared person state update: personId={}, expectedVersion={}, pendingChannels={}, retainedActivityEffectCount={}, retainedResidualEffectCount={}",
                     requestedPersonId,
                     expectedVersion,
                     preparation.pendingEvents().keySet(),
-                    preparation.settledContext().channelEffects().size()
+                    preparation.settledContext().channelEffects().size(),
+                    preparation.settledContext().residualEffects().size()
             );
 
             List<CompletableFuture<ChannelStateEffect>> evaluations =
@@ -227,27 +236,50 @@ public final class UpdatePersonStateService {
                         )),
                         "evaluator stage cannot be null"
                 ))
-                .thenApply(transitions -> {
-                    List<StateTransition> safeTransitions = List.copyOf(
-                            Objects.requireNonNull(
-                                    transitions,
-                                    "evaluator result cannot be null"
-                            )
-                    );
+                .thenApply(impact -> toChannelEffect(event, impact));
+    }
 
-                    LOGGER.debug(
-                            "Evaluated event state effect: eventId={}, channel={}, transitionCount={}",
-                            event.getId(),
-                            event.getChannel(),
-                            safeTransitions.size()
-                    );
+    private static ChannelStateEffect toChannelEffect(
+            PersonEvent event,
+            EventStateImpact impact
+    ) {
+        EventStateImpact safeImpact = Objects.requireNonNull(
+                impact,
+                "evaluator result cannot be null"
+        );
 
-                    return new ChannelStateEffect(
-                            event.getChannel(),
-                            event.getId(),
-                            safeTransitions
-                    );
-                });
+        LOGGER.debug(
+                "Evaluated event state effect: eventId={}, channel={}, activeTransitionCount={}, aftermathTransitionCount={}, aftermathDuration={}",
+                event.getId(),
+                event.getChannel(),
+                safeImpact.activeTransitions().size(),
+                safeImpact.aftermath().transitions().size(),
+                safeImpact.aftermath().duration()
+        );
+
+        return new ChannelStateEffect(
+                event.getChannel(),
+                event.getId(),
+                safeImpact.activeTransitions(),
+                safeImpact.aftermath()
+        );
+    }
+
+    private static EventStateImpactEvaluator adapt(StateTransitionEvaluator evaluator) {
+        StateTransitionEvaluator requestedEvaluator = Objects.requireNonNull(
+                evaluator,
+                "evaluator cannot be null"
+        );
+        return context -> Objects.requireNonNull(
+                        requestedEvaluator.evaluate(context),
+                        "evaluator stage cannot be null"
+                )
+                .thenApply(transitions -> EventStateImpact.activeOnly(
+                        List.copyOf(Objects.requireNonNull(
+                                transitions,
+                                "evaluator result cannot be null"
+                        ))
+                ));
     }
 
     private static Map<EventId, Instant> cachedEffectEndTimes(

@@ -89,22 +89,64 @@ record PersonAggregateDocument(
 
     record StateEvolutionDocument(
             Instant lastUpdatedAt,
-            List<ChannelEffectDocument> channelEffects
+            List<ChannelEffectDocument> channelEffects,
+            List<ResidualEffectDocument> residualEffects
     ) {
         StateEvolutionDocument {
-            channelEffects = copy(channelEffects, "channelEffects");
+            channelEffects = copyNullable(channelEffects, "channelEffects");
+            residualEffects = copyNullable(residualEffects, "residualEffects");
         }
     }
 
     record ChannelEffectDocument(
             String channel,
             String eventId,
-            List<TransitionDocument> transitions
+            List<TransitionDocument> transitions,
+            AftermathPlanDocument aftermath
     ) {
         ChannelEffectDocument {
             channel = requireText(channel, "channel");
             eventId = requireText(eventId, "eventId");
             transitions = copy(transitions, "transitions");
+        }
+    }
+
+    record AftermathPlanDocument(
+            long durationSeconds,
+            List<TransitionDocument> transitions
+    ) {
+        AftermathPlanDocument {
+            if (durationSeconds <= 0) {
+                throw new IllegalArgumentException("aftermath durationSeconds must be positive");
+            }
+            transitions = copy(transitions, "aftermath transitions");
+            if (transitions.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "aftermath transitions cannot be empty"
+                );
+            }
+        }
+    }
+
+    record ResidualEffectDocument(
+            String sourceEventId,
+            Instant startsAt,
+            Instant endsAt,
+            List<TransitionDocument> transitions
+    ) {
+        ResidualEffectDocument {
+            sourceEventId = requireText(sourceEventId, "sourceEventId");
+            startsAt = Objects.requireNonNull(startsAt, "startsAt cannot be null");
+            endsAt = Objects.requireNonNull(endsAt, "endsAt cannot be null");
+            if (!endsAt.isAfter(startsAt)) {
+                throw new IllegalArgumentException("residual endsAt must be after startsAt");
+            }
+            transitions = copy(transitions, "residual transitions");
+            if (transitions.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "residual transitions cannot be empty"
+                );
+            }
         }
     }
 
@@ -115,6 +157,10 @@ record PersonAggregateDocument(
                 throw new IllegalArgumentException("shape must be finite and non-zero");
             }
         }
+    }
+
+    private static <T> List<T> copyNullable(List<T> values, String fieldName) {
+        return values == null ? List.of() : copy(values, fieldName);
     }
 
     private static <T> List<T> copy(List<T> values, String fieldName) {

@@ -123,7 +123,8 @@ public final class PersonController {
                 details.stateLastUpdatedAt(),
                 channelNames(details.activeEffectChannels().stream()
                         .map(Enum::name)
-                        .toList())
+                        .toList()),
+                details.residualEffectCount()
         );
     }
 
@@ -135,7 +136,8 @@ public final class PersonController {
                 details.lastUpdatedAt(),
                 channelNames(details.activeEffectChannels().stream()
                         .map(Enum::name)
-                        .toList())
+                        .toList()),
+                details.residualEffectCount()
         );
     }
 
@@ -184,7 +186,8 @@ public final class PersonController {
             int personEventCount,
             int userEventCount,
             Instant stateLastUpdatedAt,
-            List<String> activeEffectChannels
+            List<String> activeEffectChannels,
+            int residualEffectCount
     ) {
     }
 
@@ -193,7 +196,8 @@ public final class PersonController {
             long version,
             StateResponse state,
             Instant lastUpdatedAt,
-            List<String> activeEffectChannels
+            List<String> activeEffectChannels,
+            int residualEffectCount
     ) {
     }
 

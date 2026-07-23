@@ -6,22 +6,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Merges the signed shapes supplied by all active activity channels.
- */
+/** Merges the signed shapes supplied by all currently active state effects. */
 public final class StateTransitionMerger {
 
     private static final double ZERO_EPSILON = 1.0e-12;
 
-    public List<StateTransition> merge(Collection<ChannelStateEffect> effects) {
-        Collection<ChannelStateEffect> requestedEffects = Objects.requireNonNull(
+    public List<StateTransition> merge(Collection<? extends StateEffect> effects) {
+        Collection<? extends StateEffect> requestedEffects = Objects.requireNonNull(
                 effects,
                 "effects cannot be null"
         );
         Map<StateDimension, Double> mergedShapes = new EnumMap<>(StateDimension.class);
 
-        for (ChannelStateEffect effect : requestedEffects) {
-            ChannelStateEffect nonNullEffect = Objects.requireNonNull(
+        for (StateEffect effect : requestedEffects) {
+            StateEffect nonNullEffect = Objects.requireNonNull(
                     effect,
                     "effect cannot be null"
             );

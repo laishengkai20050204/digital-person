@@ -43,7 +43,7 @@ class PersonAggregateJsonMapperTest {
         String json = mapper.write(source);
         Person restored = mapper.read(json);
 
-        assertTrue(json.contains("\"schemaVersion\":1"));
+        assertTrue(json.contains("\"schemaVersion\":2"));
         assertEquals(source.getId(), restored.getId());
         assertEquals(source.getPersonality(), restored.getPersonality());
         assertEquals(source.getStateSnapshot(), restored.getStateSnapshot());
@@ -73,7 +73,7 @@ class PersonAggregateJsonMapperTest {
     void rejectsUnknownDocumentSchemaVersion() {
         PersonAggregateJsonMapper mapper = new PersonAggregateJsonMapper(objectMapper());
         String json = mapper.write(completePerson())
-                .replace("\"schemaVersion\":1", "\"schemaVersion\":99");
+                .replace("\"schemaVersion\":2", "\"schemaVersion\":99");
 
         assertThrows(PersonPersistenceException.class, () -> mapper.read(json));
     }

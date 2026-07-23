@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.state;
 
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -17,11 +18,21 @@ import org.springframework.context.annotation.Configuration;
 public class StateTransitionEvaluationConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean(StateTransitionEvaluator.class)
-    StateTransitionEvaluator stateTransitionEvaluator(
+    @ConditionalOnMissingBean(EventStateImpactEvaluator.class)
+    EventStateImpactEvaluator eventStateImpactEvaluator(
             LanguageModelGateway languageModelGateway
     ) {
         return new LanguageModelStateTransitionEvaluator(languageModelGateway);
+    }
+
+    /** Compatibility bean for callers that only consume activity-bound transitions. */
+    @Bean
+    @ConditionalOnMissingBean(StateTransitionEvaluator.class)
+    StateTransitionEvaluator stateTransitionEvaluator(
+            EventStateImpactEvaluator evaluator
+    ) {
+        return context -> evaluator.evaluate(context)
+                .thenApply(impact -> impact.activeTransitions());
     }
 
     @Bean

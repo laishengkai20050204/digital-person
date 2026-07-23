@@ -9,13 +9,26 @@ import java.util.Objects;
 import java.util.Set;
 
 /**
- * Stores the state effect currently assigned to one activity channel.
+ * Stores the state effect assigned to one currently active activity channel.
+ *
+ * <p>The optional aftermath plan is not applied while the activity is open. It
+ * is materialized as an independent {@link ResidualStateEffect} when the source
+ * event finishes or is replaced.</p>
  */
 public record ChannelStateEffect(
         ActivityChannel channel,
         EventId eventId,
-        List<StateTransition> transitions
-) {
+        List<StateTransition> transitions,
+        AftermathStateEffectPlan aftermath
+) implements StateEffect {
+
+    public ChannelStateEffect(
+            ActivityChannel channel,
+            EventId eventId,
+            List<StateTransition> transitions
+    ) {
+        this(channel, eventId, transitions, AftermathStateEffectPlan.none());
+    }
 
     public ChannelStateEffect {
         Objects.requireNonNull(channel, "channel cannot be null");
@@ -23,6 +36,7 @@ public record ChannelStateEffect(
         transitions = List.copyOf(
                 Objects.requireNonNull(transitions, "transitions cannot be null")
         );
+        aftermath = Objects.requireNonNull(aftermath, "aftermath cannot be null");
 
         Set<StateDimension> seenDimensions = EnumSet.noneOf(StateDimension.class);
         for (StateTransition transition : transitions) {
@@ -36,5 +50,9 @@ public record ChannelStateEffect(
                 );
             }
         }
+    }
+
+    public boolean hasAftermath() {
+        return aftermath.isPresent();
     }
 }

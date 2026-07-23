@@ -28,4 +28,12 @@ jobs:
         run: bash -n ops/deploy-from-git.sh
 
       - name: Verify
-        run: mvn --batch-mode --no-transfer-progress verify
+        run: set -o pipefail; mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven.log
+
+      - name: Upload Maven failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-failure-log
+          path: maven.log
+          retention-days: 7
