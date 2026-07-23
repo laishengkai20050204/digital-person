@@ -18,19 +18,28 @@ class PersonDirectoryConfigurationTest {
             .withUserConfiguration(PersonApplicationConfiguration.class);
 
     @Test
-    void createsDirectoryOnlyWhenBothPersistenceCapabilitiesExist() {
+    void createsDirectoryWhenApiAndBothPersistenceCapabilitiesExist() {
         contextRunner
+                .withPropertyValues("digital-person.person-api.enabled=true")
                 .withBean(CombinedRepository.class)
                 .run(context -> assertThat(context)
                         .hasSingleBean(PersonDirectoryService.class));
     }
 
     @Test
-    void doesNotCreateDirectoryForReadOnlyRepository() {
+    void doesNotCreateDirectoryWhenApiIsDisabled() {
         contextRunner
-                .withBean(PersonRepository.class, ReadOnlyRepository::new)
+                .withBean(CombinedRepository.class)
                 .run(context -> assertThat(context)
                         .doesNotHaveBean(PersonDirectoryService.class));
+    }
+
+    @Test
+    void enabledApiFailsClearlyForReadOnlyRepository() {
+        contextRunner
+                .withPropertyValues("digital-person.person-api.enabled=true")
+                .withBean(PersonRepository.class, ReadOnlyRepository::new)
+                .run(context -> assertThat(context).hasFailed());
     }
 
     private static final class CombinedRepository
