@@ -7,6 +7,8 @@ import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
+import com.laishengkai.digitalperson.state.StateTransition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
@@ -113,6 +115,9 @@ public final class PersonController {
     }
 
     private static PersonResponse toResponse(PersonDetails details) {
+        List<EffectResponse> effects = details.activeEffects().stream()
+                .map(EffectResponse::from)
+                .toList();
         return new PersonResponse(
                 details.personId().toString(),
                 details.version(),
@@ -121,28 +126,23 @@ public final class PersonController {
                 details.personEventCount(),
                 details.userEventCount(),
                 details.stateLastUpdatedAt(),
-                channelNames(details.activeEffectChannels().stream()
-                        .map(Enum::name)
-                        .toList()),
-                details.residualEffectCount()
+                effects.size(),
+                effects
         );
     }
 
     private static PersonStateResponse toStateResponse(PersonStateDetails details) {
+        List<EffectResponse> effects = details.activeEffects().stream()
+                .map(EffectResponse::from)
+                .toList();
         return new PersonStateResponse(
                 details.personId().toString(),
                 details.version(),
                 StateResponse.from(details.state()),
                 details.lastUpdatedAt(),
-                channelNames(details.activeEffectChannels().stream()
-                        .map(Enum::name)
-                        .toList()),
-                details.residualEffectCount()
+                effects.size(),
+                effects
         );
-    }
-
-    private static List<String> channelNames(List<String> channels) {
-        return channels.stream().sorted().toList();
     }
 
     public record CreatePersonRequest(PersonalityRequest personality) {
@@ -186,8 +186,8 @@ public final class PersonController {
             int personEventCount,
             int userEventCount,
             Instant stateLastUpdatedAt,
-            List<String> activeEffectChannels,
-            int residualEffectCount
+            int activeEffectCount,
+            List<EffectResponse> activeEffects
     ) {
     }
 
@@ -196,9 +196,46 @@ public final class PersonController {
             long version,
             StateResponse state,
             Instant lastUpdatedAt,
-            List<String> activeEffectChannels,
-            int residualEffectCount
+            int activeEffectCount,
+            List<EffectResponse> activeEffects
     ) {
+    }
+
+    public record EffectResponse(
+            String effectId,
+            String sourceEventId,
+            String type,
+            String cause,
+            Instant startsAt,
+            String endPolicy,
+            Instant fixedEndsAt,
+            List<TransitionResponse> transitions
+    ) {
+        static EffectResponse from(RegisteredStateEffect effect) {
+            return new EffectResponse(
+                    effect.effectId().toString(),
+                    effect.sourceEventId() == null
+                            ? null
+                            : effect.sourceEventId().toString(),
+                    effect.type().name(),
+                    effect.cause(),
+                    effect.startsAt(),
+                    effect.endPolicy().name(),
+                    effect.fixedEndsAt(),
+                    effect.transitions().stream()
+                            .map(TransitionResponse::from)
+                            .toList()
+            );
+        }
+    }
+
+    public record TransitionResponse(String dimension, double shape) {
+        static TransitionResponse from(StateTransition transition) {
+            return new TransitionResponse(
+                    transition.dimension().name(),
+                    transition.shape()
+            );
+        }
     }
 
     public record PersonalityResponse(

@@ -22,6 +22,8 @@ import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;
@@ -42,16 +44,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LanguageModelStateTransitionEvaluatorTest {
 
     @Test
-    void shouldReadActiveAndAftermathImpactAndSerializeCompleteContext() {
+    void shouldReadTypedEffectsWithCausesAndSerializeCompleteContext() {
         RecordingGateway gateway = new RecordingGateway(toolResponse("""
                 {
-                  "activeTransitions": [
-                    {"dimension": "VALENCE", "shape": 0.35}
-                  ],
-                  "aftermathTransitions": [
-                    {"dimension": "LONELINESS", "shape": -0.25}
-                  ],
-                  "aftermathDurationMinutes": 180
+                  "effects": [
+                    {
+                      "type": "EMOTIONAL",
+                      "cause": "考试准备带来积极期待",
+                      "transitions": [
+                        {"dimension": "VALENCE", "shape": 0.35}
+                      ],
+                      "endPolicy": "FIXED_TIME",
+                      "durationMinutes": 180
+                    },
+                    {
+                      "type": "SOCIAL",
+                      "cause": "当前交流暂时缓解孤独感",
+                      "transitions": [
+                        {"dimension": "LONELINESS", "shape": -0.25}
+                      ],
+                      "endPolicy": "EVENT_END",
+                      "durationMinutes": 0
+                    }
+                  ]
                 }
                 """));
         LanguageModelStateTransitionEvaluator evaluator =
@@ -61,13 +76,23 @@ class LanguageModelStateTransitionEvaluatorTest {
                 .toCompletableFuture()
                 .join();
 
+        assertEquals(2, impact.effects().size());
+        assertEquals(StateEffectType.EMOTIONAL, impact.effects().getFirst().type());
+        assertEquals("考试准备带来积极期待", impact.effects().getFirst().cause());
         assertEquals(List.of(
                 new StateTransition(StateDimension.VALENCE, 0.35)
-        ), impact.activeTransitions());
-        assertEquals(List.of(
-                new StateTransition(StateDimension.LONELINESS, -0.25)
-        ), impact.aftermath().transitions());
-        assertEquals(Duration.ofMinutes(180), impact.aftermath().duration());
+        ), impact.effects().getFirst().transitions());
+        assertEquals(
+                StateEffectEndPolicy.FIXED_TIME,
+                impact.effects().getFirst().endPolicy()
+        );
+        assertEquals(Duration.ofMinutes(180), impact.effects().getFirst().duration());
+        assertEquals(StateEffectType.SOCIAL, impact.effects().get(1).type());
+        assertEquals(
+                StateEffectEndPolicy.EVENT_END,
+                impact.effects().get(1).endPolicy()
+        );
+        assertEquals(Duration.ZERO, impact.effects().get(1).duration());
 
         LanguageModelRequest request = gateway.request();
         assertEquals(ModelToolChoice.REQUIRED, request.options().toolChoice());
@@ -76,8 +101,10 @@ class LanguageModelStateTransitionEvaluatorTest {
                 LanguageModelStateTransitionEvaluator.TOOL_NAME,
                 request.tools().getFirst().name()
         );
-        assertTrue(request.tools().getFirst().parametersJsonSchema()
-                .contains("aftermathDurationMinutes"));
+        String schema = request.tools().getFirst().parametersJsonSchema();
+        assertTrue(schema.contains("cause"));
+        assertTrue(schema.contains("endPolicy"));
+        assertTrue(schema.contains("durationMinutes"));
         UserModelMessage userMessage = assertInstanceOf(
                 UserModelMessage.class,
                 request.messages().get(1)
@@ -91,7 +118,7 @@ class LanguageModelStateTransitionEvaluatorTest {
     }
 
     @Test
-    void shouldAcceptEmptyImpactSubmission() {
+    void shouldAcceptEmptyEffectSubmission() {
         LanguageModelStateTransitionEvaluator evaluator =
                 new LanguageModelStateTransitionEvaluator(
                         ignored -> CompletableFuture.completedFuture(
@@ -148,45 +175,73 @@ class LanguageModelStateTransitionEvaluatorTest {
     }
 
     @Test
-    void shouldRejectMalformedDuplicateInvalidOrInconsistentImpact() {
+    void shouldRejectMalformedDuplicateInvalidOrInconsistentEffects() {
         assertTrue(failureOf(evaluatorReturning(
                 toolResponse("not-json")
         )).getMessage().contains("invalid"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
-                {
-                  "activeTransitions": [
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"重复维度",
+                  "transitions":[
                     {"dimension":"ENERGY","shape":0.2},
                     {"dimension":"ENERGY","shape":-0.1}
                   ],
-                  "aftermathTransitions": [],
-                  "aftermathDurationMinutes": 0
-                }
+                  "endPolicy":"EVENT_END",
+                  "durationMinutes":0
+                }]}
                 """))).getMessage().contains("duplicate"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
-                {
-                  "activeTransitions":[{"dimension":"ENERGY","shape":0.0}],
-                  "aftermathTransitions":[],
-                  "aftermathDurationMinutes":0
-                }
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"无效速率",
+                  "transitions":[{"dimension":"ENERGY","shape":0.0}],
+                  "endPolicy":"EVENT_END",
+                  "durationMinutes":0
+                }]}
                 """))).getMessage().contains("invalid shape"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
-                {
-                  "activeTransitions":[{"dimension":"MOOD","shape":0.2}],
-                  "aftermathTransitions":[],
-                  "aftermathDurationMinutes":0
-                }
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"未知维度",
+                  "transitions":[{"dimension":"MOOD","shape":0.2}],
+                  "endPolicy":"EVENT_END",
+                  "durationMinutes":0
+                }]}
                 """))).getMessage().contains("unknown"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
-                {
-                  "activeTransitions":[],
-                  "aftermathTransitions":[{"dimension":"VALENCE","shape":-0.8}],
-                  "aftermathDurationMinutes":0
-                }
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"类型与维度不匹配",
+                  "transitions":[{"dimension":"LONELINESS","shape":0.8}],
+                  "endPolicy":"FIXED_TIME",
+                  "durationMinutes":60
+                }]}
+                """))).getMessage().contains("does not support"));
+
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"固定时间缺少持续时间",
+                  "transitions":[{"dimension":"VALENCE","shape":-0.8}],
+                  "endPolicy":"FIXED_TIME",
+                  "durationMinutes":0
+                }]}
                 """))).getMessage().contains("positive duration"));
+
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {"effects":[{
+                  "type":"EMOTIONAL",
+                  "cause":"事件绑定却设置持续时间",
+                  "transitions":[{"dimension":"VALENCE","shape":-0.8}],
+                  "endPolicy":"EVENT_END",
+                  "durationMinutes":60
+                }]}
+                """))).getMessage().contains("durationMinutes=0"));
     }
 
     private static StateTransitionEvaluationException failureOf(
@@ -229,13 +284,7 @@ class LanguageModelStateTransitionEvaluatorTest {
     }
 
     private static String emptyImpactJson() {
-        return """
-                {
-                  "activeTransitions": [],
-                  "aftermathTransitions": [],
-                  "aftermathDurationMinutes": 0
-                }
-                """;
+        return "{\"effects\":[]}";
     }
 
     private static StateEvaluationContext context() {

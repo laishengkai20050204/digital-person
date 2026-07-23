@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.application;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
@@ -8,12 +7,12 @@ import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
-import com.laishengkai.digitalperson.state.ChannelStateEffect;
+import com.laishengkai.digitalperson.state.EventEffectRegistration;
 import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
-import com.laishengkai.digitalperson.state.ResidualStateEffect;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
@@ -23,7 +22,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,14 +30,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Coordinates realtime person-event lifecycle changes with deterministic state
- * settlement, model evaluation and optimistic persistence.
- *
- * <p>Realtime starts must use an event whose start time equals the command time.
- * Historical events use {@link #recordHistorical(PersonId, PersonEvent, Instant)}
- * and never retroactively change the current short-term state.</p>
- */
+/** Coordinates event lifecycle changes, effect evaluation and optimistic persistence. */
 public final class PersonEventCommandService {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             PersonEventCommandService.class
@@ -111,11 +102,7 @@ public final class PersonEventCommandService {
         );
     }
 
-    /**
-     * Starts a realtime event, replacing any open event in the same activity
-     * channel. A replaced event's model-evaluated aftermath becomes an
-     * independent residual effect instead of occupying that channel.
-     */
+    /** Starts a realtime event and registers all model-produced independent effects. */
     public CompletionStage<PersonEventCommandResult> start(
             PersonId personId,
             PersonEvent event,
@@ -155,12 +142,13 @@ public final class PersonEventCommandService {
                     now
             );
 
-            StateEvolutionContext baseContext = detachChannelEffect(
-                    settled.settledContext(),
-                    requestedEvent.getChannel(),
-                    now
-            );
             person.startPersonEvent(requestedEvent, now);
+            StateEvolutionContext baseContext = stateUpdater.afterTimelineChange(
+                    settled.settledContext(),
+                    person.getCurrentPersonEvents(now),
+                    now,
+                    eventEndTimes(person)
+            );
             StateUpdatePreparation startPreparation = new StateUpdatePreparation(
                     baseContext,
                     Map.of(requestedEvent.getChannel(), requestedEvent)
@@ -177,10 +165,10 @@ public final class PersonEventCommandService {
             );
 
             return evaluate(person, evaluationState, requestedEvent, now)
-                    .thenApply(effect -> {
+                    .thenApply(registration -> {
                         StateEvolutionContext completedContext = stateUpdater.complete(
                                 startPreparation,
-                                List.of(effect)
+                                List.of(registration)
                         );
                         person.commitStateUpdate(workingState, completedContext);
                         saveOrThrow(person, expectedVersion);
@@ -207,11 +195,7 @@ public final class PersonEventCommandService {
         }
     }
 
-    /**
-     * Finishes an open realtime event after applying its activity-bound effect
-     * exactly through {@code commandTime}. The activity channel is released and
-     * any model-evaluated aftermath is retained independently.
-     */
+    /** Finishes an event; only effects whose policy depends on event end are removed. */
     public CompletionStage<PersonEventCommandResult> finish(
             PersonId personId,
             EventId eventId,
@@ -260,10 +244,11 @@ public final class PersonEventCommandService {
                     now
             );
             person.finishPersonEvent(requestedEventId, now, requestedReason, now);
-            StateEvolutionContext completedContext = detachChannelEffect(
+            StateEvolutionContext completedContext = stateUpdater.afterTimelineChange(
                     settled.settledContext(),
-                    event.getChannel(),
-                    now
+                    person.getCurrentPersonEvents(now),
+                    now,
+                    eventEndTimes(person)
             );
             person.commitStateUpdate(workingState, completedContext);
             saveOrThrow(person, expectedVersion);
@@ -372,13 +357,12 @@ public final class PersonEventCommandService {
             PersonState workingState,
             Instant now
     ) {
-        StateEvolutionContext existingContext = person.getStateEvolutionContext();
         StateUpdatePreparation preparation = stateUpdater.prepare(
                 workingState,
                 person.getCurrentPersonEvents(now),
                 now,
-                existingContext,
-                cachedEffectEndTimes(person, existingContext)
+                person.getStateEvolutionContext(),
+                eventEndTimes(person)
         );
         if (!preparation.pendingEvents().isEmpty()) {
             throw new UnsettledPersonEventException(
@@ -389,7 +373,7 @@ public final class PersonEventCommandService {
         return preparation;
     }
 
-    private CompletionStage<ChannelStateEffect> evaluate(
+    private CompletionStage<EventEffectRegistration> evaluate(
             Person person,
             PersonStateSnapshot state,
             PersonEvent event,
@@ -411,23 +395,26 @@ public final class PersonEventCommandService {
                         )),
                         "evaluator stage cannot be null"
                 ))
-                .thenApply(impact -> toChannelEffect(event, impact));
+                .thenApply(impact -> toRegistration(event, evaluationTime, impact));
     }
 
-    private static ChannelStateEffect toChannelEffect(
+    private static EventEffectRegistration toRegistration(
             PersonEvent event,
+            Instant evaluationTime,
             EventStateImpact impact
     ) {
         EventStateImpact safeImpact = Objects.requireNonNull(
                 impact,
                 "evaluator result cannot be null"
         );
-        return new ChannelStateEffect(
-                event.getChannel(),
-                event.getId(),
-                safeImpact.activeTransitions(),
-                safeImpact.aftermath()
-        );
+        List<RegisteredStateEffect> effects = safeImpact.effects().stream()
+                .map(draft -> RegisteredStateEffect.fromDraft(
+                        draft,
+                        event.getId(),
+                        evaluationTime
+                ))
+                .toList();
+        return new EventEffectRegistration(event.getId(), effects);
     }
 
     private static EventStateImpactEvaluator adapt(StateTransitionEvaluator evaluator) {
@@ -456,63 +443,12 @@ public final class PersonEventCommandService {
         }
     }
 
-    /** Releases one activity channel and materializes its independent aftermath. */
-    private static StateEvolutionContext detachChannelEffect(
-            StateEvolutionContext context,
-            ActivityChannel channel,
-            Instant transitionTime
-    ) {
-        StateEvolutionContext requestedContext = Objects.requireNonNull(
-                context,
-                "context cannot be null"
-        );
-        ActivityChannel requestedChannel = Objects.requireNonNull(
-                channel,
-                "channel cannot be null"
-        );
-        Instant now = Objects.requireNonNull(
-                transitionTime,
-                "transitionTime cannot be null"
-        );
-
-        Map<ActivityChannel, ChannelStateEffect> retained = new EnumMap<>(
-                ActivityChannel.class
-        );
-        retained.putAll(requestedContext.channelEffects());
-        ChannelStateEffect detached = retained.remove(requestedChannel);
-
-        Map<EventId, ResidualStateEffect> residuals = new HashMap<>(
-                requestedContext.residualEffects()
-        );
-        if (detached != null && detached.hasAftermath()) {
-            ResidualStateEffect residual = ResidualStateEffect.fromPlan(
-                    detached.eventId(),
-                    now,
-                    detached.aftermath()
-            );
-            if (residuals.putIfAbsent(residual.sourceEventId(), residual) != null) {
-                throw new IllegalStateException(
-                        "residual effect already exists for source event: "
-                                + residual.sourceEventId()
-                );
-            }
-        }
-        return new StateEvolutionContext(
-                requestedContext.lastUpdatedAt(),
-                retained,
-                residuals
-        );
-    }
-
-    private static Map<EventId, Instant> cachedEffectEndTimes(
-            Person person,
-            StateEvolutionContext context
-    ) {
+    private static Map<EventId, Instant> eventEndTimes(Person person) {
         Map<EventId, Instant> endTimes = new HashMap<>();
-        context.channelEffects().values().forEach(effect ->
-                person.getPersonEventById(effect.eventId())
-                        .flatMap(PersonEvent::getEndTime)
-                        .ifPresent(endTime -> endTimes.put(effect.eventId(), endTime))
+        person.getPersonTimeline().getAll().forEach(event ->
+                event.getEndTime().ifPresent(endTime ->
+                        endTimes.put(event.getId(), endTime)
+                )
         );
         return Map.copyOf(endTimes);
     }

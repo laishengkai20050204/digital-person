@@ -53,16 +53,28 @@ class StateEvaluationDiagnosticControllerTest {
     @Test
     void shouldReturnExactRequestRawToolArgumentsAndParsedResult() {
         String rawArguments = """
-                {
-                  "activeTransitions": [],
-                  "aftermathTransitions": [
-                    {"dimension":"VALENCE","shape":0.6},
-                    {"dimension":"TENSION","shape":-0.5},
-                    {"dimension":"LONELINESS","shape":-0.7},
-                    {"dimension":"SOCIAL_NEED","shape":-0.5}
-                  ],
-                  "aftermathDurationMinutes":180
-                }
+                {"effects":[
+                  {
+                    "type":"EMOTIONAL",
+                    "cause":"恋人的安抚消息带来安全感",
+                    "transitions":[
+                      {"dimension":"VALENCE","shape":0.6},
+                      {"dimension":"TENSION","shape":-0.5}
+                    ],
+                    "endPolicy":"FIXED_TIME",
+                    "durationMinutes":180
+                  },
+                  {
+                    "type":"SOCIAL",
+                    "cause":"亲密关系得到确认",
+                    "transitions":[
+                      {"dimension":"LONELINESS","shape":-0.7},
+                      {"dimension":"SOCIAL_NEED","shape":-0.5}
+                    ],
+                    "endPolicy":"FIXED_TIME",
+                    "durationMinutes":180
+                  }
+                ]}
                 """.strip();
         StateEvaluationDiagnosticController controller = controller(request ->
                 CompletableFuture.completedFuture(response(rawArguments))
@@ -80,17 +92,15 @@ class StateEvaluationDiagnosticControllerTest {
         );
         assertEquals("UP", body.status());
         assertNotNull(body.request());
-        assertTrue(body.request().systemPrompt().contains(
-                "必须且只能调用 submit_state_transitions 一次"
-        ));
-        assertTrue(body.request().systemPrompt().contains("aftermathTransitions"));
+        assertTrue(body.request().systemPrompt().contains("submit_state_effects"));
+        assertTrue(body.request().systemPrompt().contains("cause"));
         assertTrue(body.request().userPrompt().contains(
                 "\"title\":\"Romantic partner sends a reassuring affectionate message\""
         ));
         assertEquals(4_096, body.request().maxOutputTokens());
         assertEquals("REQUIRED", body.request().toolChoice());
         assertEquals(1, body.request().tools().size());
-        assertEquals("submit_state_transitions", body.request().tools().getFirst().name());
+        assertEquals("submit_state_effects", body.request().tools().getFirst().name());
 
         assertNotNull(body.rawResponse());
         assertEquals("TOOL_CALLS", body.rawResponse().finishReason());
@@ -107,11 +117,13 @@ class StateEvaluationDiagnosticControllerTest {
     void shouldExposeExpectationMismatchWithoutDiscardingValidModelOutput() {
         StateEvaluationDiagnosticController controller = controller(request ->
                 CompletableFuture.completedFuture(response("""
-                        {
-                          "activeTransitions":[{"dimension":"VALENCE","shape":-0.2}],
-                          "aftermathTransitions":[],
-                          "aftermathDurationMinutes":0
-                        }
+                        {"effects":[{
+                          "type":"EMOTIONAL",
+                          "cause":"考试结果引发负面反应",
+                          "transitions":[{"dimension":"VALENCE","shape":-0.2}],
+                          "endPolicy":"FIXED_TIME",
+                          "durationMinutes":60
+                        }]}
                         """.strip()))
         );
 
@@ -176,7 +188,7 @@ class StateEvaluationDiagnosticControllerTest {
                 AssistantModelMessage.toolCalls(List.of(
                         new ModelToolCall(
                                 "call-1",
-                                "submit_state_transitions",
+                                "submit_state_effects",
                                 rawArguments
                         )
                 )),
@@ -186,12 +198,6 @@ class StateEvaluationDiagnosticControllerTest {
     }
 
     private static String emptyImpact() {
-        return """
-                {
-                  "activeTransitions":[],
-                  "aftermathTransitions":[],
-                  "aftermathDurationMinutes":0
-                }
-                """.strip();
+        return "{\"effects\":[]}";
     }
 }

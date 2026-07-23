@@ -8,6 +8,7 @@ import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -149,6 +151,15 @@ public final class PersonEventController {
 
     private static EventCommandResponse toResponse(PersonEventCommandResult result) {
         PersonEvent event = result.event();
+        List<RegisteredStateEffect> sortedEffects = result.stateEvolutionContext()
+                .effects()
+                .values()
+                .stream()
+                .sorted(Comparator.comparing(RegisteredStateEffect::effectId))
+                .toList();
+        List<PersonController.EffectResponse> effects = sortedEffects.stream()
+                .map(PersonController.EffectResponse::from)
+                .toList();
         return new EventCommandResponse(
                 result.personId().toString(),
                 event.getId().toString(),
@@ -163,11 +174,8 @@ public final class PersonEventController {
                 event.getNotes(),
                 PersonController.StateResponse.from(result.state()),
                 result.stateEvolutionContext().lastUpdatedAt(),
-                result.stateEvolutionContext().channelEffects().keySet().stream()
-                        .map(Enum::name)
-                        .sorted()
-                        .toList(),
-                result.stateEvolutionContext().residualEffects().size()
+                effects.size(),
+                effects
         );
     }
 
@@ -271,8 +279,8 @@ public final class PersonEventController {
             String notes,
             PersonController.StateResponse state,
             Instant stateLastUpdatedAt,
-            List<String> activeEffectChannels,
-            int residualEffectCount
+            int activeEffectCount,
+            List<PersonController.EffectResponse> activeEffects
     ) {
     }
 }

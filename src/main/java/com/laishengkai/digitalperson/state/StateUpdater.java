@@ -13,17 +13,13 @@ import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
-/**
- * Stateless deterministic state evolution service.
- *
- * <p>Activity effects and independent residual effects are settled over exact
- * time intervals. The service contains no person-specific mutable fields and is
- * safe to share between aggregates.</p>
- */
+/** Stateless deterministic state evolution service over independent state effects. */
 public final class StateUpdater {
     private static final Logger LOGGER = LoggerFactory.getLogger(StateUpdater.class);
 
@@ -48,7 +44,6 @@ public final class StateUpdater {
         );
     }
 
-    /** Compatibility overload for workflows without known activity end boundaries. */
     public StateUpdatePreparation prepare(
             PersonState state,
             List<PersonEvent> currentEvents,
@@ -58,168 +53,187 @@ public final class StateUpdater {
         return prepare(state, currentEvents, now, context, Map.of());
     }
 
-    /**
-     * Settles all cached activity and residual effects to {@code now}, retains
-     * still-active effects, and identifies current activities that need model
-     * evaluation.
-     */
+    /** Settles all effects to {@code now} and finds active events not evaluated yet. */
     public StateUpdatePreparation prepare(
             PersonState state,
             List<PersonEvent> currentEvents,
             Instant now,
             StateEvolutionContext context,
-            Map<EventId, Instant> cachedEffectEndTimes
+            Map<EventId, Instant> eventEndTimes
     ) {
-        PersonState currentState = Objects.requireNonNull(
-                state,
-                "state cannot be null"
-        );
+        PersonState currentState = Objects.requireNonNull(state, "state cannot be null");
         Instant currentTime = Objects.requireNonNull(now, "now cannot be null");
         StateEvolutionContext currentContext = Objects.requireNonNull(
                 context,
                 "context cannot be null"
         );
-        Map<EventId, Instant> effectEndTimes = copyEndTimes(cachedEffectEndTimes);
+        Map<EventId, Instant> safeEndTimes = copyEndTimes(eventEndTimes);
         Map<ActivityChannel, PersonEvent> eventsByChannel = indexByChannel(currentEvents);
 
         LOGGER.debug(
-                "Preparing state evolution: updateTime={}, currentEventCount={}, activeActivityEffectCount={}, residualEffectCount={}, previousUpdateTime={}, knownEffectEndCount={}",
+                "Preparing state evolution: updateTime={}, currentEventCount={}, effectCount={}, evaluatedEventCount={}, previousUpdateTime={}, knownEventEndCount={}",
                 currentTime,
                 eventsByChannel.size(),
-                currentContext.channelEffects().size(),
-                currentContext.residualEffects().size(),
+                currentContext.effects().size(),
+                currentContext.evaluatedEventIds().size(),
                 currentContext.lastUpdatedAt(),
-                effectEndTimes.size()
+                safeEndTimes.size()
         );
 
-        settleUntil(currentState, currentTime, currentContext, effectEndTimes);
+        settleUntil(currentState, currentTime, currentContext, safeEndTimes);
 
-        Map<ActivityChannel, ChannelStateEffect> retainedEffects =
-                new EnumMap<>(ActivityChannel.class);
-        Map<ActivityChannel, PersonEvent> pendingEvents =
-                new EnumMap<>(ActivityChannel.class);
-
-        for (ActivityChannel channel : ActivityChannel.values()) {
-            PersonEvent currentEvent = eventsByChannel.get(channel);
-            ChannelStateEffect existingEffect =
-                    currentContext.channelEffects().get(channel);
-
-            if (currentEvent == null) {
-                continue;
+        Map<EffectId, RegisteredStateEffect> retainedEffects = new HashMap<>();
+        currentContext.effects().forEach((effectId, effect) -> {
+            if (effect.isActiveAt(currentTime, safeEndTimes)) {
+                retainedEffects.put(effectId, effect);
             }
-            if (existingEffect != null
-                    && existingEffect.eventId().equals(currentEvent.getId())) {
-                retainedEffects.put(channel, existingEffect);
-                continue;
-            }
-            pendingEvents.put(channel, currentEvent);
-        }
+        });
 
-        Map<EventId, ResidualStateEffect> retainedResidualEffects = new HashMap<>();
-        currentContext.residualEffects().forEach((sourceEventId, effect) -> {
-            if (effect.endsAt().isAfter(currentTime)) {
-                retainedResidualEffects.put(sourceEventId, effect);
+        Set<EventId> currentEventIds = new HashSet<>();
+        eventsByChannel.values().forEach(event -> currentEventIds.add(event.getId()));
+        Set<EventId> retainedEvaluatedEventIds = new HashSet<>(
+                currentContext.evaluatedEventIds()
+        );
+        retainedEvaluatedEventIds.retainAll(currentEventIds);
+
+        Map<ActivityChannel, PersonEvent> pendingEvents = new EnumMap<>(
+                ActivityChannel.class
+        );
+        eventsByChannel.forEach((channel, event) -> {
+            if (!retainedEvaluatedEventIds.contains(event.getId())) {
+                pendingEvents.put(channel, event);
             }
         });
 
         LOGGER.debug(
-                "Prepared state evolution: retainedChannels={}, pendingChannels={}, retainedResidualEffectCount={}",
-                retainedEffects.keySet(),
-                pendingEvents.keySet(),
-                retainedResidualEffects.size()
+                "Prepared state evolution: retainedEffectCount={}, retainedEvaluatedEventCount={}, pendingChannels={}",
+                retainedEffects.size(),
+                retainedEvaluatedEventIds.size(),
+                pendingEvents.keySet()
         );
 
         return new StateUpdatePreparation(
                 new StateEvolutionContext(
                         currentTime,
                         retainedEffects,
-                        retainedResidualEffects
+                        retainedEvaluatedEventIds
                 ),
                 pendingEvents
         );
     }
 
-    /**
-     * Validates asynchronous activity evaluations and combines them with all
-     * retained activity and residual effects.
-     */
+    /** Combines evaluated event registrations with all retained effects. */
     public StateEvolutionContext complete(
             StateUpdatePreparation preparation,
-            Collection<ChannelStateEffect> evaluatedEffects
+            Collection<EventEffectRegistration> registrations
     ) {
         StateUpdatePreparation requestedPreparation = Objects.requireNonNull(
                 preparation,
                 "preparation cannot be null"
         );
-        Collection<ChannelStateEffect> requestedEffects = Objects.requireNonNull(
-                evaluatedEffects,
-                "evaluatedEffects cannot be null"
+        Collection<EventEffectRegistration> requestedRegistrations = Objects.requireNonNull(
+                registrations,
+                "registrations cannot be null"
         );
 
-        Map<ActivityChannel, ChannelStateEffect> effectsByChannel =
-                new EnumMap<>(ActivityChannel.class);
-
-        for (ChannelStateEffect effect : requestedEffects) {
-            ChannelStateEffect nonNullEffect = Objects.requireNonNull(
-                    effect,
-                    "effect cannot be null"
+        Map<EventId, EventEffectRegistration> registrationsByEvent = new HashMap<>();
+        for (EventEffectRegistration registration : requestedRegistrations) {
+            EventEffectRegistration nonNullRegistration = Objects.requireNonNull(
+                    registration,
+                    "registration cannot be null"
             );
-            ChannelStateEffect previous = effectsByChannel.put(
-                    nonNullEffect.channel(),
-                    nonNullEffect
-            );
-            if (previous != null) {
+            if (registrationsByEvent.put(
+                    nonNullRegistration.eventId(),
+                    nonNullRegistration
+            ) != null) {
                 throw new IllegalArgumentException(
-                        "only one evaluated effect is allowed per channel"
+                        "only one effect registration is allowed per event"
                 );
             }
         }
 
-        if (!effectsByChannel.keySet().equals(
-                requestedPreparation.pendingEvents().keySet()
-        )) {
+        Set<EventId> pendingEventIds = new HashSet<>();
+        requestedPreparation.pendingEvents().values()
+                .forEach(event -> pendingEventIds.add(event.getId()));
+        if (!registrationsByEvent.keySet().equals(pendingEventIds)) {
             throw new IllegalArgumentException(
-                    "evaluated effect channels must exactly match pending channels"
+                    "effect registrations must exactly match pending events"
             );
         }
 
-        requestedPreparation.pendingEvents().forEach((channel, event) -> {
-            EventId expectedEventId = event.getId();
-            EventId actualEventId = effectsByChannel.get(channel).eventId();
-            if (!expectedEventId.equals(actualEventId)) {
-                throw new IllegalArgumentException(
-                        "evaluated effect event id does not match pending event"
-                );
-            }
-        });
-
-        Map<ActivityChannel, ChannelStateEffect> completedEffects =
-                new EnumMap<>(ActivityChannel.class);
-        completedEffects.putAll(
-                requestedPreparation.settledContext().channelEffects()
+        Map<EffectId, RegisteredStateEffect> completedEffects = new HashMap<>(
+                requestedPreparation.settledContext().effects()
         );
-        completedEffects.putAll(effectsByChannel);
+        for (EventEffectRegistration registration : requestedRegistrations) {
+            for (RegisteredStateEffect effect : registration.effects()) {
+                if (completedEffects.putIfAbsent(effect.effectId(), effect) != null) {
+                    throw new IllegalArgumentException(
+                            "duplicate effect id: " + effect.effectId()
+                    );
+                }
+            }
+        }
+
+        Set<EventId> evaluatedEventIds = new HashSet<>(
+                requestedPreparation.settledContext().evaluatedEventIds()
+        );
+        evaluatedEventIds.addAll(registrationsByEvent.keySet());
 
         LOGGER.debug(
-                "Completed state evolution context: updateTime={}, activeChannels={}, residualEffectCount={}",
+                "Completed state evolution context: updateTime={}, effectCount={}, evaluatedEventCount={}",
                 requestedPreparation.settledContext().lastUpdatedAt(),
-                completedEffects.keySet(),
-                requestedPreparation.settledContext().residualEffects().size()
+                completedEffects.size(),
+                evaluatedEventIds.size()
         );
 
         return new StateEvolutionContext(
                 requestedPreparation.settledContext().lastUpdatedAt(),
                 completedEffects,
-                requestedPreparation.settledContext().residualEffects()
+                evaluatedEventIds
         );
     }
 
-    /** Applies activity and residual effects across every exact lifecycle interval. */
+    /** Prunes effects and evaluation markers after an event timeline mutation. */
+    public StateEvolutionContext afterTimelineChange(
+            StateEvolutionContext context,
+            List<PersonEvent> currentEvents,
+            Instant now,
+            Map<EventId, Instant> eventEndTimes
+    ) {
+        StateEvolutionContext currentContext = Objects.requireNonNull(
+                context,
+                "context cannot be null"
+        );
+        Instant currentTime = Objects.requireNonNull(now, "now cannot be null");
+        Map<EventId, Instant> safeEndTimes = copyEndTimes(eventEndTimes);
+
+        Map<EffectId, RegisteredStateEffect> retainedEffects = new HashMap<>();
+        currentContext.effects().forEach((effectId, effect) -> {
+            if (effect.isActiveAt(currentTime, safeEndTimes)) {
+                retainedEffects.put(effectId, effect);
+            }
+        });
+
+        Set<EventId> currentEventIds = new HashSet<>();
+        indexByChannel(currentEvents).values()
+                .forEach(event -> currentEventIds.add(event.getId()));
+        Set<EventId> retainedEvaluatedEventIds = new HashSet<>(
+                currentContext.evaluatedEventIds()
+        );
+        retainedEvaluatedEventIds.retainAll(currentEventIds);
+
+        return new StateEvolutionContext(
+                currentContext.lastUpdatedAt(),
+                retainedEffects,
+                retainedEvaluatedEventIds
+        );
+    }
+
     private void settleUntil(
             PersonState state,
             Instant now,
             StateEvolutionContext context,
-            Map<EventId, Instant> effectEndTimes
+            Map<EventId, Instant> eventEndTimes
     ) {
         Instant lastUpdatedAt = context.lastUpdatedAt();
         if (lastUpdatedAt == null) {
@@ -241,26 +255,21 @@ public final class StateUpdater {
         List<Instant> boundaries = settlementBoundaries(
                 lastUpdatedAt,
                 now,
-                context,
-                effectEndTimes
+                context.effects().values(),
+                eventEndTimes
         );
         Instant intervalStart = lastUpdatedAt;
         int appliedIntervalCount = 0;
 
         for (Instant intervalEnd : boundaries) {
             Instant currentIntervalStart = intervalStart;
-            List<StateEffect> activeEffects = new ArrayList<>();
-            context.channelEffects().values().stream()
-                    .filter(effect -> remainsActiveAfter(
-                            effect,
+            List<StateEffect> activeEffects = context.effects().values().stream()
+                    .filter(effect -> effect.isActiveAt(
                             currentIntervalStart,
-                            effectEndTimes
+                            eventEndTimes
                     ))
-                    .forEach(activeEffects::add);
-            context.residualEffects().values().stream()
-                    .filter(effect -> effect.isActiveAt(currentIntervalStart))
-                    .forEach(activeEffects::add);
-
+                    .map(effect -> (StateEffect) effect)
+                    .toList();
             List<StateTransition> mergedTransitions = transitionMerger.merge(
                     activeEffects
             );
@@ -277,10 +286,9 @@ public final class StateUpdater {
         }
 
         LOGGER.debug(
-                "Settled cached state effects: elapsedMs={}, activityEffectCount={}, residualEffectCount={}, boundaryCount={}, appliedIntervalCount={}",
+                "Settled state effects: elapsedMs={}, effectCount={}, boundaryCount={}, appliedIntervalCount={}",
                 elapsed.toMillis(),
-                context.channelEffects().size(),
-                context.residualEffects().size(),
+                context.effects().size(),
                 boundaries.size(),
                 appliedIntervalCount
         );
@@ -289,53 +297,34 @@ public final class StateUpdater {
     private static List<Instant> settlementBoundaries(
             Instant start,
             Instant end,
-            StateEvolutionContext context,
-            Map<EventId, Instant> effectEndTimes
+            Collection<RegisteredStateEffect> effects,
+            Map<EventId, Instant> eventEndTimes
     ) {
         List<Instant> boundaries = new ArrayList<>();
-        context.channelEffects().values().stream()
-                .map(ChannelStateEffect::eventId)
-                .map(effectEndTimes::get)
-                .filter(Objects::nonNull)
-                .filter(boundary -> boundary.isAfter(start) && boundary.isBefore(end))
-                .distinct()
-                .forEach(boundaries::add);
-        context.residualEffects().values().forEach(effect -> {
+        for (RegisteredStateEffect effect : effects) {
             if (effect.startsAt().isAfter(start) && effect.startsAt().isBefore(end)) {
                 boundaries.add(effect.startsAt());
             }
-            if (effect.endsAt().isAfter(start) && effect.endsAt().isBefore(end)) {
-                boundaries.add(effect.endsAt());
-            }
-        });
+            effect.effectiveEndTime(eventEndTimes)
+                    .filter(boundary -> boundary.isAfter(start) && boundary.isBefore(end))
+                    .ifPresent(boundaries::add);
+        }
         boundaries.add(end);
-        List<Instant> sortedBoundaries = boundaries.stream()
+        return boundaries.stream()
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
-        return List.copyOf(sortedBoundaries);
-    }
-
-    private static boolean remainsActiveAfter(
-            ChannelStateEffect effect,
-            Instant intervalStart,
-            Map<EventId, Instant> effectEndTimes
-    ) {
-        Instant endTime = effectEndTimes.get(effect.eventId());
-        return endTime == null || endTime.isAfter(intervalStart);
     }
 
     private static Map<EventId, Instant> copyEndTimes(
-            Map<EventId, Instant> cachedEffectEndTimes
+            Map<EventId, Instant> eventEndTimes
     ) {
         Map<EventId, Instant> copy = new HashMap<>();
-        Objects.requireNonNull(
-                cachedEffectEndTimes,
-                "cachedEffectEndTimes cannot be null"
-        ).forEach((eventId, endTime) -> copy.put(
-                Objects.requireNonNull(eventId, "effect event id cannot be null"),
-                Objects.requireNonNull(endTime, "effect end time cannot be null")
-        ));
+        Objects.requireNonNull(eventEndTimes, "eventEndTimes cannot be null")
+                .forEach((eventId, endTime) -> copy.put(
+                        Objects.requireNonNull(eventId, "eventId cannot be null"),
+                        Objects.requireNonNull(endTime, "event end time cannot be null")
+                ));
         return Map.copyOf(copy);
     }
 
@@ -343,25 +332,22 @@ public final class StateUpdater {
     private static Map<ActivityChannel, PersonEvent> indexByChannel(
             List<PersonEvent> currentEvents
     ) {
-        List<PersonEvent> events = List.copyOf(
-                Objects.requireNonNull(
-                        currentEvents,
-                        "currentEvents cannot be null"
-                )
+        List<PersonEvent> events = List.copyOf(Objects.requireNonNull(
+                currentEvents,
+                "currentEvents cannot be null"
+        ));
+        Map<ActivityChannel, PersonEvent> eventsByChannel = new EnumMap<>(
+                ActivityChannel.class
         );
-        Map<ActivityChannel, PersonEvent> eventsByChannel =
-                new EnumMap<>(ActivityChannel.class);
-
         for (PersonEvent event : events) {
             PersonEvent nonNullEvent = Objects.requireNonNull(
                     event,
                     "event cannot be null"
             );
-            PersonEvent previous = eventsByChannel.put(
+            if (eventsByChannel.put(
                     nonNullEvent.getChannel(),
                     nonNullEvent.copy()
-            );
-            if (previous != null) {
+            ) != null) {
                 throw new IllegalArgumentException(
                         "only one current event is allowed per activity channel"
                 );

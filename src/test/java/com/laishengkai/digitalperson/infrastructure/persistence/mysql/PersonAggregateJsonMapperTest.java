@@ -3,7 +3,6 @@ package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.EventId;
@@ -14,12 +13,15 @@ import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
-import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.CognitiveState;
+import com.laishengkai.digitalperson.state.EffectId;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PhysicalState;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -36,14 +39,15 @@ class PersonAggregateJsonMapperTest {
     private static final Instant NOW = Instant.parse("2026-07-22T12:00:00Z");
 
     @Test
-    void roundTripsCompleteAggregateWithoutLosingDomainState() {
+    void roundTripsCompleteAggregateWithoutLosingDomainStateOrEffectCause() {
         Person source = completePerson();
         PersonAggregateJsonMapper mapper = new PersonAggregateJsonMapper(objectMapper());
 
         String json = mapper.write(source);
         Person restored = mapper.read(json);
 
-        assertTrue(json.contains("\"schemaVersion\":2"));
+        assertTrue(json.contains("\"schemaVersion\":3"));
+        assertTrue(json.contains("\"cause\":\"音乐带来放松感\""));
         assertEquals(source.getId(), restored.getId());
         assertEquals(source.getPersonality(), restored.getPersonality());
         assertEquals(source.getStateSnapshot(), restored.getStateSnapshot());
@@ -73,7 +77,7 @@ class PersonAggregateJsonMapperTest {
     void rejectsUnknownDocumentSchemaVersion() {
         PersonAggregateJsonMapper mapper = new PersonAggregateJsonMapper(objectMapper());
         String json = mapper.write(completePerson())
-                .replace("\"schemaVersion\":2", "\"schemaVersion\":99");
+                .replace("\"schemaVersion\":3", "\"schemaVersion\":99");
 
         assertThrows(PersonPersistenceException.class, () -> mapper.read(json));
     }
@@ -122,19 +126,23 @@ class PersonAggregateJsonMapperTest {
         );
         userTimeline.record(userStudy, EventEndReason.INTERRUPTED, NOW.minusSeconds(1800));
 
+        RegisteredStateEffect effect = new RegisteredStateEffect(
+                EffectId.random(),
+                listening.getId(),
+                StateEffectType.EMOTIONAL,
+                "音乐带来放松感",
+                listening.getStartTime(),
+                StateEffectEndPolicy.EVENT_END,
+                null,
+                List.of(
+                        new StateTransition(StateDimension.TENSION, -0.25),
+                        new StateTransition(StateDimension.VALENCE, 0.2)
+                )
+        );
         StateEvolutionContext evolution = new StateEvolutionContext(
                 NOW.minusSeconds(300),
-                Map.of(
-                        ActivityChannel.AUDIO,
-                        new ChannelStateEffect(
-                                ActivityChannel.AUDIO,
-                                listening.getId(),
-                                List.of(
-                                        new StateTransition(StateDimension.TENSION, -0.25),
-                                        new StateTransition(StateDimension.VALENCE, 0.2)
-                                )
-                        )
-                )
+                Map.of(effect.effectId(), effect),
+                Set.of(listening.getId())
         );
 
         return new Person(

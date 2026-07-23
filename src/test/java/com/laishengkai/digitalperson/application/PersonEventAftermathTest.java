@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.application;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.PersonEvent;
@@ -10,10 +9,12 @@ import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
-import com.laishengkai.digitalperson.state.AftermathStateEffectPlan;
 import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectDraft;
+import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateTransition;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
@@ -34,21 +35,43 @@ class PersonEventAftermathTest {
     private static final Instant START = Instant.parse("2026-07-22T08:00:00Z");
 
     @Test
-    void finishedCommunicationLeavesIndependentAftermathDuringLaterMusic() {
+    void finishedCommunicationReleasesEventBoundEffectButKeepsFixedEffectsDuringMusic() {
         Person person = new Person(new Personality(0.5, 0.7, 0.4, 0.8, 0.6, 0.9));
         Repository repository = new Repository(person);
         EventStateImpactEvaluator evaluator = context -> {
             if (context.newEvent().activityType().equals("CHAT")) {
-                return CompletableFuture.completedFuture(new EventStateImpact(
-                        List.of(new StateTransition(StateDimension.TENSION, 0.4)),
-                        new AftermathStateEffectPlan(
-                                Duration.ofHours(6),
+                return CompletableFuture.completedFuture(new EventStateImpact(List.of(
+                        new StateEffectDraft(
+                                StateEffectType.COGNITIVE,
+                                "激烈沟通本身持续占用注意力",
+                                List.of(new StateTransition(
+                                        StateDimension.MENTAL_LOAD,
+                                        0.5
+                                )),
+                                StateEffectEndPolicy.EVENT_END,
+                                Duration.ZERO
+                        ),
+                        new StateEffectDraft(
+                                StateEffectType.EMOTIONAL,
+                                "恋人明确提出分手，引发关系丧失感",
                                 List.of(
                                         new StateTransition(StateDimension.VALENCE, -0.9),
-                                        new StateTransition(StateDimension.LONELINESS, 0.8)
-                                )
+                                        new StateTransition(StateDimension.TENSION, 0.8)
+                                ),
+                                StateEffectEndPolicy.FIXED_TIME,
+                                Duration.ofHours(6)
+                        ),
+                        new StateEffectDraft(
+                                StateEffectType.SOCIAL,
+                                "亲密关系突然中断，引发孤独感",
+                                List.of(new StateTransition(
+                                        StateDimension.LONELINESS,
+                                        0.8
+                                )),
+                                StateEffectEndPolicy.FIXED_TIME,
+                                Duration.ofHours(6)
                         )
-                ));
+                )));
             }
             return CompletableFuture.completedFuture(EventStateImpact.none());
         };
@@ -59,7 +82,12 @@ class PersonEventAftermathTest {
         );
 
         PersonEvent communication = openEvent(ActivityType.CHAT, "major relationship loss", START);
-        service.start(person.getId(), communication, START).toCompletableFuture().join();
+        PersonEventCommandResult started = service.start(
+                person.getId(),
+                communication,
+                START
+        ).toCompletableFuture().join();
+        assertEquals(3, started.stateEvolutionContext().effects().size());
 
         Instant finishTime = START.plus(Duration.ofMinutes(10));
         PersonEventCommandResult finished = service.finish(
@@ -69,11 +97,13 @@ class PersonEventAftermathTest {
                 finishTime
         ).toCompletableFuture().join();
 
-        assertFalse(finished.stateEvolutionContext().channelEffects()
-                .containsKey(ActivityChannel.COMMUNICATION));
-        assertEquals(1, finished.stateEvolutionContext().residualEffects().size());
-        assertTrue(finished.stateEvolutionContext().residualEffects()
-                .containsKey(communication.getId()));
+        assertEquals(2, finished.stateEvolutionContext().effects().size());
+        assertFalse(finished.stateEvolutionContext().effects().values().stream()
+                .anyMatch(effect -> effect.endPolicy() == StateEffectEndPolicy.EVENT_END));
+        assertTrue(finished.stateEvolutionContext().effects().values().stream()
+                .allMatch(effect -> effect.sourceEventId().equals(communication.getId())));
+        assertTrue(finished.stateEvolutionContext().effects().values().stream()
+                .anyMatch(effect -> effect.cause().contains("分手")));
 
         Instant musicTime = finishTime.plus(Duration.ofMinutes(10));
         PersonEvent music = openEvent(ActivityType.LISTEN_MUSIC, "listen to music", musicTime);
@@ -83,11 +113,8 @@ class PersonEventAftermathTest {
                 musicTime
         ).toCompletableFuture().join();
 
-        assertTrue(later.stateEvolutionContext().channelEffects()
-                .containsKey(ActivityChannel.AUDIO));
-        assertFalse(later.stateEvolutionContext().channelEffects()
-                .containsKey(ActivityChannel.COMMUNICATION));
-        assertEquals(1, later.stateEvolutionContext().residualEffects().size());
+        assertEquals(2, later.stateEvolutionContext().effects().size());
+        assertTrue(later.stateEvolutionContext().evaluatedEventIds().contains(music.getId()));
         assertTrue(later.state().valence() < finished.state().valence());
         assertTrue(later.state().loneliness() > finished.state().loneliness());
     }

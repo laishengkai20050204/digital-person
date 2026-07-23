@@ -15,19 +15,20 @@ import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
-import com.laishengkai.digitalperson.state.AftermathStateEffectPlan;
-import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.CognitiveState;
+import com.laishengkai.digitalperson.state.EffectId;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.PhysicalState;
-import com.laishengkai.digitalperson.state.ResidualStateEffect;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -38,10 +39,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /** Converts between the domain aggregate and the adapter-owned JSON schema. */
 final class PersonAggregateJsonMapper {
-    static final int CURRENT_SCHEMA_VERSION = 2;
+    static final int CURRENT_SCHEMA_VERSION = 3;
     private static final int OLDEST_SUPPORTED_SCHEMA_VERSION = 1;
 
     private final ObjectMapper objectMapper;
@@ -70,10 +72,11 @@ final class PersonAggregateJsonMapper {
     Person read(String json) {
         String source = Objects.requireNonNull(json, "json cannot be null");
         try {
-            return fromDocument(objectMapper.readValue(
+            PersonAggregateDocument document = objectMapper.readValue(
                     source,
                     PersonAggregateDocument.class
-            ));
+            );
+            return fromDocument(document);
         } catch (JsonProcessingException | IllegalArgumentException | IllegalStateException error) {
             throw new PersonPersistenceException(
                     "failed to decode person aggregate document",
@@ -87,19 +90,15 @@ final class PersonAggregateJsonMapper {
         PersonStateSnapshot state = person.getStateSnapshot();
         StateEvolutionContext evolution = person.getStateEvolutionContext();
 
-        List<PersonAggregateDocument.ChannelEffectDocument> channelEffects = evolution
-                .channelEffects()
-                .entrySet()
-                .stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(entry -> toDocument(entry.getValue()))
-                .toList();
-        List<PersonAggregateDocument.ResidualEffectDocument> residualEffects = evolution
-                .residualEffects()
+        List<PersonAggregateDocument.StateEffectDocument> effects = evolution.effects()
                 .values()
                 .stream()
-                .sorted(Comparator.comparing(effect -> effect.sourceEventId().toString()))
+                .sorted(Comparator.comparing(RegisteredStateEffect::effectId))
                 .map(PersonAggregateJsonMapper::toDocument)
+                .toList();
+        List<String> evaluatedEventIds = evolution.evaluatedEventIds().stream()
+                .sorted()
+                .map(EventId::toString)
                 .toList();
 
         return new PersonAggregateDocument(
@@ -134,8 +133,10 @@ final class PersonAggregateJsonMapper {
                         .toList(),
                 new PersonAggregateDocument.StateEvolutionDocument(
                         evolution.lastUpdatedAt(),
-                        channelEffects,
-                        residualEffects
+                        effects,
+                        evaluatedEventIds,
+                        List.of(),
+                        List.of()
                 )
         );
     }
@@ -154,43 +155,30 @@ final class PersonAggregateJsonMapper {
         );
     }
 
-    private static PersonAggregateDocument.ChannelEffectDocument toDocument(
-            ChannelStateEffect effect
+    private static PersonAggregateDocument.StateEffectDocument toDocument(
+            RegisteredStateEffect effect
     ) {
-        PersonAggregateDocument.AftermathPlanDocument aftermath = effect.hasAftermath()
-                ? new PersonAggregateDocument.AftermathPlanDocument(
-                        effect.aftermath().duration().toSeconds(),
-                        toDocuments(effect.aftermath().transitions())
-                )
-                : null;
-        return new PersonAggregateDocument.ChannelEffectDocument(
-                effect.channel().name(),
-                effect.eventId().toString(),
-                toDocuments(effect.transitions()),
-                aftermath
-        );
-    }
-
-    private static PersonAggregateDocument.ResidualEffectDocument toDocument(
-            ResidualStateEffect effect
-    ) {
-        return new PersonAggregateDocument.ResidualEffectDocument(
-                effect.sourceEventId().toString(),
+        return new PersonAggregateDocument.StateEffectDocument(
+                effect.effectId().toString(),
+                effect.sourceEventId() == null ? null : effect.sourceEventId().toString(),
+                effect.type().name(),
+                effect.cause(),
                 effect.startsAt(),
-                effect.endsAt(),
-                toDocuments(effect.transitions())
+                effect.endPolicy().name(),
+                effect.fixedEndsAt(),
+                effect.transitions().stream()
+                        .map(PersonAggregateJsonMapper::toDocument)
+                        .toList()
         );
     }
 
-    private static List<PersonAggregateDocument.TransitionDocument> toDocuments(
-            List<StateTransition> transitions
+    private static PersonAggregateDocument.TransitionDocument toDocument(
+            StateTransition transition
     ) {
-        return transitions.stream()
-                .map(transition -> new PersonAggregateDocument.TransitionDocument(
-                        transition.dimension().name(),
-                        transition.shape()
-                ))
-                .toList();
+        return new PersonAggregateDocument.TransitionDocument(
+                transition.dimension().name(),
+                transition.shape()
+        );
     }
 
     private static Person fromDocument(PersonAggregateDocument document) {
@@ -239,10 +227,9 @@ final class PersonAggregateJsonMapper {
 
         EventTimeline personTimeline = restoreTimeline(source.personEvents());
         EventTimeline userTimeline = restoreTimeline(source.userEvents());
-        StateEvolutionContext evolution = restoreEvolution(
-                source.stateEvolution(),
-                personTimeline
-        );
+        StateEvolutionContext evolution = source.schemaVersion() == CURRENT_SCHEMA_VERSION
+                ? restoreUnifiedEvolution(source.stateEvolution(), personTimeline)
+                : migrateLegacyEvolution(source.stateEvolution(), personTimeline);
 
         return new Person(
                 PersonId.parse(source.personId()),
@@ -277,7 +264,6 @@ final class PersonAggregateJsonMapper {
                     document.participants(),
                     document.notes()
             );
-
             if (document.endReason() == null) {
                 timeline.start(event, document.startTime());
             } else {
@@ -318,109 +304,161 @@ final class PersonAggregateJsonMapper {
         }
     }
 
-    private static StateEvolutionContext restoreEvolution(
+    private static StateEvolutionContext restoreUnifiedEvolution(
             PersonAggregateDocument.StateEvolutionDocument document,
             EventTimeline personTimeline
     ) {
-        Map<ActivityChannel, ChannelStateEffect> channelEffects = new EnumMap<>(
-                ActivityChannel.class
-        );
-
-        for (PersonAggregateDocument.ChannelEffectDocument storedEffect
-                : document.channelEffects()) {
-            ActivityChannel channel = ActivityChannel.valueOf(storedEffect.channel());
-            EventId eventId = EventId.parse(storedEffect.eventId());
-            PersonEvent event = personTimeline.getById(eventId).orElseThrow(
-                    () -> new IllegalStateException(
-                            "state effect references an unknown person event"
-                    )
-            );
-            if (event.getChannel() != channel) {
+        Map<EffectId, RegisteredStateEffect> effects = new HashMap<>();
+        for (PersonAggregateDocument.StateEffectDocument storedEffect : document.effects()) {
+            EffectId effectId = EffectId.parse(storedEffect.effectId());
+            EventId sourceEventId = storedEffect.sourceEventId() == null
+                    ? null
+                    : EventId.parse(storedEffect.sourceEventId());
+            if (sourceEventId != null && personTimeline.getById(sourceEventId).isEmpty()) {
                 throw new IllegalStateException(
-                        "state effect channel does not match referenced event"
+                        "state effect references an unknown person event"
                 );
             }
-            if (!event.isOpen()) {
-                throw new IllegalStateException(
-                        "activity state effect cannot reference a finished event"
-                );
-            }
-
-            AftermathStateEffectPlan aftermath = storedEffect.aftermath() == null
-                    ? AftermathStateEffectPlan.none()
-                    : new AftermathStateEffectPlan(
-                            Duration.ofSeconds(storedEffect.aftermath().durationSeconds()),
-                            restoreTransitions(
-                                    storedEffect.aftermath().transitions(),
-                                    "aftermath plan"
-                            )
-                    );
-            ChannelStateEffect effect = new ChannelStateEffect(
-                    channel,
-                    eventId,
-                    restoreTransitions(storedEffect.transitions(), "activity effect"),
-                    aftermath
+            RegisteredStateEffect effect = new RegisteredStateEffect(
+                    effectId,
+                    sourceEventId,
+                    StateEffectType.valueOf(storedEffect.type()),
+                    storedEffect.cause(),
+                    storedEffect.startsAt(),
+                    StateEffectEndPolicy.valueOf(storedEffect.endPolicy()),
+                    storedEffect.fixedEndsAt(),
+                    restoreTransitions(storedEffect.transitions())
             );
-            if (channelEffects.put(channel, effect) != null) {
-                throw new IllegalStateException(
-                        "duplicate state effect channel in stored aggregate"
-                );
+            if (effects.put(effectId, effect) != null) {
+                throw new IllegalStateException("duplicate persisted effect id");
             }
         }
 
-        Map<EventId, ResidualStateEffect> residualEffects = new HashMap<>();
-        for (PersonAggregateDocument.ResidualEffectDocument storedEffect
-                : document.residualEffects()) {
-            EventId sourceEventId = EventId.parse(storedEffect.sourceEventId());
-            PersonEvent sourceEvent = personTimeline.getById(sourceEventId).orElseThrow(
+        Set<EventId> evaluatedEventIds = new HashSet<>();
+        for (String storedEventId : document.evaluatedEventIds()) {
+            EventId eventId = EventId.parse(storedEventId);
+            PersonEvent event = personTimeline.getById(eventId).orElseThrow(
                     () -> new IllegalStateException(
-                            "residual effect references an unknown person event"
+                            "evaluated event marker references an unknown person event"
                     )
             );
-            Instant sourceEndTime = sourceEvent.getEndTime().orElseThrow(
+            if (!event.isOpen()) {
+                throw new IllegalStateException(
+                        "only open events may retain evaluated markers"
+                );
+            }
+            evaluatedEventIds.add(eventId);
+        }
+        return new StateEvolutionContext(
+                document.lastUpdatedAt(),
+                effects,
+                evaluatedEventIds
+        );
+    }
+
+    private static StateEvolutionContext migrateLegacyEvolution(
+            PersonAggregateDocument.StateEvolutionDocument document,
+            EventTimeline personTimeline
+    ) {
+        Map<EffectId, RegisteredStateEffect> effects = new HashMap<>();
+        Set<EventId> evaluatedEventIds = new HashSet<>();
+
+        for (PersonAggregateDocument.ChannelEffectDocument legacy : document.channelEffects()) {
+            EventId eventId = EventId.parse(legacy.eventId());
+            PersonEvent event = personTimeline.getById(eventId).orElseThrow(
                     () -> new IllegalStateException(
-                            "residual effect source event must be finished"
+                            "legacy state effect references an unknown person event"
                     )
             );
-            if (!sourceEndTime.equals(storedEffect.startsAt())) {
-                throw new IllegalStateException(
-                        "residual effect must start when its source event ends"
-                );
+            if (event.isOpen()) {
+                evaluatedEventIds.add(eventId);
             }
-            ResidualStateEffect effect = new ResidualStateEffect(
-                    sourceEventId,
-                    storedEffect.startsAt(),
-                    storedEffect.endsAt(),
-                    restoreTransitions(storedEffect.transitions(), "residual effect")
+            List<StateTransition> activeTransitions = restoreTransitions(legacy.transitions());
+            if (!activeTransitions.isEmpty()) {
+                putLegacyEffect(effects, new RegisteredStateEffect(
+                        legacyEffectId(eventId, "active"),
+                        eventId,
+                        StateEffectType.GENERAL,
+                        "Legacy event-bound effect: " + event.getTitle(),
+                        event.getStartTime(),
+                        StateEffectEndPolicy.EVENT_END,
+                        null,
+                        activeTransitions
+                ));
+            }
+            if (legacy.aftermath() != null) {
+                Instant start = document.lastUpdatedAt() == null
+                        ? event.getStartTime()
+                        : document.lastUpdatedAt();
+                putLegacyEffect(effects, new RegisteredStateEffect(
+                        legacyEffectId(eventId, "pending-aftermath"),
+                        eventId,
+                        StateEffectType.GENERAL,
+                        "Legacy post-event effect: " + event.getTitle(),
+                        start,
+                        StateEffectEndPolicy.FIXED_TIME,
+                        start.plusSeconds(legacy.aftermath().durationSeconds()),
+                        restoreTransitions(legacy.aftermath().transitions())
+                ));
+            }
+        }
+
+        int residualIndex = 0;
+        for (PersonAggregateDocument.ResidualEffectDocument legacy : document.residualEffects()) {
+            EventId eventId = EventId.parse(legacy.sourceEventId());
+            PersonEvent event = personTimeline.getById(eventId).orElseThrow(
+                    () -> new IllegalStateException(
+                            "legacy residual effect references an unknown person event"
+                    )
             );
-            if (residualEffects.put(sourceEventId, effect) != null) {
-                throw new IllegalStateException(
-                        "duplicate residual effect source event in stored aggregate"
-                );
-            }
+            putLegacyEffect(effects, new RegisteredStateEffect(
+                    legacyEffectId(eventId, "residual-" + residualIndex++),
+                    eventId,
+                    StateEffectType.GENERAL,
+                    "Legacy fixed-time effect: " + event.getTitle(),
+                    legacy.startsAt(),
+                    StateEffectEndPolicy.FIXED_TIME,
+                    legacy.endsAt(),
+                    restoreTransitions(legacy.transitions())
+            ));
         }
 
         return new StateEvolutionContext(
                 document.lastUpdatedAt(),
-                channelEffects,
-                residualEffects
+                effects,
+                evaluatedEventIds
         );
     }
 
+    private static void putLegacyEffect(
+            Map<EffectId, RegisteredStateEffect> effects,
+            RegisteredStateEffect effect
+    ) {
+        if (effects.put(effect.effectId(), effect) != null) {
+            throw new IllegalStateException("duplicate migrated effect id");
+        }
+    }
+
+    private static EffectId legacyEffectId(EventId eventId, String suffix) {
+        UUID value = UUID.nameUUIDFromBytes(
+                (eventId + ":" + suffix).getBytes(StandardCharsets.UTF_8)
+        );
+        return new EffectId(value);
+    }
+
     private static List<StateTransition> restoreTransitions(
-            List<PersonAggregateDocument.TransitionDocument> storedTransitions,
-            String effectName
+            List<PersonAggregateDocument.TransitionDocument> documents
     ) {
         Set<StateDimension> dimensions = new HashSet<>();
-        return storedTransitions.stream()
-                .map(storedTransition -> new StateTransition(
-                        StateDimension.valueOf(storedTransition.dimension()),
-                        storedTransition.shape()
+        return documents.stream()
+                .map(stored -> new StateTransition(
+                        StateDimension.valueOf(stored.dimension()),
+                        stored.shape()
                 ))
                 .peek(transition -> {
                     if (!dimensions.add(transition.dimension())) {
                         throw new IllegalStateException(
-                                "duplicate transition dimension in " + effectName
+                                "duplicate transition dimension in one effect"
                         );
                     }
                 })

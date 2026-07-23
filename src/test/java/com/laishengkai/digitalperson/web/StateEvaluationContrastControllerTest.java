@@ -55,15 +55,16 @@ class StateEvaluationContrastControllerTest {
         StateEvaluationContrastController controller = controller(request -> {
             captured.set(request);
             return CompletableFuture.completedFuture(response("""
-                    {
-                      "activeTransitions":[
-                        {"dimension":"TENSION","shape":0.50}
-                      ],
-                      "aftermathTransitions":[
+                    {"effects":[{
+                      "type":"EMOTIONAL",
+                      "cause":"亲密朋友的严厉指责引发受伤和紧张",
+                      "transitions":[
+                        {"dimension":"TENSION","shape":0.50},
                         {"dimension":"VALENCE","shape":-0.45}
                       ],
-                      "aftermathDurationMinutes":240
-                    }
+                      "endPolicy":"FIXED_TIME",
+                      "durationMinutes":240
+                    }]}
                     """.strip()));
         });
 
@@ -131,7 +132,7 @@ class StateEvaluationContrastControllerTest {
         return new LanguageModelResponse(
                 AssistantModelMessage.toolCalls(List.of(new ModelToolCall(
                         "call-1",
-                        "submit_state_transitions",
+                        "submit_state_effects",
                         argumentsJson
                 ))),
                 ModelFinishReason.TOOL_CALLS,
@@ -140,12 +141,6 @@ class StateEvaluationContrastControllerTest {
     }
 
     private static String emptyImpact() {
-        return """
-                {
-                  "activeTransitions":[],
-                  "aftermathTransitions":[],
-                  "aftermathDurationMinutes":0
-                }
-                """.strip();
+        return "{\"effects\":[]}";
     }
 }

@@ -1,16 +1,17 @@
 package com.laishengkai.digitalperson.application;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 
 import java.time.Instant;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 
 /** Immutable application-layer view of one persisted digital person. */
 public record PersonDetails(
@@ -21,8 +22,7 @@ public record PersonDetails(
         int personEventCount,
         int userEventCount,
         Instant stateLastUpdatedAt,
-        Set<ActivityChannel> activeEffectChannels,
-        int residualEffectCount
+        List<RegisteredStateEffect> activeEffects
 ) {
     public PersonDetails {
         personId = Objects.requireNonNull(personId, "personId cannot be null");
@@ -34,13 +34,10 @@ public record PersonDetails(
         if (personEventCount < 0 || userEventCount < 0) {
             throw new IllegalArgumentException("event counts cannot be negative");
         }
-        activeEffectChannels = Set.copyOf(Objects.requireNonNull(
-                activeEffectChannels,
-                "activeEffectChannels cannot be null"
+        activeEffects = List.copyOf(Objects.requireNonNull(
+                activeEffects,
+                "activeEffects cannot be null"
         ));
-        if (residualEffectCount < 0) {
-            throw new IllegalArgumentException("residualEffectCount cannot be negative");
-        }
     }
 
     public static PersonDetails from(VersionedPerson versionedPerson) {
@@ -50,6 +47,9 @@ public record PersonDetails(
         );
         Person person = source.person();
         StateEvolutionContext evolutionContext = person.getStateEvolutionContext();
+        List<RegisteredStateEffect> effects = evolutionContext.effects().values().stream()
+                .sorted(Comparator.comparing(RegisteredStateEffect::effectId))
+                .toList();
         return new PersonDetails(
                 person.getId(),
                 source.version(),
@@ -58,8 +58,7 @@ public record PersonDetails(
                 person.getPersonTimeline().getAll().size(),
                 person.getUserTimeline().getAll().size(),
                 evolutionContext.lastUpdatedAt(),
-                evolutionContext.channelEffects().keySet(),
-                evolutionContext.residualEffects().size()
+                effects
         );
     }
 }

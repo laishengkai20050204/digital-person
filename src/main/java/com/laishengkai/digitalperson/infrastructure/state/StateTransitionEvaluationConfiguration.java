@@ -25,14 +25,16 @@ public class StateTransitionEvaluationConfiguration {
         return new LanguageModelStateTransitionEvaluator(languageModelGateway);
     }
 
-    /** Compatibility bean for callers that only consume activity-bound transitions. */
+    /** Compatibility bean for callers that cannot represent independent lifecycles. */
     @Bean
     @ConditionalOnMissingBean(StateTransitionEvaluator.class)
     StateTransitionEvaluator stateTransitionEvaluator(
             EventStateImpactEvaluator evaluator
     ) {
         return context -> evaluator.evaluate(context)
-                .thenApply(impact -> impact.activeTransitions());
+                .thenApply(impact -> impact.effects().stream()
+                        .flatMap(effect -> effect.transitions().stream())
+                        .toList());
     }
 
     @Bean

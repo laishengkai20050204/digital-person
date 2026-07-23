@@ -1,8 +1,8 @@
 package com.laishengkai.digitalperson.application;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventEndReason;
+import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.Person;
@@ -17,6 +17,7 @@ import com.laishengkai.digitalperson.state.PhysicalState;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
+import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
@@ -39,12 +40,7 @@ class StateUpdateConsistencyRegressionTest {
     private static final double EPSILON = 1.0e-12;
     private static final Instant START = Instant.parse("2026-07-22T08:00:00Z");
     private static final Personality PERSONALITY = new Personality(
-            0.5,
-            0.5,
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.5, 0.5, 0.5, 0.5, 0.5, 0.5
     );
 
     @Test
@@ -54,12 +50,13 @@ class StateUpdateConsistencyRegressionTest {
         person.startPersonEvent(eating, START);
 
         InMemoryRepository repository = new InMemoryRepository(person);
+        StateTransitionEvaluator evaluator = context -> CompletableFuture.completedFuture(
+                List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+        );
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
                 new StateUpdater(),
-                context -> CompletableFuture.completedFuture(
-                        List.of(new StateTransition(StateDimension.HUNGER, -1.0))
-                )
+                evaluator
         );
 
         service.update(person.getId(), START).toCompletableFuture().join();
@@ -80,15 +77,14 @@ class StateUpdateConsistencyRegressionTest {
                 .join();
 
         double expectedAfterTenMinutes = 0.7 * Math.exp(-1.0 / 6.0);
+        Person stored = repository.current(person.getId());
         assertEquals(
                 expectedAfterTenMinutes,
-                repository.current(person.getId())
-                        .getState()
-                        .getPhysicalState()
-                        .getHunger(),
+                stored.getState().getPhysicalState().getHunger(),
                 EPSILON,
-                "a cached event effect must not continue after the event has ended"
+                "an event-bound effect must not continue after the event has ended"
         );
+        assertTrue(stored.getStateEvolutionContext().effects().isEmpty());
     }
 
     @Test
@@ -103,19 +99,22 @@ class StateUpdateConsistencyRegressionTest {
                 new CompletableFuture<>();
 
         InMemoryRepository repository = new InMemoryRepository(person);
+        StateTransitionEvaluator evaluator = context -> switch (
+                context.newEvent().activityType()
+        ) {
+            case "EAT" -> eatingEvaluation;
+            case "REST" -> restEvaluation;
+            default -> CompletableFuture.failedFuture(
+                    new IllegalArgumentException(
+                            "unexpected activity type: "
+                                    + context.newEvent().activityType()
+                    )
+            );
+        };
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
                 new StateUpdater(),
-                context -> switch (context.newEvent().activityType()) {
-                    case "EAT" -> eatingEvaluation;
-                    case "REST" -> restEvaluation;
-                    default -> CompletableFuture.failedFuture(
-                            new IllegalArgumentException(
-                                    "unexpected activity type: "
-                                            + context.newEvent().activityType()
-                            )
-                    );
-                }
+                evaluator
         );
 
         CompletionStage<StateUpdateResult> staleUpdate = service.update(
@@ -140,14 +139,9 @@ class StateUpdateConsistencyRegressionTest {
         );
         newerUpdate.toCompletableFuture().join();
 
-        assertEquals(
-                resting.getId(),
+        assertEquals(resting.getId(), onlySourceEventId(
                 repository.current(person.getId())
-                        .getStateEvolutionContext()
-                        .channelEffects()
-                        .get(ActivityChannel.PRIMARY)
-                        .eventId()
-        );
+        ));
 
         eatingEvaluation.complete(
                 List.of(new StateTransition(StateDimension.HUNGER, -1.0))
@@ -160,13 +154,17 @@ class StateUpdateConsistencyRegressionTest {
 
         assertEquals(
                 resting.getId(),
-                repository.current(person.getId())
-                        .getStateEvolutionContext()
-                        .channelEffects()
-                        .get(ActivityChannel.PRIMARY)
-                        .eventId(),
+                onlySourceEventId(repository.current(person.getId())),
                 "an older asynchronous evaluation must not overwrite newer state"
         );
+    }
+
+    private static EventId onlySourceEventId(Person person) {
+        assertEquals(1, person.getStateEvolutionContext().effects().size());
+        return person.getStateEvolutionContext().effects().values()
+                .iterator()
+                .next()
+                .sourceEventId();
     }
 
     private static PersonEvent event(
