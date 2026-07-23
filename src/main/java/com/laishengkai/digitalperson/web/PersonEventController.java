@@ -19,15 +19,12 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 /** Token-protected HTTP boundary for person-owned event commands. */
@@ -41,7 +38,7 @@ import java.util.concurrent.CompletionStage;
 public final class PersonEventController {
     private final PersonEventCommandService commandService;
     private final Clock clock;
-    private final byte[] expectedToken;
+    private final InternalTokenGuard tokenGuard;
 
     public PersonEventController(
             PersonEventCommandService commandService,
@@ -53,10 +50,10 @@ public final class PersonEventController {
                 "commandService cannot be null"
         );
         this.clock = Objects.requireNonNull(clock, "clock cannot be null");
-        this.expectedToken = Objects.requireNonNull(
+        this.tokenGuard = new InternalTokenGuard(Objects.requireNonNull(
                 properties,
                 "properties cannot be null"
-        ).requiredToken().getBytes(StandardCharsets.UTF_8);
+        ).requiredToken());
     }
 
     @PostMapping("/realtime")
@@ -68,9 +65,7 @@ public final class PersonEventController {
             ) String suppliedToken,
             @RequestBody RealtimeEventRequest request
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         Instant commandTime = clock.instant();
         PersonEvent event = Objects.requireNonNull(
                 request,
@@ -91,9 +86,7 @@ public final class PersonEventController {
             ) String suppliedToken,
             @RequestBody FinishEventRequest request
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         EventEndReason reason = Objects.requireNonNull(
                 request,
                 "request cannot be null"
@@ -116,9 +109,7 @@ public final class PersonEventController {
             ) String suppliedToken,
             @RequestBody HistoricalEventRequest request
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         PersonEvent event = Objects.requireNonNull(
                 request,
                 "request cannot be null"
@@ -130,23 +121,6 @@ public final class PersonEventController {
                 )
                 .thenApply(result -> ResponseEntity.status(HttpStatus.CREATED)
                         .body(toResponse(result)));
-    }
-
-    private boolean authorized(String suppliedToken) {
-        return suppliedToken != null && MessageDigest.isEqual(
-                expectedToken,
-                suppliedToken.getBytes(StandardCharsets.UTF_8)
-        );
-    }
-
-    private static CompletionStage<ResponseEntity<?>> unauthorized() {
-        return CompletableFuture.completedFuture(
-                ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                        .body(new PersonController.ErrorResponse(
-                                "UNAUTHORIZED",
-                                "Invalid internal token"
-                        ))
-        );
     }
 
     private static EventCommandResponse toResponse(PersonEventCommandResult result) {
@@ -198,11 +172,21 @@ public final class PersonEventController {
     }
 
     private static String requireText(String value, String name) {
-        String normalized = Objects.requireNonNull(value, name + " cannot be null").strip();
+        if (value == null) {
+            throw new IllegalArgumentException(name + " cannot be null");
+        }
+        String normalized = value.strip();
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException(name + " cannot be blank");
         }
         return normalized;
+    }
+
+    private static <T> T required(T value, String name) {
+        if (value == null) {
+            throw new IllegalArgumentException(name + " cannot be null");
+        }
+        return value;
     }
 
     public record RealtimeEventRequest(
@@ -218,10 +202,7 @@ public final class PersonEventController {
                     parseActivityType(activityType),
                     requireText(title, "title"),
                     location,
-                    TimeRange.openEnded(Objects.requireNonNull(
-                            commandTime,
-                            "commandTime cannot be null"
-                    )),
+                    TimeRange.openEnded(required(commandTime, "commandTime")),
                     participants,
                     notes
             );
@@ -244,8 +225,8 @@ public final class PersonEventController {
                     requireText(title, "title"),
                     location,
                     TimeRange.closed(
-                            Objects.requireNonNull(startTime, "startTime cannot be null"),
-                            Objects.requireNonNull(endTime, "endTime cannot be null")
+                            required(startTime, "startTime"),
+                            required(endTime, "endTime")
                     ),
                     participants,
                     notes

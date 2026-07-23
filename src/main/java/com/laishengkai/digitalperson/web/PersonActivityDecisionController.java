@@ -9,7 +9,6 @@ import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -18,14 +17,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 /** Token-protected trigger for one autonomous person activity decision cycle. */
@@ -39,7 +35,7 @@ import java.util.concurrent.CompletionStage;
 public final class PersonActivityDecisionController {
     private final PersonActivityDecisionService decisionService;
     private final Clock clock;
-    private final byte[] expectedToken;
+    private final InternalTokenGuard tokenGuard;
 
     public PersonActivityDecisionController(
             PersonActivityDecisionService decisionService,
@@ -51,10 +47,10 @@ public final class PersonActivityDecisionController {
                 "decisionService cannot be null"
         );
         this.clock = Objects.requireNonNull(clock, "clock cannot be null");
-        this.expectedToken = Objects.requireNonNull(
+        this.tokenGuard = new InternalTokenGuard(Objects.requireNonNull(
                 properties,
                 "properties cannot be null"
-        ).requiredToken().getBytes(StandardCharsets.UTF_8);
+        ).requiredToken());
     }
 
     @PostMapping
@@ -66,9 +62,7 @@ public final class PersonActivityDecisionController {
             ) String suppliedToken,
             @RequestBody(required = false) ActivityDecisionRequest request
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         Instant decisionTime = clock.instant();
         String observation = request == null ? "" : request.observation();
         return decisionService.decide(
@@ -77,23 +71,6 @@ public final class PersonActivityDecisionController {
                         decisionTime
                 )
                 .thenApply(result -> ResponseEntity.ok(toResponse(result)));
-    }
-
-    private boolean authorized(String suppliedToken) {
-        return suppliedToken != null && MessageDigest.isEqual(
-                expectedToken,
-                suppliedToken.getBytes(StandardCharsets.UTF_8)
-        );
-    }
-
-    private static CompletionStage<ResponseEntity<?>> unauthorized() {
-        return CompletableFuture.completedFuture(
-                ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                        .body(new PersonController.ErrorResponse(
-                                "UNAUTHORIZED",
-                                "Invalid internal token"
-                        ))
-        );
     }
 
     private static ActivityDecisionResponse toResponse(

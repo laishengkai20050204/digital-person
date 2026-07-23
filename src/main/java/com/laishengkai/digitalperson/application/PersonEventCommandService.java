@@ -7,13 +7,9 @@ import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
-import com.laishengkai.digitalperson.state.EventEffectRegistration;
-import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
-import com.laishengkai.digitalperson.state.RegisteredStateEffect;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateUpdatePreparation;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -21,25 +17,20 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
-/** Coordinates event lifecycle changes, effect evaluation and optimistic persistence. */
+/** Coordinates event lifecycle changes, state evolution and optimistic persistence. */
 public final class PersonEventCommandService {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             PersonEventCommandService.class
     );
 
     private final PersonRepository personRepository;
-    private final StateUpdater stateUpdater;
-    private final EventStateImpactEvaluator evaluator;
-    private final StateEvaluationContextAssembler contextAssembler;
+    private final PersonStateEvolutionCoordinator stateEvolution;
 
     public PersonEventCommandService(
             PersonRepository personRepository,
@@ -48,9 +39,11 @@ public final class PersonEventCommandService {
     ) {
         this(
                 personRepository,
-                stateUpdater,
-                evaluator,
-                DefaultStateEvaluationContextAssembler.withoutExternalSources()
+                new PersonStateEvolutionCoordinator(
+                        stateUpdater,
+                        evaluator,
+                        DefaultStateEvaluationContextAssembler.withoutExternalSources()
+                )
         );
     }
 
@@ -60,21 +53,27 @@ public final class PersonEventCommandService {
             EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
+        this(
+                personRepository,
+                new PersonStateEvolutionCoordinator(
+                        stateUpdater,
+                        evaluator,
+                        contextAssembler
+                )
+        );
+    }
+
+    public PersonEventCommandService(
+            PersonRepository personRepository,
+            PersonStateEvolutionCoordinator stateEvolution
+    ) {
         this.personRepository = Objects.requireNonNull(
                 personRepository,
                 "personRepository cannot be null"
         );
-        this.stateUpdater = Objects.requireNonNull(
-                stateUpdater,
-                "stateUpdater cannot be null"
-        );
-        this.evaluator = Objects.requireNonNull(
-                evaluator,
-                "evaluator cannot be null"
-        );
-        this.contextAssembler = Objects.requireNonNull(
-                contextAssembler,
-                "contextAssembler cannot be null"
+        this.stateEvolution = Objects.requireNonNull(
+                stateEvolution,
+                "stateEvolution cannot be null"
         );
     }
 
@@ -112,7 +111,7 @@ public final class PersonEventCommandService {
             Person person = loaded.person().copy();
             long expectedVersion = loaded.version();
             PersonState workingState = person.getState();
-            StateUpdatePreparation preparation = prepareExistingEffects(
+            StateUpdatePreparation preparation = stateEvolution.prepare(
                     person,
                     workingState,
                     now
@@ -129,47 +128,37 @@ public final class PersonEventCommandService {
                     preparation.pendingEvents().size()
             );
 
-            return completePendingEvaluations(
+            return stateEvolution.completePending(
                     person,
                     evaluationState,
                     preparation,
                     now
             ).thenCompose(settledContext -> {
                 person.startPersonEvent(requestedEvent, now);
-                StateEvolutionContext baseContext = stateUpdater.afterTimelineChange(
+                StateEvolutionContext baseContext = stateEvolution.afterTimelineChange(
+                        person,
                         settledContext,
-                        person.getCurrentPersonEvents(now),
-                        now,
-                        eventEndTimes(person)
+                        now
                 );
-                StateUpdatePreparation startPreparation = new StateUpdatePreparation(
-                        baseContext,
-                        Map.of(requestedEvent.getChannel(), requestedEvent)
-                );
-
-                return evaluate(
+                return stateEvolution.evaluateStartedEvents(
                         person,
                         evaluationState,
                         baseContext,
-                        requestedEvent,
+                        List.of(requestedEvent),
                         now
-                ).thenApply(registration -> {
-                    StateEvolutionContext completedContext = stateUpdater.complete(
-                            startPreparation,
-                            List.of(registration)
-                    );
-                    person.commitStateUpdate(workingState, completedContext);
-                    saveOrThrow(person, expectedVersion);
-                    PersonEvent committedEvent = person.getPersonEventById(
-                            requestedEvent.getId()
-                    ).orElseThrow();
-                    return new PersonEventCommandResult(
-                            person.getId(),
-                            committedEvent,
-                            person.getStateSnapshot(),
-                            completedContext
-                    );
-                });
+                );
+            }).thenApply(completedContext -> {
+                person.commitStateUpdate(workingState, completedContext);
+                saveOrThrow(person, expectedVersion);
+                PersonEvent committedEvent = person.getPersonEventById(
+                        requestedEvent.getId()
+                ).orElseThrow();
+                return new PersonEventCommandResult(
+                        person.getId(),
+                        committedEvent,
+                        person.getStateSnapshot(),
+                        completedContext
+                );
             }).whenComplete((result, error) -> logCompletion(
                     "start",
                     requestedPersonId,
@@ -234,43 +223,26 @@ public final class PersonEventCommandService {
             }
 
             PersonState workingState = person.getState();
-            StateUpdatePreparation preparation = prepareExistingEffects(
+            StateUpdatePreparation preparation = stateEvolution.prepare(
                     person,
                     workingState,
                     now
             );
             PersonStateSnapshot evaluationState = workingState.snapshot();
 
-            return completePendingEvaluations(
+            return stateEvolution.completePending(
                     person,
                     evaluationState,
                     preparation,
-                    now
-            ).handle((settledContext, evaluationError) -> {
-                if (evaluationError == null) {
-                    return settledContext;
-                }
-                Throwable failure = unwrapCompletionFailure(evaluationError);
-                if (!(failure instanceof PendingEventEvaluationFailure)) {
-                    throw new CompletionException(failure);
-                }
-                LOGGER.warn(
-                        "Continuing event finish after pending-effect evaluation failed: personId={}, eventId={}, pendingEventIds={}",
-                        requestedPersonId,
-                        requestedEventId,
-                        preparation.pendingEvents().values().stream()
-                                .map(PersonEvent::getId)
-                                .toList(),
-                        failure.getCause()
-                );
-                return preparation.settledContext();
-            }).thenApply(settledContext -> {
+                    now,
+                    PersonStateEvolutionCoordinator.PendingEvaluationPolicy
+                            .CONTINUE_WITH_SETTLED_CONTEXT
+            ).thenApply(settledContext -> {
                 person.finishPersonEvent(requestedEventId, now, requestedReason, now);
-                StateEvolutionContext completedContext = stateUpdater.afterTimelineChange(
+                StateEvolutionContext completedContext = stateEvolution.afterTimelineChange(
+                        person,
                         settledContext,
-                        person.getCurrentPersonEvents(now),
-                        now,
-                        eventEndTimes(person)
+                        now
                 );
                 person.commitStateUpdate(workingState, completedContext);
                 saveOrThrow(person, expectedVersion);
@@ -373,132 +345,6 @@ public final class PersonEventCommandService {
                 .orElseThrow(() -> new PersonNotFoundException(personId));
     }
 
-    private StateUpdatePreparation prepareExistingEffects(
-            Person person,
-            PersonState workingState,
-            Instant now
-    ) {
-        return stateUpdater.prepare(
-                workingState,
-                person.getCurrentPersonEvents(now),
-                now,
-                person.getStateEvolutionContext(),
-                eventEndTimes(person)
-        );
-    }
-
-    private CompletionStage<StateEvolutionContext> completePendingEvaluations(
-            Person person,
-            PersonStateSnapshot state,
-            StateUpdatePreparation preparation,
-            Instant evaluationTime
-    ) {
-        final List<CompletableFuture<EventEffectRegistration>> evaluations;
-        try {
-            evaluations = preparation.eventsToEvaluate().stream()
-                    .map(event -> evaluate(
-                            person,
-                            state,
-                            preparation.settledContext(),
-                            event,
-                            evaluationTime
-                    ))
-                    .map(CompletionStage::toCompletableFuture)
-                    .toList();
-        } catch (RuntimeException error) {
-            return CompletableFuture.failedFuture(
-                    new PendingEventEvaluationFailure(error)
-            );
-        }
-        if (evaluations.isEmpty()) {
-            return CompletableFuture.completedFuture(preparation.settledContext());
-        }
-
-        LOGGER.info(
-                "Automatically evaluating pending person events before lifecycle command: personId={}, pendingEventIds={}",
-                person.getId(),
-                preparation.eventsToEvaluate().stream()
-                        .map(PersonEvent::getId)
-                        .toList()
-        );
-
-        return CompletableFuture.allOf(
-                evaluations.toArray(CompletableFuture[]::new)
-        ).handle((ignored, evaluationError) -> {
-            if (evaluationError != null) {
-                throw new PendingEventEvaluationFailure(
-                        unwrapCompletionFailure(evaluationError)
-                );
-            }
-            return ignored;
-        }).thenApply(ignored -> {
-            List<EventEffectRegistration> registrations = evaluations.stream()
-                    .map(CompletableFuture::join)
-                    .toList();
-            return stateUpdater.complete(preparation, registrations);
-        });
-    }
-
-    private static Throwable unwrapCompletionFailure(Throwable error) {
-        Throwable current = Objects.requireNonNull(error, "error cannot be null");
-        while (current instanceof CompletionException && current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
-    }
-
-    private static final class PendingEventEvaluationFailure extends RuntimeException {
-        private PendingEventEvaluationFailure(Throwable cause) {
-            super("pending event effect evaluation failed", cause);
-        }
-    }
-
-    private CompletionStage<EventEffectRegistration> evaluate(
-            Person person,
-            PersonStateSnapshot state,
-            StateEvolutionContext evolution,
-            PersonEvent event,
-            Instant evaluationTime
-    ) {
-        CompletionStage<StateEvaluationContext> contextStage = Objects.requireNonNull(
-                contextAssembler.assemble(
-                        person,
-                        state,
-                        evolution,
-                        event.copy(),
-                        evaluationTime
-                ),
-                "contextAssembler stage cannot be null"
-        );
-        return contextStage.thenCompose(context -> Objects.requireNonNull(
-                        evaluator.evaluate(Objects.requireNonNull(
-                                context,
-                                "assembled context cannot be null"
-                        )),
-                        "evaluator stage cannot be null"
-                ))
-                .thenApply(impact -> toRegistration(event, evaluationTime, impact));
-    }
-
-    private static EventEffectRegistration toRegistration(
-            PersonEvent event,
-            Instant evaluationTime,
-            EventStateImpact impact
-    ) {
-        EventStateImpact safeImpact = Objects.requireNonNull(
-                impact,
-                "evaluator result cannot be null"
-        );
-        List<RegisteredStateEffect> effects = safeImpact.effects().stream()
-                .map(draft -> RegisteredStateEffect.fromDraft(
-                        draft,
-                        event.getId(),
-                        evaluationTime
-                ))
-                .toList();
-        return new EventEffectRegistration(event.getId(), effects);
-    }
-
     private void saveOrThrow(Person person, long expectedVersion) {
         if (!personRepository.save(person, expectedVersion)) {
             throw new PersonVersionConflictException(
@@ -506,16 +352,6 @@ public final class PersonEventCommandService {
                     expectedVersion
             );
         }
-    }
-
-    private static Map<EventId, Instant> eventEndTimes(Person person) {
-        Map<EventId, Instant> endTimes = new HashMap<>();
-        person.getPersonTimeline().getAll().forEach(event ->
-                event.getEndTime().ifPresent(endTime ->
-                        endTimes.put(event.getId(), endTime)
-                )
-        );
-        return Map.copyOf(endTimes);
     }
 
     private static void logCompletion(

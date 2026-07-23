@@ -2,11 +2,8 @@ package com.laishengkai.digitalperson.web;
 
 import com.laishengkai.digitalperson.application.PersonEventCommandResult;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
-import com.laishengkai.digitalperson.experience.ActivityType;
-import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
-import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
@@ -14,7 +11,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -31,6 +31,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class PersonEventControllerTest {
     private static final Instant NOW = Instant.parse("2026-07-22T13:00:00Z");
@@ -40,6 +43,7 @@ class PersonEventControllerTest {
 
     private PersonEventCommandService commandService;
     private PersonEventController controller;
+    private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
@@ -49,6 +53,9 @@ class PersonEventControllerTest {
                 new PersonApiProperties(true, "test-token"),
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
+        mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new PersonApiExceptionHandler())
+                .build();
     }
 
     @Test
@@ -86,20 +93,24 @@ class PersonEventControllerTest {
     }
 
     @Test
-    void rejectsMissingTokenWithoutExecutingCommand() {
-        ResponseEntity<?> response = controller.startRealtime(
-                PERSON_ID.toString(),
-                null,
-                new PersonEventController.RealtimeEventRequest(
-                        "STUDY",
-                        "学习",
-                        "",
-                        List.of(),
-                        ""
+    void rejectsMissingTokenWithoutExecutingCommand() throws Exception {
+        mockMvc.perform(post(
+                        "/api/persons/{personId}/events/realtime",
+                        PERSON_ID
                 )
-        ).toCompletableFuture().join();
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "activityType": "STUDY",
+                                  "title": "学习",
+                                  "location": "",
+                                  "participants": [],
+                                  "notes": ""
+                                }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value("UNAUTHORIZED"));
 
-        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
         verify(commandService, never()).start(any(), any(), any());
     }
 
@@ -155,7 +166,6 @@ class PersonEventControllerTest {
     private static PersonEventCommandResult result(PersonEvent event) {
         PersonEvent committed = event.copy();
         if (!committed.isOpen() && !committed.isFinished()) {
-            // Historical command results mark the event completed in the aggregate.
             PersonEvent finished = new PersonEvent(
                     committed.getId(),
                     committed.getActivityType(),

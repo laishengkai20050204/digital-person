@@ -7,7 +7,6 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
 import com.laishengkai.digitalperson.dialogue.ModelFinishReason;
 import com.laishengkai.digitalperson.dialogue.ModelInvocationOptions;
 import com.laishengkai.digitalperson.dialogue.ModelToolCall;
-import com.laishengkai.digitalperson.dialogue.ModelToolSpecification;
 import com.laishengkai.digitalperson.dialogue.ModelUsage;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
@@ -28,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class StateEffectProtocolGatewayTest {
 
     @Test
-    void narrowsDimensionsByEffectTypeAndRetriesOneInvalidSubmission() {
+    void usesTypeSpecificSchemaAndRetriesOneInvalidSubmission() {
         SequenceGateway delegate = new SequenceGateway(
                 toolResponse(invalidPhysicalEnergy()),
                 toolResponse(validPhysicalFatigue())
@@ -88,11 +87,7 @@ class StateEffectProtocolGatewayTest {
                         new UserModelMessage("{}")
                 ),
                 ModelInvocationOptions.defaults(),
-                List.of(new ModelToolSpecification(
-                        LanguageModelStateTransitionEvaluator.TOOL_NAME,
-                        "Submit state effects.",
-                        "{\"type\":\"object\"}"
-                ))
+                List.of(StateEffectProtocol.submissionTool())
         );
     }
 
