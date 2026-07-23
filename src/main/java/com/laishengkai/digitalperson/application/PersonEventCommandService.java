@@ -20,7 +20,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
@@ -235,23 +234,10 @@ public final class PersonEventCommandService {
                     person,
                     evaluationState,
                     preparation,
-                    now
-            ).handle((settledContext, evaluationError) -> {
-                if (evaluationError == null) {
-                    return settledContext;
-                }
-                Throwable failure = unwrapCompletionFailure(evaluationError);
-                LOGGER.warn(
-                        "Continuing event finish after pending-effect evaluation failed: personId={}, eventId={}, pendingEventIds={}",
-                        requestedPersonId,
-                        requestedEventId,
-                        preparation.pendingEvents().values().stream()
-                                .map(PersonEvent::getId)
-                                .toList(),
-                        failure
-                );
-                return preparation.settledContext();
-            }).thenApply(settledContext -> {
+                    now,
+                    PersonStateEvolutionCoordinator.PendingEvaluationPolicy
+                            .CONTINUE_WITH_SETTLED_CONTEXT
+            ).thenApply(settledContext -> {
                 person.finishPersonEvent(requestedEventId, now, requestedReason, now);
                 StateEvolutionContext completedContext = stateEvolution.afterTimelineChange(
                         person,
@@ -366,14 +352,6 @@ public final class PersonEventCommandService {
                     expectedVersion
             );
         }
-    }
-
-    private static Throwable unwrapCompletionFailure(Throwable error) {
-        Throwable current = Objects.requireNonNull(error, "error cannot be null");
-        while (current instanceof CompletionException && current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     private static void logCompletion(
