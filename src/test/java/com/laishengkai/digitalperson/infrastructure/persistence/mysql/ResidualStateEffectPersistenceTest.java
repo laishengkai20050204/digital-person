@@ -74,7 +74,7 @@ class ResidualStateEffectPersistenceTest {
         String json = mapper.write(person);
         Person restored = mapper.read(json);
 
-        assertTrue(json.contains("\"schemaVersion\":3"));
+        assertTrue(json.contains("\"schemaVersion\":4"));
         assertTrue(json.contains("\"cause\":\"重要关系谈话引发持续低落\""));
         assertEquals(
                 person.getStateEvolutionContext(),
