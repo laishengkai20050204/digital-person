@@ -10,6 +10,7 @@ import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
+import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
@@ -29,23 +30,22 @@ class UpdatePersonStateServiceTest {
     @Test
     void savesOnlyAfterAllEvaluationsSucceed() {
         Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
-        person.startPersonEvent(
-                new PersonEvent(
-                        ActivityType.EAT,
-                        "吃饭",
-                        "",
-                        TimeRange.openEnded(NOW)
-                ),
-                NOW
+        PersonEvent event = new PersonEvent(
+                ActivityType.EAT,
+                "吃饭",
+                "",
+                TimeRange.openEnded(NOW)
         );
+        person.startPersonEvent(event, NOW);
         InMemoryRepository repository = new InMemoryRepository(person);
 
+        StateTransitionEvaluator evaluator = context -> CompletableFuture.completedFuture(
+                List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+        );
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
                 new StateUpdater(),
-                context -> CompletableFuture.completedFuture(
-                        List.of(new StateTransition(StateDimension.HUNGER, -1.0))
-                )
+                evaluator
         );
 
         service.update(person.getId(), NOW).toCompletableFuture().join();
@@ -55,8 +55,18 @@ class UpdatePersonStateServiceTest {
                 1,
                 repository.current(person.getId())
                         .getStateEvolutionContext()
-                        .channelEffects()
+                        .effects()
                         .size()
+        );
+        assertEquals(
+                event.getId(),
+                repository.current(person.getId())
+                        .getStateEvolutionContext()
+                        .effects()
+                        .values()
+                        .iterator()
+                        .next()
+                        .sourceEventId()
         );
     }
 
@@ -73,12 +83,13 @@ class UpdatePersonStateServiceTest {
                 NOW
         );
         InMemoryRepository repository = new InMemoryRepository(person);
+        StateTransitionEvaluator evaluator = context -> CompletableFuture.failedFuture(
+                new IllegalStateException("LLM unavailable")
+        );
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
                 new StateUpdater(),
-                context -> CompletableFuture.failedFuture(
-                        new IllegalStateException("LLM unavailable")
-                )
+                evaluator
         );
 
         assertThrows(
@@ -93,7 +104,7 @@ class UpdatePersonStateServiceTest {
                 0,
                 repository.current(person.getId())
                         .getStateEvolutionContext()
-                        .channelEffects()
+                        .effects()
                         .size()
         );
     }
