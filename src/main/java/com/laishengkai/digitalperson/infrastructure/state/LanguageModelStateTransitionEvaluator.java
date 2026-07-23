@@ -16,10 +16,10 @@ import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import com.laishengkai.digitalperson.state.AftermathStateEffectPlan;
 import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateTransition;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 
 import java.time.Duration;
 import java.util.Arrays;
@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
 
 /** Uses one required tool call to evaluate active and post-event state effects. */
 public final class LanguageModelStateTransitionEvaluator
-        implements StateTransitionEvaluator {
+        implements EventStateImpactEvaluator {
 
     static final String TOOL_NAME = "submit_state_transitions";
     static final int MAX_OUTPUT_TOKENS = 4_096;
