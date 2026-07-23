@@ -20,6 +20,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultStateEvaluationContextAssemblerTest {
@@ -29,8 +30,24 @@ class DefaultStateEvaluationContextAssemblerTest {
     void assemblesPersonalityEventsMemoryConversationAndRuntimeTime() {
         Person person = new Person(new Personality(0.6, 0.8, 0.4, 0.7, 0.9, 0.5));
         PersonEvent study = event(ActivityType.STUDY, "Prepare exam", 600);
+        PersonEvent music = event(ActivityType.LISTEN_MUSIC, "Background music", 500);
         PersonEvent userChat = event(ActivityType.CHAT, "User sent a message", 60);
+        PersonEvent earlierPersonEvent = completedEvent(
+                ActivityType.EAT,
+                "Breakfast",
+                1_200,
+                1_100
+        );
+        PersonEvent earlierUserEvent = completedEvent(
+                ActivityType.CHAT,
+                "Earlier message",
+                900,
+                800
+        );
+        person.recordPersonEvent(earlierPersonEvent, NOW);
+        person.recordUserEvent(earlierUserEvent, NOW);
         person.startPersonEvent(study, NOW);
+        person.startPersonEvent(music, NOW);
         person.startUserEvent(userChat, NOW);
 
         AtomicReference<PersonMemoryQuery> receivedQuery = new AtomicReference<>();
@@ -70,11 +87,28 @@ class DefaultStateEvaluationContextAssemblerTest {
         assertEquals(NOW, context.evaluationTime());
         assertEquals(1, context.memory().items().size());
         assertEquals(1, context.recentConversation().size());
-        assertTrue(context.activeEvents().stream().anyMatch(
-                event -> event.owner() == PersonEventSnapshot.Owner.PERSON
+        assertEquals(
+                List.of(music.getId().toString(), userChat.getId().toString()),
+                context.activeEvents().stream()
+                        .map(PersonEventSnapshot::eventId)
+                        .toList()
+        );
+        assertEquals(
+                List.of(
+                        earlierPersonEvent.getId().toString(),
+                        earlierUserEvent.getId().toString()
+                ),
+                context.recentEvents().stream()
+                        .map(PersonEventSnapshot::eventId)
+                        .toList()
+        );
+        assertFalse(context.activeEvents().stream().anyMatch(
+                active -> active.eventId().equals(study.getId().toString())
         ));
-        assertTrue(context.activeEvents().stream().anyMatch(
-                event -> event.owner() == PersonEventSnapshot.Owner.USER
+        assertFalse(context.recentEvents().stream().anyMatch(
+                recent -> recent.eventId().equals(study.getId().toString())
+                        || recent.eventId().equals(music.getId().toString())
+                        || recent.eventId().equals(userChat.getId().toString())
         ));
         assertTrue(receivedQuery.get().sections().contains(MemorySection.COMMITMENT));
         assertTrue(receivedQuery.get().relevanceQuery().contains("Prepare exam"));
@@ -90,6 +124,23 @@ class DefaultStateEvaluationContextAssemblerTest {
                 title,
                 "",
                 TimeRange.openEnded(NOW.minusSeconds(secondsAgo))
+        );
+    }
+
+    private static PersonEvent completedEvent(
+            ActivityType type,
+            String title,
+            long startSecondsAgo,
+            long endSecondsAgo
+    ) {
+        return new PersonEvent(
+                type,
+                title,
+                "",
+                TimeRange.closed(
+                        NOW.minusSeconds(startSecondsAgo),
+                        NOW.minusSeconds(endSecondsAgo)
+                )
         );
     }
 }
