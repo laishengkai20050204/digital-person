@@ -55,6 +55,31 @@ public final class PersistentPersonActivityScheduler {
         this.clock = Objects.requireNonNull(clock, "clock cannot be null");
     }
 
+    /**
+     * Repairs historical or externally inserted person rows without adding a full-table
+     * scan to every due-work poll. Per-person creation normally provisions the row first.
+     */
+    @Scheduled(
+            fixedDelayString = "${digital-person.activity-scheduler.reconciliation-interval:1h}",
+            initialDelayString = "${digital-person.activity-scheduler.reconciliation-initial-delay:5s}"
+    )
+    public void reconcileMissingSchedules() {
+        Instant now = clock.instant();
+        Instant firstReviewAt = now.plus(properties.initialReviewDelay());
+        try {
+            int initialized = scheduleRepository.initializeMissing(firstReviewAt);
+            if (initialized > 0) {
+                LOGGER.info(
+                        "Reconciled missing persistent activity schedules: personCount={}, firstReviewAt={}",
+                        initialized,
+                        firstReviewAt
+                );
+            }
+        } catch (RuntimeException error) {
+            LOGGER.error("Persistent activity schedule reconciliation failed", error);
+        }
+    }
+
     @Scheduled(
             fixedDelayString = "${digital-person.activity-scheduler.poll-interval:10s}",
             initialDelayString = "${digital-person.activity-scheduler.initial-delay:30s}"
@@ -62,17 +87,6 @@ public final class PersistentPersonActivityScheduler {
     public void poll() {
         Instant now = clock.instant();
         try {
-            int initialized = scheduleRepository.initializeMissing(
-                    now.plus(properties.initialReviewDelay())
-            );
-            if (initialized > 0) {
-                LOGGER.info(
-                        "Initialized persistent activity schedules: personCount={}, firstReviewAt={}",
-                        initialized,
-                        now.plus(properties.initialReviewDelay())
-                );
-            }
-
             int capacity = properties.maxInFlight() - inFlight.get();
             if (capacity <= 0) {
                 return;
