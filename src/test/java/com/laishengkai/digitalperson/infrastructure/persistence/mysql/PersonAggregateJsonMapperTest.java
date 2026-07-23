@@ -82,6 +82,25 @@ class PersonAggregateJsonMapperTest {
         assertThrows(PersonPersistenceException.class, () -> mapper.read(json));
     }
 
+    @Test
+    void clampsPreviouslyPersistedShapesThatExceedTheNewDomainLimit() {
+        PersonAggregateJsonMapper mapper = new PersonAggregateJsonMapper(objectMapper());
+        String legacyJson = mapper.write(completePerson())
+                .replace("\"shape\":-0.25", "\"shape\":-1000.0");
+
+        Person restored = mapper.read(legacyJson);
+
+        StateTransition tension = restored.getStateEvolutionContext()
+                .effects()
+                .values()
+                .stream()
+                .flatMap(effect -> effect.transitions().stream())
+                .filter(transition -> transition.dimension() == StateDimension.TENSION)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(-StateTransition.MAX_ABSOLUTE_SHAPE, tension.shape());
+    }
+
     private static Person completePerson() {
         Personality personality = new Personality(0.7, 0.8, 0.4, 0.6, 0.9, 0.75);
         PersonState state = new PersonState(
