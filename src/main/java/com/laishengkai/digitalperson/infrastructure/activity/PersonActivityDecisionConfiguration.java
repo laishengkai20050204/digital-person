@@ -16,6 +16,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Clock;
+
 /** Spring wiring for autonomous event lifecycle decisions. */
 @Configuration(proxyBeanMethods = false)
 public class PersonActivityDecisionConfiguration {
@@ -58,7 +60,8 @@ public class PersonActivityDecisionConfiguration {
             PersonActivityDecisionModel activityDecisionModel,
             PersonActivityDecisionContextAssembler activityContextAssembler,
             EventStateImpactEvaluator effectEvaluator,
-            StateEvaluationContextAssembler effectContextAssembler
+            StateEvaluationContextAssembler effectContextAssembler,
+            Clock clock
     ) {
         return new PersonActivityDecisionService(
                 personRepository,
@@ -66,7 +69,8 @@ public class PersonActivityDecisionConfiguration {
                 activityDecisionModel,
                 activityContextAssembler,
                 effectEvaluator,
-                effectContextAssembler
+                effectContextAssembler,
+                clock
         );
     }
 }
