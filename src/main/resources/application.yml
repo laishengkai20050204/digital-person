@@ -31,6 +31,18 @@ digital-person:
   person-api:
     enabled: ${PERSON_API_ENABLED:false}
     token: ${PERSON_API_TOKEN:}
+  activity-scheduler:
+    enabled: ${ACTIVITY_SCHEDULER_ENABLED:false}
+    poll-interval: ${ACTIVITY_SCHEDULER_POLL_INTERVAL:10s}
+    initial-delay: ${ACTIVITY_SCHEDULER_INITIAL_DELAY:30s}
+    initial-review-delay: ${ACTIVITY_SCHEDULER_INITIAL_REVIEW_DELAY:1m}
+    minimum-review-delay: ${ACTIVITY_SCHEDULER_MINIMUM_REVIEW_DELAY:1m}
+    conflict-retry-delay: ${ACTIVITY_SCHEDULER_CONFLICT_RETRY_DELAY:30s}
+    lease-duration: ${ACTIVITY_SCHEDULER_LEASE_DURATION:10m}
+    failure-backoff: ${ACTIVITY_SCHEDULER_FAILURE_BACKOFF:5m}
+    max-failure-backoff: ${ACTIVITY_SCHEDULER_MAX_FAILURE_BACKOFF:1h}
+    batch-size: ${ACTIVITY_SCHEDULER_BATCH_SIZE:10}
+    max-in-flight: ${ACTIVITY_SCHEDULER_MAX_IN_FLIGHT:4}
   llm:
     enabled: ${LLM_ENABLED:false}
     base-url: ${LLM_BASE_URL:https://openrouter.ai/api/v1}
