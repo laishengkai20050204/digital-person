@@ -4,10 +4,9 @@ import com.laishengkai.digitalperson.activity.PersonActivityDecisionModel;
 import com.laishengkai.digitalperson.application.DefaultPersonActivityDecisionContextAssembler;
 import com.laishengkai.digitalperson.application.PersonActivityDecisionContextAssembler;
 import com.laishengkai.digitalperson.application.PersonActivityDecisionService;
+import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
-import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
-import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -37,13 +36,9 @@ public class PersonActivityDecisionConfiguration {
     @Bean
     @ConditionalOnMissingBean(PersonActivityDecisionContextAssembler.class)
     PersonActivityDecisionContextAssembler personActivityDecisionContextAssembler(
-            PersonMemoryGateway memoryGateway,
-            RecentConversationGateway conversationGateway
+            PersonModelContextAssembler commonAssembler
     ) {
-        return new DefaultPersonActivityDecisionContextAssembler(
-                memoryGateway,
-                conversationGateway
-        );
+        return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
     }
 
     @Bean
