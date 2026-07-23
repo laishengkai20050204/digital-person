@@ -11,12 +11,21 @@ import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.time.Clock;
 
 /** Spring wiring for provider-neutral person application services. */
 @Configuration(proxyBeanMethods = false)
 public class PersonApplicationConfiguration {
+
+    @Bean
+    @ConditionalOnMissingBean(Clock.class)
+    Clock applicationClock() {
+        return Clock.systemUTC();
+    }
 
     @Bean
     @ConditionalOnMissingBean
@@ -30,8 +39,17 @@ public class PersonApplicationConfiguration {
         return DefaultStateEvaluationContextAssembler.withoutExternalSources();
     }
 
+    /**
+     * The protected person API owns the directory boundary explicitly. Required
+     * persistence dependencies are constructor-resolved so an enabled API fails
+     * startup clearly instead of silently omitting routes because of configuration order.
+     */
     @Bean
-    @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
+    @ConditionalOnProperty(
+            prefix = "digital-person.person-api",
+            name = "enabled",
+            havingValue = "true"
+    )
     @ConditionalOnMissingBean(PersonDirectoryService.class)
     PersonDirectoryService personDirectoryService(
             PersonRepository personRepository,
@@ -57,8 +75,17 @@ public class PersonApplicationConfiguration {
         );
     }
 
+    /**
+     * Core person-event application services are owned here, not by the web adapter.
+     * Property-based registration avoids the previous order-sensitive ConditionalOnBean
+     * path while keeping the API disabled by default.
+     */
     @Bean
-    @ConditionalOnBean({PersonRepository.class, EventStateImpactEvaluator.class})
+    @ConditionalOnProperty(
+            prefix = "digital-person.person-api",
+            name = "enabled",
+            havingValue = "true"
+    )
     @ConditionalOnMissingBean(PersonEventCommandService.class)
     PersonEventCommandService personEventCommandService(
             PersonRepository personRepository,
