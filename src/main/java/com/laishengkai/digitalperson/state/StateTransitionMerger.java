@@ -39,7 +39,11 @@ public final class StateTransitionMerger {
                     if (!Double.isFinite(shape)) {
                         throw new IllegalArgumentException("merged shape must be finite");
                     }
-                    return new StateTransition(entry.getKey(), shape);
+                    double boundedShape = Math.max(
+                            -StateTransition.MAX_ABSOLUTE_SHAPE,
+                            Math.min(StateTransition.MAX_ABSOLUTE_SHAPE, shape)
+                    );
+                    return new StateTransition(entry.getKey(), boundedShape);
                 })
                 .toList();
     }

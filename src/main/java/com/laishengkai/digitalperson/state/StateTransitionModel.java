@@ -26,8 +26,10 @@ public final class StateTransitionModel {
                             + requestedDimension.getMaximum()
             );
         }
-        if (!Double.isFinite(shape) || shape == 0.0) {
-            throw new IllegalArgumentException("shape must be finite and non-zero");
+        if (!StateTransition.isValidShape(shape)) {
+            throw new IllegalArgumentException(
+                    "shape must be finite, non-zero and within supported bounds"
+            );
         }
 
         Duration elapsedTime = Objects.requireNonNull(elapsed, "elapsed cannot be null");

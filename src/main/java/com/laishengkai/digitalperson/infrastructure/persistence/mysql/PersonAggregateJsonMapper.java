@@ -453,7 +453,7 @@ final class PersonAggregateJsonMapper {
         return documents.stream()
                 .map(stored -> new StateTransition(
                         StateDimension.valueOf(stored.dimension()),
-                        stored.shape()
+                        boundPersistedShape(stored.shape())
                 ))
                 .peek(transition -> {
                     if (!dimensions.add(transition.dimension())) {
@@ -463,5 +463,12 @@ final class PersonAggregateJsonMapper {
                     }
                 })
                 .toList();
+    }
+
+    private static double boundPersistedShape(double shape) {
+        return Math.max(
+                -StateTransition.MAX_ABSOLUTE_SHAPE,
+                Math.min(StateTransition.MAX_ABSOLUTE_SHAPE, shape)
+        );
     }
 }

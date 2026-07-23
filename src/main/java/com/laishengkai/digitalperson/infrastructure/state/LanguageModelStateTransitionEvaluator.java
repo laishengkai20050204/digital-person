@@ -344,11 +344,11 @@ public final class LanguageModelStateTransitionEvaluator
                 FIXED_TIME，不能仅因为诱因发生在 CHAT 中就错误绑定 COMMUNICATION 生命周期。
 
                 每个 transition 的 shape 是每小时带符号的指数变化速率，不是直接加减量或目标值。
-                正值向维度最大值移动，负值向最小值移动。只提交直接、显著且短期可观察的变化；
-                证据不足就省略。没有显著效果时提交 {"effects":[]}。
+                正值向维度最大值移动，负值向最小值移动，绝对值不得超过 %s。只提交直接、显著且
+                短期可观察的变化；证据不足就省略。没有显著效果时提交 {"effects":[]}。
 
                 维度范围：%s
-                """.formatted(ranges).strip();
+                """.formatted(StateTransition.MAX_ABSOLUTE_SHAPE, ranges).strip();
     }
 
     private static String buildToolSchema() {
@@ -375,7 +375,7 @@ public final class LanguageModelStateTransitionEvaluator
                               "type":"object",
                               "properties":{
                                 "dimension":{"type":"string","enum":[%s]},
-                                "shape":{"type":"number","description":"每小时带符号的有限非零指数变化速率"}
+                                "shape":{"type":"number","minimum":%s,"maximum":%s,"description":"每小时带符号的有限非零指数变化速率；不得为 0"}
                               },
                               "required":["dimension","shape"],
                               "additionalProperties":false
@@ -397,6 +397,8 @@ public final class LanguageModelStateTransitionEvaluator
                         MAX_CAUSE_LENGTH,
                         StateDimension.values().length,
                         dimensions,
+                        -StateTransition.MAX_ABSOLUTE_SHAPE,
+                        StateTransition.MAX_ABSOLUTE_SHAPE,
                         MAX_EFFECT_DURATION_MINUTES
                 ).strip();
     }
