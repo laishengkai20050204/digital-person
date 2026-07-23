@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.infrastructure.state;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
 import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
+import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 
@@ -11,6 +12,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.stream.Stream;
 
 /**
  * Executes the exact production state-evaluation protocol while retaining the
@@ -55,9 +57,9 @@ public final class StateTransitionEvaluationDiagnostic {
             }
 
             try {
-                List<StateTransition> transitions =
+                EventStateImpact impact =
                         LanguageModelStateTransitionEvaluator.parseResponse(response);
-                return Result.success(request, response, transitions);
+                return Result.success(request, response, impact);
             } catch (RuntimeException protocolError) {
                 return Result.failure(request, response, protocolError);
             }
@@ -126,14 +128,14 @@ public final class StateTransitionEvaluationDiagnostic {
     public record Result(
             LanguageModelRequest request,
             LanguageModelResponse response,
-            List<StateTransition> transitions,
+            EventStateImpact impact,
             String errorType,
             String errorMessage,
             String rootCauseType,
             String rootCauseMessage
     ) {
         public Result {
-            transitions = List.copyOf(Objects.requireNonNullElse(transitions, List.of()));
+            impact = Objects.requireNonNullElse(impact, EventStateImpact.none());
             errorType = normalize(errorType);
             errorMessage = normalize(errorMessage);
             rootCauseType = normalize(rootCauseType);
@@ -143,12 +145,12 @@ public final class StateTransitionEvaluationDiagnostic {
         public static Result success(
                 LanguageModelRequest request,
                 LanguageModelResponse response,
-                List<StateTransition> transitions
+                EventStateImpact impact
         ) {
             return new Result(
                     Objects.requireNonNull(request, "request cannot be null"),
                     Objects.requireNonNull(response, "response cannot be null"),
-                    transitions,
+                    Objects.requireNonNull(impact, "impact cannot be null"),
                     "",
                     "",
                     "",
@@ -166,12 +168,20 @@ public final class StateTransitionEvaluationDiagnostic {
             return new Result(
                     request,
                     response,
-                    List.of(),
+                    EventStateImpact.none(),
                     exposedError.getClass().getSimpleName(),
                     diagnosticMessage(exposedError, rootCause),
                     rootCause.getClass().getSimpleName(),
                     safeMessage(rootCause)
             );
+        }
+
+        /** Compatibility view used by existing direction-based diagnostic expectations. */
+        public List<StateTransition> transitions() {
+            return Stream.concat(
+                    impact.activeTransitions().stream(),
+                    impact.aftermath().transitions().stream()
+            ).toList();
         }
 
         public boolean successful() {
