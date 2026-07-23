@@ -14,7 +14,10 @@ import org.springframework.context.annotation.Configuration;
  * normally.</p>
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(LanguageModelProperties.class)
+@EnableConfigurationProperties({
+        LanguageModelProperties.class,
+        LanguageModelConcurrencyProperties.class
+})
 public class LanguageModelConfiguration {
 
     @Bean
@@ -24,8 +27,12 @@ public class LanguageModelConfiguration {
             havingValue = "true"
     )
     LanguageModelGateway languageModelGateway(
-            LanguageModelProperties properties
+            LanguageModelProperties properties,
+            LanguageModelConcurrencyProperties concurrencyProperties
     ) {
-        return new LangChain4jLanguageModel(properties.toModelConfig());
+        LanguageModelGateway provider = new LangChain4jLanguageModel(
+                properties.toModelConfig()
+        );
+        return new BoundedLanguageModelGateway(provider, concurrencyProperties);
     }
 }

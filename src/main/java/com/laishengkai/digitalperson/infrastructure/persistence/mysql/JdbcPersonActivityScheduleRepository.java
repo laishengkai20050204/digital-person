@@ -53,6 +53,17 @@ public final class JdbcPersonActivityScheduleRepository
               AND (lease_until IS NULL OR lease_until <= ?)
             """;
 
+    private static final String RENEW_LEASE_SQL = """
+            UPDATE person_activity_schedule
+            SET lease_until = ?,
+                updated_at = ?
+            WHERE person_id = ?
+              AND lease_token = ?
+              AND enabled = TRUE
+              AND lease_until IS NOT NULL
+              AND lease_until > ?
+            """;
+
     private static final String COMPLETE_SUCCESS_SQL = """
             UPDATE person_activity_schedule
             SET next_review_at = ?,
@@ -171,6 +182,35 @@ public final class JdbcPersonActivityScheduleRepository
             }
         }
         return List.copyOf(claimed);
+    }
+
+    @Override
+    public boolean renewLease(
+            PersonActivityScheduleLease lease,
+            Instant newLeaseUntil,
+            Instant renewedAt
+    ) {
+        PersonActivityScheduleLease claim = requireLease(lease);
+        Instant renewal = Objects.requireNonNull(
+                renewedAt,
+                "renewedAt cannot be null"
+        );
+        Instant newUntil = requireAfter(
+                newLeaseUntil,
+                renewal,
+                "newLeaseUntil"
+        );
+        return exactlyOneOrNone(
+                jdbcTemplate.update(
+                        RENEW_LEASE_SQL,
+                        Timestamp.from(newUntil),
+                        Timestamp.from(renewal),
+                        claim.personId().toString(),
+                        claim.leaseToken().toString(),
+                        Timestamp.from(renewal)
+                ),
+                "activity schedule lease renewal"
+        );
     }
 
     @Override

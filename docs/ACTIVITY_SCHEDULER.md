@@ -2,31 +2,31 @@
 
 本文说明数字人物如何依据 `nextReviewAt` 持续自动运行，以及生产服务器如何安全启用、观察和停用调度器。
 
-## 1. 当前能力
-
-持久化调度器把原来的：
+## 1. 当前调用链
 
 ```text
-人工调用一次 activity-decisions
+person_activity_schedule.next_review_at 到期
+        ↓
+调度器条件抢占数据库租约
+        ↓
+启动租约续期心跳
+        ↓
+PersonActivityDecisionService 执行一轮活动决策
+        ↓
+结算旧状态效果
+        ↓
+调用活动决策模型
+        ↓
+应用 FINISH / START
+        ↓
+新活动自动评估状态效果
+        ↓
+在整体 deadline 前 CAS 保存人物聚合
+        ↓
+保存新的 next_review_at 并释放租约
 ```
 
-扩展为：
-
-```text
-数据库保存 nextReviewAt
-        ↓
-Spring 定期扫描到期人物
-        ↓
-获取人物级数据库租约
-        ↓
-自动执行一轮活动决策
-        ↓
-保存新的 nextReviewAt
-        ↓
-等待下一轮
-```
-
-应用重启、自动部署或云服务器重启后，调度记录仍保存在 MySQL 中，不依赖 JVM 内存定时任务。
+任务信息保存在 MySQL 中，因此应用重启、自动部署或云服务器重启后不会丢失。
 
 ## 2. 默认安全状态
 
@@ -36,41 +36,39 @@ Spring 定期扫描到期人物
 ACTIVITY_SCHEDULER_ENABLED=false
 ```
 
-因此代码合并和自动部署不会立即产生模型调用或费用。只有生产环境显式设置为 `true` 并重启服务后才开始运行。
-
-启用调度器还要求：
+启用时还要求：
 
 ```text
 MYSQL_PERSISTENCE_ENABLED=true
 LLM_ENABLED=true
 ```
 
-缺少数据库或活动决策模型依赖时，应用会在启动阶段明确失败，而不是静默降级成一个不工作的调度器。
+代码部署本身不会自动产生后台模型费用，只有生产环境显式启用后才会运行。
 
-## 3. 数据库结构
+## 3. 调度表
 
-Flyway V2 创建：
+Flyway 创建表：
 
 ```text
 person_activity_schedule
-├── person_id           人物 UUID，主键并外键关联 digital_person
-├── enabled             是否参与自动调度
-├── next_review_at      下一次到期时间
-├── lease_token         当前租约令牌
-├── lease_until         当前租约过期时间
-├── failure_count       连续失败次数
-├── last_error_type     最近失败类型，不保存异常正文
-├── last_started_at     最近一次自动决策开始时间
-├── last_completed_at   最近一次自动决策完成时间
+├── person_id
+├── enabled
+├── next_review_at
+├── lease_token
+├── lease_until
+├── failure_count
+├── last_error_type
+├── last_started_at
+├── last_completed_at
 ├── created_at
 └── updated_at
 ```
 
-人物删除时，其调度记录通过外键自动删除。
+`person_id` 同时是主键和外键。人物删除时，对应调度记录自动删除。
 
-## 4. 首次启用行为
+## 4. 首次计划
 
-轮询器发现 `digital_person` 中存在人物、但没有对应调度记录时，会自动插入首轮计划：
+调度器会为尚无调度记录的已持久化人物补建首轮计划：
 
 ```text
 next_review_at = 当前时间 + initial-review-delay
@@ -82,11 +80,11 @@ next_review_at = 当前时间 + initial-review-delay
 initial-review-delay = 1 分钟
 ```
 
-这意味着首次开启后，已有测试人物会在约 1 分钟后执行第一轮自动活动决策。
+当前实现仍在每次轮询时执行缺失记录补齐。人物规模扩大后，应改为“创建人物时同步建计划 + 低频 reconciliation”。
 
 ## 5. 数据库租约
 
-每次执行前，实例会生成随机 `lease_token`，并通过条件更新抢占任务：
+每次执行前，实例生成随机 `lease_token`，并通过条件更新领取任务：
 
 ```text
 任务已经到期
@@ -94,121 +92,133 @@ initial-review-delay = 1 分钟
 当前没有租约，或旧租约已经过期
 ```
 
-只有条件更新成功的实例才能执行人物决策。
+只有条件更新成功的实例才能执行该人物。
 
-租约的作用：
-
-- 防止同一个 Java 实例重复执行同一人物；
-- 防止以后多个应用实例同时执行同一人物；
-- 应用崩溃后，租约到期即可由新实例恢复；
-- 不需要依赖进程内锁保存任务状态。
-
-默认租约时长：
+默认租约：
 
 ```text
-10 分钟
+lease-duration = 10 分钟
 ```
 
-它应当明显长于一次活动模型调用和新活动状态效果评估的最坏耗时。
+### 主动续租
 
-## 6. 成功流程
+长任务运行期间，每隔一段时间使用同一个 `person_id + lease_token` 延长租约：
 
 ```text
-抢到租约
-  ↓
-PersonActivityDecisionService.decide(personId, claimedAt)
-  ↓
-结算旧状态效果
-  ↓
-调用活动决策模型
-  ↓
-应用 FINISH / START
-  ↓
-如有 START，评估新活动状态效果
-  ↓
-人物聚合 CAS 保存成功
-  ↓
-更新调度表 next_review_at
-  ↓
-清除租约、failure_count 归零
+lease-renewal-interval = 2 分钟
 ```
 
-模型返回的 `nextReviewAt` 会被持久化。
+续租 SQL 还要求旧租约尚未过期。以下情况续租会失败：
 
-如果模型建议时间已经因为模型调用过慢而落在完成时间附近，调度器会保证至少再等待：
+- 任务已被释放；
+- 租约已过期；
+- 其他实例已经获得新 token；
+- 人物调度已被停用。
+
+一旦心跳确认租约不再属于当前任务，当前实例不会再写入调度完成结果。
+
+## 6. 整体活动决策 deadline
+
+调度器为每轮自动决策传入整体 deadline：
 
 ```text
-minimum-review-delay
+decision-timeout = 8 分钟
 ```
 
-默认 1 分钟，避免立即形成高频循环。
-
-## 7. 失败与退避
-
-### 乐观锁冲突
-
-如果微信消息、人工事件命令或另一个请求先修改了人物，活动决策会遇到 `PersonVersionConflictException`。
-
-这种情况不代表模型故障，因此：
-
-- 不增加 `failure_count`；
-- 默认 30 秒后重新读取最新人物再判断；
-- 不重放旧模型结果。
-
-### 模型或协议失败
-
-其他失败会使用指数退避：
+默认关系为：
 
 ```text
-第 1 次失败：5 分钟
-第 2 次失败：10 分钟
-第 3 次失败：20 分钟
-第 4 次失败：40 分钟
-以后最多：60 分钟
+单次模型超时 60 秒
+< 整轮活动决策 deadline 8 分钟
+< 数据库租约 10 分钟
 ```
 
-只保存异常类型，例如：
+活动服务会在关键阶段检查 deadline，包括：
 
-```text
-LanguageModelException
-StateTransitionEvaluationException
-```
+- 人物加载；
+- 上下文组装；
+- 活动模型调用前后；
+- 新活动状态效果评估前后；
+- 聚合提交；
+- Repository 保存前。
 
-不会把提示词、聊天正文、人物记忆、模型回复或 API Key 写入调度表。
+如果模型结果在 deadline 后才返回，本轮不会保存人物聚合，而是进入调度失败退避。
 
-## 8. 并发与成本限制
+该 deadline 是“禁止迟到结果提交”的业务保护，并不会强行中断已经发出的网络 socket；单次供应商调用仍由 `LLM_TIMEOUT` 控制。
+
+## 7. 全局模型并发闸门
+
+所有 `LanguageModelGateway` 调用都会经过同一个进程级并发闸门，包括：
+
+- 自动活动决策；
+- 状态效果评估；
+- 手动 API；
+- Agent 工具循环；
+- 诊断和连接测试。
 
 默认：
 
 ```text
-batch-size   = 10
-max-in-flight = 4
-poll-interval = 10 秒
+LLM_CONCURRENCY_MAXIMUM=4
+LLM_CONCURRENCY_ACQUIRE_TIMEOUT=2s
 ```
 
-含义：
+达到并发上限后，请求只等待有限时间；仍无法获得容量时返回 `LanguageModelException`，不会无限创建虚拟线程或无限排队。
 
-- 一次轮询最多尝试抢占 10 个人物；
-- 单个应用进程最多同时运行 4 轮模型决策；
-- 每 10 秒扫描一次到期任务；
-- 未到期人物不会调用模型。
+调度器自己的 `max-in-flight` 只限制活动决策轮数；全局 LLM 闸门负责限制所有入口的模型调用总量。
 
-当前只有一个人物时，可先使用更保守的生产配置：
+## 8. 成功流程
+
+成功后：
+
+1. 人物聚合通过版本号 CAS 保存；
+2. 使用模型返回的 `nextReviewAt` 续排；
+3. 若模型调用过慢，至少再等待 `minimum-review-delay`；
+4. 清空 `lease_token` 和 `lease_until`；
+5. `failure_count` 归零；
+6. 清空 `last_error_type`。
+
+默认最短复查间隔：
 
 ```text
-ACTIVITY_SCHEDULER_BATCH_SIZE=1
-ACTIVITY_SCHEDULER_MAX_IN_FLIGHT=1
+minimum-review-delay = 1 分钟
 ```
 
-## 9. 生产启用
+## 9. 失败与退避
 
-编辑环境文件：
+### 乐观锁冲突
+
+微信消息、人工事件命令或其他请求先修改人物时，会产生 `PersonVersionConflictException`。
+
+处理方式：
+
+- 不增加 `failure_count`；
+- 默认 30 秒后重新读取最新人物；
+- 不重放旧模型结果。
+
+### 模型、协议、deadline 或其他失败
+
+使用指数退避：
+
+```text
+第 1 次：5 分钟
+第 2 次：10 分钟
+第 3 次：20 分钟
+第 4 次：40 分钟
+以后最多：60 分钟
+```
+
+数据库只保存异常类型，不保存提示词、人物记忆、聊天正文、模型回复或密钥。
+
+## 10. 生产配置
+
+编辑：
 
 ```bash
 sudoedit /etc/person-ai/person-ai.env
 ```
 
-增加：
+推荐的单人物/小规模配置：
 
 ```bash
 ACTIVITY_SCHEDULER_ENABLED=true
@@ -217,47 +227,97 @@ ACTIVITY_SCHEDULER_INITIAL_DELAY=30s
 ACTIVITY_SCHEDULER_INITIAL_REVIEW_DELAY=1m
 ACTIVITY_SCHEDULER_MINIMUM_REVIEW_DELAY=1m
 ACTIVITY_SCHEDULER_CONFLICT_RETRY_DELAY=30s
+
 ACTIVITY_SCHEDULER_LEASE_DURATION=10m
+ACTIVITY_SCHEDULER_LEASE_RENEWAL_INTERVAL=2m
+ACTIVITY_SCHEDULER_DECISION_TIMEOUT=8m
+
 ACTIVITY_SCHEDULER_FAILURE_BACKOFF=5m
 ACTIVITY_SCHEDULER_MAX_FAILURE_BACKOFF=1h
 ACTIVITY_SCHEDULER_BATCH_SIZE=1
 ACTIVITY_SCHEDULER_MAX_IN_FLIGHT=1
+
+LLM_CONCURRENCY_MAXIMUM=4
+LLM_CONCURRENCY_ACQUIRE_TIMEOUT=2s
 ```
 
-确认这些已有开关仍为：
+确认：
 
 ```bash
 MYSQL_PERSISTENCE_ENABLED=true
 LLM_ENABLED=true
 ```
 
-重启：
+重启并检查：
 
 ```bash
 sudo systemctl restart person-ai
 curl -fsS http://127.0.0.1:8080/actuator/health | jq
+sudo systemctl status person-ai --no-pager -l
 ```
 
-## 10. 验证 Flyway 迁移
+配置约束：
 
-查看启动日志：
-
-```bash
-sudo journalctl -u person-ai -b --no-pager -o cat \
-  | grep -E 'Flyway|person_activity_schedule|Migration|migrat'
+```text
+lease-renewal-interval < lease-duration
+decision-timeout < lease-duration
+max-failure-backoff >= failure-backoff
 ```
 
-本机 MySQL 允许 root socket 登录时，可直接检查：
+不满足时应用会在启动阶段失败，避免以危险参数静默运行。
+
+## 11. 查看调度日志
 
 ```bash
-sudo mysql digital_person -e \
-  "SHOW TABLES LIKE 'person_activity_schedule';"
+sudo journalctl -u person-ai -f -o cat \
+  | grep --line-buffered -E \
+    'persistent activity|Persistent activity|scheduled activity|Scheduled activity|activity schedule lease|concurrency limit|deadline'
 ```
 
-查看调度记录：
+关键日志：
+
+```text
+Initialized persistent activity schedules
+Starting scheduled activity decision
+Completed scheduled activity decision
+Scheduled activity decision failed
+Rescheduled activity decision after version conflict
+Renewed activity schedule lease
+Activity schedule lease heartbeat lost ownership
+Language model concurrency limit reached
+```
+
+正常任务少于 2 分钟时不会出现续租日志，这是正常现象；心跳只在达到续租间隔后执行。
+
+## 12. 查看调度表
+
+不要假定 MySQL root 可以无密码登录。应使用 `/etc/person-ai/person-ai.env` 中的应用账号。
 
 ```bash
-sudo mysql digital_person -e "
+sudo bash <<'EOF'
+set -a
+source /etc/person-ai/person-ai.env
+set +a
+
+url="${MYSQL_JDBC_URL#jdbc:mysql://}"
+authority="${url%%/*}"
+db_and_query="${url#*/}"
+database="${db_and_query%%\?*}"
+host="${authority%%:*}"
+
+if [[ "$authority" == *:* ]]; then
+  port="${authority##*:}"
+else
+  port=3306
+fi
+
+MYSQL_PWD="$MYSQL_PASSWORD" mysql \
+  --protocol=TCP \
+  -h "$host" \
+  -P "$port" \
+  -u "$MYSQL_USERNAME" \
+  "$database" \
+  -e "
 SELECT
   person_id,
   enabled,
@@ -267,134 +327,86 @@ SELECT
   last_error_type,
   last_started_at,
   last_completed_at
-FROM person_activity_schedule;
+FROM person_activity_schedule
+ORDER BY person_id;
 "
+EOF
 ```
 
-命令不会显示数据库密码、API Key 或人物 JSON。
-
-## 11. 观察自动运行日志
-
-持续观察：
-
-```bash
-sudo journalctl -u person-ai -f -o cat \
-  | grep --line-buffered -E \
-    'persistent activity|Persistent activity|scheduled activity|Scheduled activity'
-```
-
-关键日志包括：
+健康记录通常满足：
 
 ```text
-Initialized persistent activity schedules
-Starting scheduled activity decision
-Completed scheduled activity decision
-Scheduled activity decision failed
-Rescheduled activity decision after version conflict
+enabled = 1
+lease_until = NULL（任务空闲时）
+failure_count = 0
+last_error_type = NULL
+next_review_at 在未来
 ```
 
-日志只包含人物 ID、次数、时间、命令数量和异常类型。
+## 13. 暂停与恢复单个人物
 
-## 12. 验证人物确实自动变化
+暂停：
 
-启用前记录当前版本：
-
-```bash
-_dp_load_test_env
-PERSON_ID='<人物UUID>'
-
-dp-curl -fsS "$BASE_URL/api/persons/$PERSON_ID" \
-  | jq '{version,stateLastUpdatedAt,personEventCount,state,activeEffects}'
-```
-
-等待超过 `initial-review-delay`，再次执行同一查询。
-
-若自动决策成功，通常可以观察到：
-
-- `version` 增加；
-- `stateLastUpdatedAt` 更新；
-- 状态随已有效果继续演化；
-- 模型需要改变活动时，事件数量或当前效果发生变化。
-
-即使模型返回 `commands=[]`，状态结算仍会保存，因此版本和状态更新时间可能变化。
-
-## 13. 停用
-
-编辑：
-
-```bash
-sudoedit /etc/person-ai/person-ai.env
-```
-
-设置：
-
-```bash
-ACTIVITY_SCHEDULER_ENABLED=false
-```
-
-然后：
-
-```bash
-sudo systemctl restart person-ai
-```
-
-数据库中的 `next_review_at` 和失败记录会保留。以后重新启用时，可以继续从持久化任务恢复。
-
-如需只暂停某一个人物，可以直接设置：
-
-```bash
-sudo mysql digital_person -e "
+```sql
 UPDATE person_activity_schedule
-SET enabled = FALSE
+SET enabled = FALSE,
+    lease_token = NULL,
+    lease_until = NULL
 WHERE person_id = '<人物UUID>';
-"
 ```
 
-恢复：
+恢复并立即到期：
 
-```bash
-sudo mysql digital_person -e "
+```sql
 UPDATE person_activity_schedule
 SET enabled = TRUE,
     next_review_at = CURRENT_TIMESTAMP(6)
 WHERE person_id = '<人物UUID>';
-"
 ```
 
-## 14. 手动 API 的定位
+停用整个调度器：
 
-以下接口仍然保留：
+```bash
+ACTIVITY_SCHEDULER_ENABLED=false
+sudo systemctl restart person-ai
+```
+
+调度表不会被删除，以后重新启用可以继续恢复。
+
+## 14. 手动 API
+
+接口仍保留：
 
 ```http
 POST /api/persons/{personId}/activity-decisions
 ```
 
-它用于：
-
-- 黑盒测试；
-- 故障诊断；
-- 临时人工触发。
-
-当前手动调用返回的 `nextReviewAt` 不会主动覆盖调度表中的计划。启用自动调度后，正常运行应由调度器触发；进行人工测试时要注意可能与自动任务发生 CAS 冲突，冲突任务会在 30 秒后重新读取人物。
+它用于黑盒测试、诊断和临时人工触发。手动调用不会主动改写调度表的 `next_review_at`，并可能与自动任务发生人物版本冲突。
 
 ## 15. 当前边界
 
-当前版本已经解决：
+已经实现：
 
-- 重启后任务恢复；
-- 单人物互斥租约；
-- 多实例抢占安全；
+- MySQL 持久化任务；
+- 重启恢复；
+- 单人物租约；
+- 多实例条件抢占；
+- 租约续期心跳；
+- 丢失租约后禁止调度结果写回；
+- 整轮活动决策 deadline；
+- 人物 CAS 保存；
 - 成功续排；
-- 冲突重读；
-- 失败退避；
-- 并发和费用上限。
+- 版本冲突重读；
+- 指数失败退避；
+- 调度并发限制；
+- 全局 LLM 并发闸门。
 
-尚未实现：
+仍未实现：
 
+- 创建人物时同步创建调度记录；
+- 低频 reconciliation 取代每轮全表补齐；
 - 调度管理 HTTP API；
-- 租约执行中的主动续租心跳；
-- Prometheus 调度指标与告警；
-- 按人物设置独立成本预算；
-- 微信侧展示下一次活动判断时间。
-
-在当前单服务器、少量人物的部署规模下，10 分钟租约和 MySQL 持久化队列已经能够提供稳定的第一版持续自主运行能力。
+- Prometheus 指标和告警；
+- 按人物成本预算；
+- 按前台、调度、诊断划分独立模型并发配额；
+- 对底层供应商请求进行主动取消。

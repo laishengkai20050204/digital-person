@@ -14,6 +14,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.util.Set;
 import java.util.concurrent.CompletionException;
 
 /** Stable error contract for the protected person API. */
@@ -23,6 +24,12 @@ import java.util.concurrent.CompletionException;
         PersonActivityDecisionController.class
 })
 public final class PersonApiExceptionHandler {
+    private static final Set<String> REQUEST_NULL_VALIDATION_FRAMES = Set.of(
+            PersonController.CreatePersonRequest.class.getName() + "#toPersonality",
+            PersonController.IdentityRequest.class.getName() + "#requiredText",
+            PersonController.PersonalityRequest.class.getName() + "#required",
+            PersonEventController.class.getName() + "#requireText"
+    );
 
     @ExceptionHandler(PersonNotFoundException.class)
     public ResponseEntity<PersonController.ErrorResponse> notFound(
@@ -80,16 +87,26 @@ public final class PersonApiExceptionHandler {
         );
     }
 
-    @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<PersonController.ErrorResponse> stateConflict(
-            IllegalStateException error
+    /** Explicit caller-input conversion and identifier parsing failures. */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<PersonController.ErrorResponse> invalidRequest(
+            IllegalArgumentException error
     ) {
-        return response(HttpStatus.CONFLICT, "EVENT_STATE_CONFLICT", error.getMessage());
+        return response(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", error.getMessage());
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, NullPointerException.class})
-    public ResponseEntity<PersonController.ErrorResponse> invalidRequest(RuntimeException error) {
-        return response(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", error.getMessage());
+    /**
+     * A small number of legacy request DTO validators still use requireNonNull. Only those exact
+     * conversion frames remain client errors; every other null dereference stays a server error.
+     */
+    @ExceptionHandler(NullPointerException.class)
+    public ResponseEntity<PersonController.ErrorResponse> nullPointerFailure(
+            NullPointerException error
+    ) {
+        if (isLegacyRequestNullValidation(error)) {
+            return response(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", error.getMessage());
+        }
+        return internalFailure(error);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
@@ -127,20 +144,34 @@ public final class PersonApiExceptionHandler {
         if (cause instanceof InvalidPersonActivityDecisionException invalidDecision) {
             return activityDecisionFailure(invalidDecision);
         }
-        if (cause instanceof IllegalStateException eventState) {
-            return stateConflict(eventState);
-        }
         if (cause instanceof IllegalArgumentException invalid) {
             return invalidRequest(invalid);
         }
-        if (cause instanceof NullPointerException invalid) {
-            return invalidRequest(invalid);
+        if (cause instanceof NullPointerException nullPointer) {
+            return nullPointerFailure(nullPointer);
         }
+        return internalFailure(cause);
+    }
+
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<PersonController.ErrorResponse> internalFailure(
+            Throwable ignored
+    ) {
         return response(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
                 "Person command failed"
         );
+    }
+
+    private static boolean isLegacyRequestNullValidation(NullPointerException error) {
+        for (StackTraceElement frame : error.getStackTrace()) {
+            String key = frame.getClassName() + "#" + frame.getMethodName();
+            if (REQUEST_NULL_VALIDATION_FRAMES.contains(key)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Throwable unwrap(Throwable error) {

@@ -45,4 +45,40 @@ class PersonApiExceptionHandlerTest {
         PersonController.ErrorResponse body = response.getBody();
         assertEquals("STATE_EVALUATION_FAILED", body.status());
     }
+
+    @Test
+    void doesNotDisguiseNullDereferenceAsInvalidClientRequest() {
+        ResponseEntity<PersonController.ErrorResponse> response =
+                handler.internalFailure(new NullPointerException("programming defect"));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("INTERNAL_ERROR", response.getBody().status());
+        assertEquals("Person command failed", response.getBody().message());
+    }
+
+    @Test
+    void doesNotDisguiseInternalStateFailureAsConflict() {
+        ResponseEntity<PersonController.ErrorResponse> response =
+                handler.internalFailure(new IllegalStateException("broken invariant"));
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("INTERNAL_ERROR", response.getBody().status());
+    }
+
+    @Test
+    void nestedUnexpectedRuntimeFailureReturnsStableInternalError() {
+        CompletionException failure = new CompletionException(
+                new CompletionException(new NullPointerException("hidden detail"))
+        );
+
+        ResponseEntity<PersonController.ErrorResponse> response =
+                handler.asyncFailure(failure);
+
+        assertEquals(HttpStatus.INTERNAL_SERVER_ERROR, response.getStatusCode());
+        assertNotNull(response.getBody());
+        assertEquals("INTERNAL_ERROR", response.getBody().status());
+        assertEquals("Person command failed", response.getBody().message());
+    }
 }

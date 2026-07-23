@@ -24,6 +24,7 @@ public final class PersistentPersonActivityScheduler {
 
     private final PersonActivityScheduleRepository scheduleRepository;
     private final PersonActivityDecisionService decisionService;
+    private final PersonActivityLeaseHeartbeat leaseHeartbeat;
     private final ActivitySchedulerProperties properties;
     private final Clock clock;
     private final AtomicInteger inFlight = new AtomicInteger();
@@ -31,6 +32,7 @@ public final class PersistentPersonActivityScheduler {
     public PersistentPersonActivityScheduler(
             PersonActivityScheduleRepository scheduleRepository,
             PersonActivityDecisionService decisionService,
+            PersonActivityLeaseHeartbeat leaseHeartbeat,
             ActivitySchedulerProperties properties,
             Clock clock
     ) {
@@ -41,6 +43,10 @@ public final class PersistentPersonActivityScheduler {
         this.decisionService = Objects.requireNonNull(
                 decisionService,
                 "decisionService cannot be null"
+        );
+        this.leaseHeartbeat = Objects.requireNonNull(
+                leaseHeartbeat,
+                "leaseHeartbeat cannot be null"
         );
         this.properties = Objects.requireNonNull(
                 properties,
@@ -97,21 +103,64 @@ public final class PersistentPersonActivityScheduler {
                 lease.failureCount(),
                 lease.leaseUntil()
         );
+        final PersonActivityLeaseHeartbeat.LeaseHandle heartbeatHandle;
         try {
-            decisionService.decide(lease.personId(), lease.claimedAt())
-                    .whenComplete((result, error) -> complete(lease, result, error));
+            heartbeatHandle = leaseHeartbeat.start(lease);
         } catch (RuntimeException error) {
-            complete(lease, null, error);
+            completeWithoutHeartbeat(lease, error);
+            return;
+        }
+        try {
+            decisionService.decide(
+                            lease.personId(),
+                            lease.claimedAt(),
+                            lease.claimedAt().plus(properties.decisionTimeout())
+                    )
+                    .whenComplete((result, error) -> complete(
+                            lease,
+                            heartbeatHandle,
+                            result,
+                            error
+                    ));
+        } catch (RuntimeException error) {
+            complete(lease, heartbeatHandle, null, error);
+        }
+    }
+
+    private void completeWithoutHeartbeat(
+            PersonActivityScheduleLease lease,
+            Throwable error
+    ) {
+        try {
+            completeFailure(lease, unwrap(error), clock.instant());
+        } catch (RuntimeException persistenceFailure) {
+            LOGGER.error(
+                    "Could not persist activity heartbeat startup failure: personId={}, leaseToken={}",
+                    lease.personId(),
+                    lease.leaseToken(),
+                    persistenceFailure
+            );
+        } finally {
+            inFlight.decrementAndGet();
         }
     }
 
     private void complete(
             PersonActivityScheduleLease lease,
+            PersonActivityLeaseHeartbeat.LeaseHandle heartbeatHandle,
             PersonActivityDecisionResult result,
             Throwable error
     ) {
         Instant completedAt = clock.instant();
         try {
+            if (!heartbeatHandle.leaseOwned()) {
+                LOGGER.warn(
+                        "Skipping scheduled activity completion after lease ownership was lost: personId={}, leaseToken={}",
+                        lease.personId(),
+                        lease.leaseToken()
+                );
+                return;
+            }
             if (error == null) {
                 completeSuccess(lease, result, completedAt);
                 return;
@@ -125,6 +174,7 @@ public final class PersistentPersonActivityScheduler {
                     persistenceFailure
             );
         } finally {
+            heartbeatHandle.close();
             inFlight.decrementAndGet();
         }
     }

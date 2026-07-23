@@ -14,6 +14,8 @@ public record ActivitySchedulerProperties(
         Duration minimumReviewDelay,
         Duration conflictRetryDelay,
         Duration leaseDuration,
+        Duration leaseRenewalInterval,
+        Duration decisionTimeout,
         Duration failureBackoff,
         Duration maxFailureBackoff,
         int batchSize,
@@ -25,6 +27,8 @@ public record ActivitySchedulerProperties(
     private static final Duration DEFAULT_MINIMUM_REVIEW_DELAY = Duration.ofMinutes(1);
     private static final Duration DEFAULT_CONFLICT_RETRY_DELAY = Duration.ofSeconds(30);
     private static final Duration DEFAULT_LEASE_DURATION = Duration.ofMinutes(10);
+    private static final Duration DEFAULT_LEASE_RENEWAL_INTERVAL = Duration.ofMinutes(2);
+    private static final Duration DEFAULT_DECISION_TIMEOUT = Duration.ofMinutes(8);
     private static final Duration DEFAULT_FAILURE_BACKOFF = Duration.ofMinutes(5);
     private static final Duration DEFAULT_MAX_FAILURE_BACKOFF = Duration.ofHours(1);
     private static final int DEFAULT_BATCH_SIZE = 10;
@@ -37,6 +41,11 @@ public record ActivitySchedulerProperties(
         minimumReviewDelay = defaultIfNull(minimumReviewDelay, DEFAULT_MINIMUM_REVIEW_DELAY);
         conflictRetryDelay = defaultIfNull(conflictRetryDelay, DEFAULT_CONFLICT_RETRY_DELAY);
         leaseDuration = defaultIfNull(leaseDuration, DEFAULT_LEASE_DURATION);
+        leaseRenewalInterval = defaultIfNull(
+                leaseRenewalInterval,
+                DEFAULT_LEASE_RENEWAL_INTERVAL
+        );
+        decisionTimeout = defaultIfNull(decisionTimeout, DEFAULT_DECISION_TIMEOUT);
         failureBackoff = defaultIfNull(failureBackoff, DEFAULT_FAILURE_BACKOFF);
         maxFailureBackoff = defaultIfNull(maxFailureBackoff, DEFAULT_MAX_FAILURE_BACKOFF);
         batchSize = batchSize == 0 ? DEFAULT_BATCH_SIZE : batchSize;
@@ -48,8 +57,20 @@ public record ActivitySchedulerProperties(
         requirePositive(minimumReviewDelay, "minimumReviewDelay");
         requirePositive(conflictRetryDelay, "conflictRetryDelay");
         requirePositive(leaseDuration, "leaseDuration");
+        requirePositive(leaseRenewalInterval, "leaseRenewalInterval");
+        requirePositive(decisionTimeout, "decisionTimeout");
         requirePositive(failureBackoff, "failureBackoff");
         requirePositive(maxFailureBackoff, "maxFailureBackoff");
+        if (leaseRenewalInterval.compareTo(leaseDuration) >= 0) {
+            throw new IllegalArgumentException(
+                    "leaseRenewalInterval must be shorter than leaseDuration"
+            );
+        }
+        if (decisionTimeout.compareTo(leaseDuration) >= 0) {
+            throw new IllegalArgumentException(
+                    "decisionTimeout must be shorter than leaseDuration"
+            );
+        }
         if (maxFailureBackoff.compareTo(failureBackoff) < 0) {
             throw new IllegalArgumentException(
                     "maxFailureBackoff cannot be shorter than failureBackoff"

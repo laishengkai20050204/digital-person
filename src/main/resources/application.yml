@@ -39,6 +39,8 @@ digital-person:
     minimum-review-delay: ${ACTIVITY_SCHEDULER_MINIMUM_REVIEW_DELAY:1m}
     conflict-retry-delay: ${ACTIVITY_SCHEDULER_CONFLICT_RETRY_DELAY:30s}
     lease-duration: ${ACTIVITY_SCHEDULER_LEASE_DURATION:10m}
+    lease-renewal-interval: ${ACTIVITY_SCHEDULER_LEASE_RENEWAL_INTERVAL:2m}
+    decision-timeout: ${ACTIVITY_SCHEDULER_DECISION_TIMEOUT:8m}
     failure-backoff: ${ACTIVITY_SCHEDULER_FAILURE_BACKOFF:5m}
     max-failure-backoff: ${ACTIVITY_SCHEDULER_MAX_FAILURE_BACKOFF:1h}
     batch-size: ${ACTIVITY_SCHEDULER_BATCH_SIZE:10}
@@ -50,6 +52,9 @@ digital-person:
     model: ${LLM_MODEL:}
     timeout: ${LLM_TIMEOUT:60s}
     max-retries: ${LLM_MAX_RETRIES:2}
+    concurrency:
+      maximum: ${LLM_CONCURRENCY_MAXIMUM:4}
+      acquire-timeout: ${LLM_CONCURRENCY_ACQUIRE_TIMEOUT:2s}
     connection-test:
       enabled: ${LLM_CONNECTION_TEST_ENABLED:false}
       token: ${LLM_CONNECTION_TEST_TOKEN:}
