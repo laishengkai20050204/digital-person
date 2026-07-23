@@ -9,14 +9,12 @@ import com.laishengkai.digitalperson.dialogue.ModelToolCall;
 import com.laishengkai.digitalperson.dialogue.ModelUsage;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
-import com.laishengkai.digitalperson.infrastructure.langchain4j.LanguageModelProperties;
+import com.laishengkai.digitalperson.infrastructure.diagnostics.DiagnosticsProperties;
 import com.laishengkai.digitalperson.infrastructure.state.StateTransitionEvaluationDiagnostic;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
-import java.net.URI;
-import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
@@ -90,21 +88,9 @@ class StateEvaluationReliabilityTest {
     private static StateEvaluationDiagnosticController controller(
             com.laishengkai.digitalperson.dialogue.LanguageModelGateway gateway
     ) {
-        LanguageModelProperties properties = new LanguageModelProperties(
-                true,
-                URI.create("https://openrouter.ai/api/v1"),
-                "test-key",
-                "provider/model",
-                Duration.ofSeconds(5),
-                0,
-                new LanguageModelProperties.ConnectionTest(
-                        true,
-                        "expected-token"
-                )
-        );
         return new StateEvaluationDiagnosticController(
                 new StateTransitionEvaluationDiagnostic(gateway),
-                properties
+                new DiagnosticsProperties(true, "expected-token")
         );
     }
 
