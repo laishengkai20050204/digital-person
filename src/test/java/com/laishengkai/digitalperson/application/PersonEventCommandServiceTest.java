@@ -22,6 +22,7 @@ import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -203,14 +204,18 @@ class PersonEventCommandServiceTest {
     }
 
     @Test
-    void realtimeCommandRejectsAnActiveEventThatWasNeverEvaluated() {
+    void realtimeStartAutomaticallyEvaluatesPendingEventBeforeReplacement() {
         Person person = new Person(PERSONALITY);
         PersonEvent untracked = openEvent(ActivityType.EAT, "绕过服务的事件", START);
         person.startPersonEvent(untracked, START);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
+        List<String> evaluatedActivityTypes = new ArrayList<>();
         PersonEventCommandService service = service(
                 repository,
-                context -> CompletableFuture.completedFuture(EventStateImpact.none())
+                context -> {
+                    evaluatedActivityTypes.add(context.newEvent().activityType());
+                    return CompletableFuture.completedFuture(EventStateImpact.none());
+                }
         );
         Instant replacementTime = START.plusSeconds(1);
         PersonEvent replacement = openEvent(
@@ -219,14 +224,58 @@ class PersonEventCommandServiceTest {
                 replacementTime
         );
 
-        CompletionException error = assertThrows(
-                CompletionException.class,
-                () -> service.start(person.getId(), replacement, replacementTime)
-                        .toCompletableFuture()
-                        .join()
+        PersonEventCommandResult result = service.start(
+                person.getId(),
+                replacement,
+                replacementTime
+        ).toCompletableFuture().join();
+
+        assertEquals(List.of("EAT", "REST"), evaluatedActivityTypes);
+        assertTrue(result.stateEvolutionContext().evaluatedEventIds().contains(
+                replacement.getId()
+        ));
+        assertFalse(result.stateEvolutionContext().evaluatedEventIds().contains(
+                untracked.getId()
+        ));
+        VersionedPerson stored = repository.current(person.getId());
+        assertEquals(1L, stored.version());
+        assertEquals(
+                EventEndReason.REPLACED,
+                stored.person().getPersonEventById(untracked.getId())
+                        .orElseThrow()
+                        .getEndReason()
+                        .orElseThrow()
         );
-        assertInstanceOf(UnsettledPersonEventException.class, error.getCause());
-        assertEquals(0L, repository.current(person.getId()).version());
+    }
+
+    @Test
+    void finishContinuesWhenPendingEventEvaluationFails() {
+        Person person = new Person(PERSONALITY);
+        PersonEvent untracked = openEvent(ActivityType.EAT, "绕过服务的事件", START);
+        person.startPersonEvent(untracked, START);
+        VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
+        AtomicInteger evaluationCount = new AtomicInteger();
+        PersonEventCommandService service = service(repository, context -> {
+            evaluationCount.incrementAndGet();
+            return CompletableFuture.failedFuture(
+                    new IllegalStateException("model unavailable")
+            );
+        });
+        Instant finishTime = START.plusSeconds(60);
+
+        PersonEventCommandResult result = service.finish(
+                person.getId(),
+                untracked.getId(),
+                EventEndReason.COMPLETED,
+                finishTime
+        ).toCompletableFuture().join();
+
+        assertEquals(1, evaluationCount.get());
+        assertEquals(EventEndReason.COMPLETED, result.event().getEndReason().orElseThrow());
+        assertEquals(finishTime, result.event().getEndTime().orElseThrow());
+        assertTrue(result.stateEvolutionContext().evaluatedEventIds().isEmpty());
+        assertTrue(result.stateEvolutionContext().effects().isEmpty());
+        assertEquals(1L, repository.current(person.getId()).version());
     }
 
     private static PersonEventCommandService service(
