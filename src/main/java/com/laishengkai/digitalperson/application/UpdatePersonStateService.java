@@ -8,6 +8,7 @@ import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
@@ -36,14 +37,27 @@ public final class UpdatePersonStateService {
 
     private final PersonRepository personRepository;
     private final StateUpdater stateUpdater;
-    private final StateTransitionEvaluator evaluator;
+    private final EventStateImpactEvaluator evaluator;
     private final StateEvaluationContextAssembler contextAssembler;
 
-    /** Compatibility constructor for deployments without memory or conversation providers. */
+    /** Compatibility constructor for active-only evaluators. */
     public UpdatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
             StateTransitionEvaluator evaluator
+    ) {
+        this(
+                personRepository,
+                stateUpdater,
+                adapt(evaluator),
+                DefaultStateEvaluationContextAssembler.withoutExternalSources()
+        );
+    }
+
+    public UpdatePersonStateService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            EventStateImpactEvaluator evaluator
     ) {
         this(
                 personRepository,
@@ -53,10 +67,20 @@ public final class UpdatePersonStateService {
         );
     }
 
+    /** Compatibility constructor for active-only evaluators with custom context. */
     public UpdatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
             StateTransitionEvaluator evaluator,
+            StateEvaluationContextAssembler contextAssembler
+    ) {
+        this(personRepository, stateUpdater, adapt(evaluator), contextAssembler);
+    }
+
+    public UpdatePersonStateService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
         this.personRepository = Objects.requireNonNull(
@@ -252,6 +276,23 @@ public final class UpdatePersonStateService {
                 safeImpact.activeTransitions(),
                 safeImpact.aftermath()
         );
+    }
+
+    private static EventStateImpactEvaluator adapt(StateTransitionEvaluator evaluator) {
+        StateTransitionEvaluator requestedEvaluator = Objects.requireNonNull(
+                evaluator,
+                "evaluator cannot be null"
+        );
+        return context -> Objects.requireNonNull(
+                        requestedEvaluator.evaluate(context),
+                        "evaluator stage cannot be null"
+                )
+                .thenApply(transitions -> EventStateImpact.activeOnly(
+                        List.copyOf(Objects.requireNonNull(
+                                transitions,
+                                "evaluator result cannot be null"
+                        ))
+                ));
     }
 
     private static Map<EventId, Instant> cachedEffectEndTimes(
