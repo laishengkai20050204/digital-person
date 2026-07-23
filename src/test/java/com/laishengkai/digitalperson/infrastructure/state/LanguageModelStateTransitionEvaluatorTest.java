@@ -19,12 +19,14 @@ import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
+import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -40,26 +42,32 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LanguageModelStateTransitionEvaluatorTest {
 
     @Test
-    void shouldReadTransitionsAndSerializeCompleteContext() {
+    void shouldReadActiveAndAftermathImpactAndSerializeCompleteContext() {
         RecordingGateway gateway = new RecordingGateway(toolResponse("""
                 {
-                  "transitions": [
-                    {"dimension": "VALENCE", "shape": 0.35},
+                  "activeTransitions": [
+                    {"dimension": "VALENCE", "shape": 0.35}
+                  ],
+                  "aftermathTransitions": [
                     {"dimension": "LONELINESS", "shape": -0.25}
-                  ]
+                  ],
+                  "aftermathDurationMinutes": 180
                 }
                 """));
         LanguageModelStateTransitionEvaluator evaluator =
                 new LanguageModelStateTransitionEvaluator(gateway);
 
-        List<StateTransition> transitions = evaluator.evaluate(context())
+        EventStateImpact impact = evaluator.evaluate(context())
                 .toCompletableFuture()
                 .join();
 
         assertEquals(List.of(
-                new StateTransition(StateDimension.VALENCE, 0.35),
+                new StateTransition(StateDimension.VALENCE, 0.35)
+        ), impact.activeTransitions());
+        assertEquals(List.of(
                 new StateTransition(StateDimension.LONELINESS, -0.25)
-        ), transitions);
+        ), impact.aftermath().transitions());
+        assertEquals(Duration.ofMinutes(180), impact.aftermath().duration());
 
         LanguageModelRequest request = gateway.request();
         assertEquals(ModelToolChoice.REQUIRED, request.options().toolChoice());
@@ -68,6 +76,8 @@ class LanguageModelStateTransitionEvaluatorTest {
                 LanguageModelStateTransitionEvaluator.TOOL_NAME,
                 request.tools().getFirst().name()
         );
+        assertTrue(request.tools().getFirst().parametersJsonSchema()
+                .contains("aftermathDurationMinutes"));
         UserModelMessage userMessage = assertInstanceOf(
                 UserModelMessage.class,
                 request.messages().get(1)
@@ -81,16 +91,16 @@ class LanguageModelStateTransitionEvaluatorTest {
     }
 
     @Test
-    void shouldAcceptEmptyTransitionSubmission() {
+    void shouldAcceptEmptyImpactSubmission() {
         LanguageModelStateTransitionEvaluator evaluator =
                 new LanguageModelStateTransitionEvaluator(
                         ignored -> CompletableFuture.completedFuture(
-                                toolResponse("{\"transitions\":[]}")
+                                toolResponse(emptyImpactJson())
                         )
                 );
 
         assertEquals(
-                List.of(),
+                EventStateImpact.none(),
                 evaluator.evaluate(context()).toCompletableFuture().join()
         );
     }
@@ -112,8 +122,8 @@ class LanguageModelStateTransitionEvaluatorTest {
         StateTransitionEvaluationException multiple = failureOf(evaluatorReturning(
                 new LanguageModelResponse(
                         AssistantModelMessage.toolCalls(List.of(
-                                toolCall("call-1", "{\"transitions\":[]}"),
-                                toolCall("call-2", "{\"transitions\":[]}")
+                                toolCall("call-1", emptyImpactJson()),
+                                toolCall("call-2", emptyImpactJson())
                         )),
                         ModelFinishReason.TOOL_CALLS,
                         ModelUsage.unknown()
@@ -127,7 +137,7 @@ class LanguageModelStateTransitionEvaluatorTest {
                                 new ModelToolCall(
                                         "call-1",
                                         "another_tool",
-                                        "{\"transitions\":[]}"
+                                        emptyImpactJson()
                                 )
                         )),
                         ModelFinishReason.TOOL_CALLS,
@@ -138,27 +148,45 @@ class LanguageModelStateTransitionEvaluatorTest {
     }
 
     @Test
-    void shouldRejectMalformedDuplicateOrInvalidTransitions() {
+    void shouldRejectMalformedDuplicateInvalidOrInconsistentImpact() {
         assertTrue(failureOf(evaluatorReturning(
                 toolResponse("not-json")
         )).getMessage().contains("invalid"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
                 {
-                  "transitions": [
+                  "activeTransitions": [
                     {"dimension":"ENERGY","shape":0.2},
                     {"dimension":"ENERGY","shape":-0.1}
-                  ]
+                  ],
+                  "aftermathTransitions": [],
+                  "aftermathDurationMinutes": 0
                 }
                 """))).getMessage().contains("duplicate"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
-                {"transitions":[{"dimension":"ENERGY","shape":0.0}]}
+                {
+                  "activeTransitions":[{"dimension":"ENERGY","shape":0.0}],
+                  "aftermathTransitions":[],
+                  "aftermathDurationMinutes":0
+                }
                 """))).getMessage().contains("invalid shape"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
-                {"transitions":[{"dimension":"MOOD","shape":0.2}]}
+                {
+                  "activeTransitions":[{"dimension":"MOOD","shape":0.2}],
+                  "aftermathTransitions":[],
+                  "aftermathDurationMinutes":0
+                }
                 """))).getMessage().contains("unknown"));
+
+        assertTrue(failureOf(evaluatorReturning(toolResponse("""
+                {
+                  "activeTransitions":[],
+                  "aftermathTransitions":[{"dimension":"VALENCE","shape":-0.8}],
+                  "aftermathDurationMinutes":0
+                }
+                """))).getMessage().contains("positive duration"));
     }
 
     private static StateTransitionEvaluationException failureOf(
@@ -198,6 +226,16 @@ class LanguageModelStateTransitionEvaluatorTest {
                 LanguageModelStateTransitionEvaluator.TOOL_NAME,
                 argumentsJson
         );
+    }
+
+    private static String emptyImpactJson() {
+        return """
+                {
+                  "activeTransitions": [],
+                  "aftermathTransitions": [],
+                  "aftermathDurationMinutes": 0
+                }
+                """;
     }
 
     private static StateEvaluationContext context() {
