@@ -46,6 +46,21 @@ STUDY WORK EAT SLEEP REST TRAVEL EXERCISE SOCIAL ENTERTAINMENT SHOPPING
 CHAT LISTEN_MUSIC OTHER
 ```
 
+## Activity effects and aftermath
+
+Activity channels describe concurrency only:
+
+```text
+PRIMARY COMMUNICATION AUDIO
+```
+
+The model evaluates two separate parts of an event's state impact:
+
+- `activeTransitions`: apply only while the source activity remains open
+- `aftermathTransitions`: begin when the source activity finishes or is replaced and remain active for the model-selected bounded duration
+
+An aftermath is stored independently by source event. It does not occupy `PRIMARY`, `COMMUNICATION`, or `AUDIO`, so an emotional, cognitive, social, or physical after-effect can overlap later chat, music, study, sleep, and other aftermaths. No activity title or keyword has a hard-coded state result; the model chooses dimensions, directions, strength, and duration from the complete evaluation context.
+
 ## Finish a realtime event
 
 Use the `eventId` returned by the start response.
@@ -60,7 +75,7 @@ curl -sS -X POST \
   "http://127.0.0.1:8080/api/persons/$PERSON_ID/events/$EVENT_ID/finish"
 ```
 
-Clients may use `COMPLETED` or `INTERRUPTED`. `REPLACED` is reserved for automatic same-channel replacement.
+Clients may use `COMPLETED` or `INTERRUPTED`. `REPLACED` is reserved for automatic same-channel replacement. Finishing releases only the source activity channel. Any evaluated aftermath is materialized as an independent residual effect.
 
 ## Record a historical event
 
@@ -86,7 +101,7 @@ The historical `endTime` must not be after the server registration time, and it 
 
 ## Response
 
-Successful commands return the committed event together with the current state and active state-effect channels:
+Successful commands return the committed event together with the current state, active activity-effect channels, and the number of independent residual effects:
 
 ```json
 {
@@ -103,9 +118,12 @@ Successful commands return the committed event together with the current state a
   "notes": "",
   "state": {},
   "stateLastUpdatedAt": "2026-07-22T13:00:00Z",
-  "activeEffectChannels": ["AUDIO"]
+  "activeEffectChannels": ["AUDIO"],
+  "residualEffectCount": 1
 }
 ```
+
+`activeEffectChannels` contains only activity-bound effects. `residualEffectCount` counts independent aftermaths and therefore does not consume or appear as an activity channel.
 
 ## Stable errors
 
@@ -116,4 +134,5 @@ Successful commands return the committed event together with the current state a
 409 PERSON_VERSION_CONFLICT
 409 PERSON_EVENT_STATE_UNSETTLED
 409 EVENT_STATE_CONFLICT
+502 STATE_EVALUATION_FAILED
 ```
