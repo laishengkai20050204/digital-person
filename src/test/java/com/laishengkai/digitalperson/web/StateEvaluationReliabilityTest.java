@@ -54,9 +54,10 @@ class StateEvaluationReliabilityTest {
         String systemPrompt = systemMessage.text();
         String userPrompt = userMessage.text();
 
-        assertTrue(systemPrompt.contains("只提交由 newEvent 直接导致"));
-        assertTrue(systemPrompt.contains("证据较弱时应直接省略"));
-        assertTrue(systemPrompt.contains("aftermathTransitions"));
+        assertTrue(systemPrompt.contains("只评估 newEvent"));
+        assertTrue(systemPrompt.contains("证据不足就省略"));
+        assertTrue(systemPrompt.contains("cause 用一句简洁、事实性的文字"));
+        assertTrue(systemPrompt.contains("FIXED_TIME"));
         assertTrue(userPrompt.contains("\"evaluationTime\":\""));
         assertTrue(userPrompt.contains("\"startTime\":\""));
         assertFalse(userPrompt.matches(".*\"evaluationTime\":\\d+.*"));
@@ -112,14 +113,8 @@ class StateEvaluationReliabilityTest {
                 AssistantModelMessage.toolCalls(List.of(
                         new ModelToolCall(
                                 "call-1",
-                                "submit_state_transitions",
-                                """
-                                        {
-                                          "activeTransitions":[],
-                                          "aftermathTransitions":[],
-                                          "aftermathDurationMinutes":0
-                                        }
-                                        """.strip()
+                                "submit_state_effects",
+                                "{\"effects\":[] }"
                         )
                 )),
                 ModelFinishReason.TOOL_CALLS,
