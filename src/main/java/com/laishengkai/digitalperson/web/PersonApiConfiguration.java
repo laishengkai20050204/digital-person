@@ -1,5 +1,8 @@
 package com.laishengkai.digitalperson.web;
 
+import com.laishengkai.digitalperson.activity.PersonActivityDecisionModel;
+import com.laishengkai.digitalperson.application.PersonActivityDecisionContextAssembler;
+import com.laishengkai.digitalperson.application.PersonActivityDecisionService;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.person.PersonRepository;
@@ -47,6 +50,36 @@ public class PersonApiConfiguration {
                 stateUpdater,
                 evaluator,
                 contextAssembler
+        );
+    }
+
+    /**
+     * Creates the autonomous activity boundary whenever the protected person API is enabled.
+     * Required dependencies are resolved after all bean definitions have been registered, so
+     * ordinary component-scan order cannot silently remove the endpoint.
+     */
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.person-api",
+            name = "enabled",
+            havingValue = "true"
+    )
+    @ConditionalOnMissingBean(PersonActivityDecisionService.class)
+    PersonActivityDecisionService personActivityDecisionService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            PersonActivityDecisionModel activityDecisionModel,
+            PersonActivityDecisionContextAssembler activityContextAssembler,
+            EventStateImpactEvaluator effectEvaluator,
+            StateEvaluationContextAssembler effectContextAssembler
+    ) {
+        return new PersonActivityDecisionService(
+                personRepository,
+                stateUpdater,
+                activityDecisionModel,
+                activityContextAssembler,
+                effectEvaluator,
+                effectContextAssembler
         );
     }
 }
