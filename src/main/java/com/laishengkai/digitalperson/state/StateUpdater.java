@@ -309,8 +309,11 @@ public final class StateUpdater {
             }
         });
         boundaries.add(end);
-        boundaries = boundaries.stream().distinct().sorted(Comparator.naturalOrder()).toList();
-        return List.copyOf(boundaries);
+        List<Instant> sortedBoundaries = boundaries.stream()
+                .distinct()
+                .sorted(Comparator.naturalOrder())
+                .toList();
+        return List.copyOf(sortedBoundaries);
     }
 
     private static boolean remainsActiveAfter(
