@@ -11,17 +11,23 @@ import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import com.laishengkai.digitalperson.person.Person;
+import com.laishengkai.digitalperson.person.PersonIdentitySnapshot;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
+import com.laishengkai.digitalperson.state.ActiveStateEffectSnapshot;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
+import com.laishengkai.digitalperson.state.StateEvolutionContext;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -97,6 +103,7 @@ public final class DefaultStateEvaluationContextAssembler
     public CompletionStage<StateEvaluationContext> assemble(
             Person person,
             PersonStateSnapshot currentState,
+            StateEvolutionContext currentEvolution,
             PersonEvent newEvent,
             Instant evaluationTime
     ) {
@@ -104,6 +111,10 @@ public final class DefaultStateEvaluationContextAssembler
         PersonStateSnapshot state = Objects.requireNonNull(
                 currentState,
                 "currentState cannot be null"
+        );
+        StateEvolutionContext evolution = Objects.requireNonNull(
+                currentEvolution,
+                "currentEvolution cannot be null"
         );
         PersonEvent event = Objects.requireNonNull(
                 newEvent,
@@ -127,6 +138,15 @@ public final class DefaultStateEvaluationContextAssembler
                 now,
                 recentExclusions
         );
+        Map<EventId, Instant> eventEndTimes = eventEndTimes(source);
+        List<ActiveStateEffectSnapshot> activeEffects = evolution.effects().values().stream()
+                .filter(effect -> effect.isActiveAt(now, eventEndTimes))
+                .sorted(Comparator
+                        .comparing(RegisteredStateEffect::startsAt)
+                        .thenComparing(RegisteredStateEffect::type)
+                        .thenComparing(RegisteredStateEffect::cause))
+                .map(effect -> ActiveStateEffectSnapshot.from(effect, eventEndTimes))
+                .toList();
 
         CompletionStage<PersonMemoryContext> memoryStage = Objects.requireNonNull(
                 memoryGateway.retrieve(new PersonMemoryQuery(
@@ -150,8 +170,10 @@ public final class DefaultStateEvaluationContextAssembler
         return memoryStage.thenCombine(conversationStage, (memory, conversation) ->
                 new StateEvaluationContext(
                         source.getId(),
+                        PersonIdentitySnapshot.from(source.getIdentity(), now),
                         PersonalitySnapshot.from(source.getPersonality()),
                         state,
+                        activeEffects,
                         PersonEventSnapshot.from(PersonEventSnapshot.Owner.PERSON, event),
                         activeEvents,
                         recentEvents,
@@ -228,6 +250,16 @@ public final class DefaultStateEvaluationContextAssembler
                         .thenComparing(PersonEventSnapshot::owner)
                         .thenComparing(PersonEventSnapshot::eventId))
                 .toList();
+    }
+
+    private static Map<EventId, Instant> eventEndTimes(Person person) {
+        Map<EventId, Instant> endTimes = new HashMap<>();
+        person.getPersonTimeline().getAll().forEach(event ->
+                event.getEndTime().ifPresent(endTime ->
+                        endTimes.put(event.getId(), endTime)
+                )
+        );
+        return Map.copyOf(endTimes);
     }
 
     private static String relevanceQuery(PersonEvent event) {
