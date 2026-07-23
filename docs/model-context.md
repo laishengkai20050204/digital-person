@@ -13,6 +13,8 @@ UserModelMessage(single-line serialized StateEvaluationContext JSON)
 
 `recentConversation` remains a structured array inside the JSON so historical user text is treated as evidence rather than as a new instruction. The JSON string becomes the OpenAI-compatible request field `messages[1].content` after the LangChain4j adapter maps `UserModelMessage` to `UserMessage`.
 
+The serialized string is transient request data: the model gateway neither persists it nor treats it as conversation history.
+
 The context includes:
 
 ```text
