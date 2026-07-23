@@ -54,19 +54,6 @@ public final class UpdatePersonStateService {
         );
     }
 
-    public UpdatePersonStateService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            EventStateImpactEvaluator evaluator
-    ) {
-        this(
-                personRepository,
-                stateUpdater,
-                evaluator,
-                DefaultStateEvaluationContextAssembler.withoutExternalSources()
-        );
-    }
-
     /** Compatibility constructor for active-only evaluators with custom context. */
     public UpdatePersonStateService(
             PersonRepository personRepository,
