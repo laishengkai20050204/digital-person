@@ -7,6 +7,7 @@ import com.laishengkai.digitalperson.application.PersonVersionConflictException;
 import com.laishengkai.digitalperson.application.UnsettledPersonEventException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import com.laishengkai.digitalperson.infrastructure.activity.PersonActivityDecisionException;
+import com.laishengkai.digitalperson.infrastructure.state.StateTransitionEvaluationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -51,9 +52,12 @@ public final class PersonApiExceptionHandler {
         return response(HttpStatus.CONFLICT, "PERSON_EVENT_STATE_UNSETTLED", error.getMessage());
     }
 
-    @ExceptionHandler(LanguageModelException.class)
+    @ExceptionHandler({
+            LanguageModelException.class,
+            StateTransitionEvaluationException.class
+    })
     public ResponseEntity<PersonController.ErrorResponse> stateEvaluationFailure(
-            LanguageModelException ignored
+            RuntimeException ignored
     ) {
         return response(
                 HttpStatus.BAD_GATEWAY,
@@ -113,6 +117,9 @@ public final class PersonApiExceptionHandler {
         }
         if (cause instanceof LanguageModelException modelFailure) {
             return stateEvaluationFailure(modelFailure);
+        }
+        if (cause instanceof StateTransitionEvaluationException invalidEffects) {
+            return stateEvaluationFailure(invalidEffects);
         }
         if (cause instanceof PersonActivityDecisionException decisionFailure) {
             return activityDecisionFailure(decisionFailure);
