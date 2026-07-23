@@ -30,7 +30,7 @@ class StateEvaluationDiagnosticControllerTest {
         AtomicInteger invocationCount = new AtomicInteger();
         StateEvaluationDiagnosticController controller = controller(request -> {
             invocationCount.incrementAndGet();
-            return CompletableFuture.completedFuture(response("{\"transitions\":[]}"));
+            return CompletableFuture.completedFuture(response(emptyImpact()));
         });
 
         ResponseEntity<?> unauthorized = controller.listScenarios("wrong-token");
@@ -53,12 +53,16 @@ class StateEvaluationDiagnosticControllerTest {
     @Test
     void shouldReturnExactRequestRawToolArgumentsAndParsedResult() {
         String rawArguments = """
-                {"transitions":[
-                  {"dimension":"VALENCE","shape":0.6},
-                  {"dimension":"TENSION","shape":-0.5},
-                  {"dimension":"LONELINESS","shape":-0.7},
-                  {"dimension":"SOCIAL_NEED","shape":-0.5}
-                ]}
+                {
+                  "activeTransitions": [],
+                  "aftermathTransitions": [
+                    {"dimension":"VALENCE","shape":0.6},
+                    {"dimension":"TENSION","shape":-0.5},
+                    {"dimension":"LONELINESS","shape":-0.7},
+                    {"dimension":"SOCIAL_NEED","shape":-0.5}
+                  ],
+                  "aftermathDurationMinutes":180
+                }
                 """.strip();
         StateEvaluationDiagnosticController controller = controller(request ->
                 CompletableFuture.completedFuture(response(rawArguments))
@@ -79,6 +83,7 @@ class StateEvaluationDiagnosticControllerTest {
         assertTrue(body.request().systemPrompt().contains(
                 "必须且只能调用 submit_state_transitions 一次"
         ));
+        assertTrue(body.request().systemPrompt().contains("aftermathTransitions"));
         assertTrue(body.request().userPrompt().contains(
                 "\"title\":\"Romantic partner sends a reassuring affectionate message\""
         ));
@@ -102,7 +107,11 @@ class StateEvaluationDiagnosticControllerTest {
     void shouldExposeExpectationMismatchWithoutDiscardingValidModelOutput() {
         StateEvaluationDiagnosticController controller = controller(request ->
                 CompletableFuture.completedFuture(response("""
-                        {"transitions":[{"dimension":"VALENCE","shape":-0.2}]}
+                        {
+                          "activeTransitions":[{"dimension":"VALENCE","shape":-0.2}],
+                          "aftermathTransitions":[],
+                          "aftermathDurationMinutes":0
+                        }
                         """.strip()))
         );
 
@@ -174,5 +183,15 @@ class StateEvaluationDiagnosticControllerTest {
                 ModelFinishReason.TOOL_CALLS,
                 new ModelUsage(1200, 80, 1280)
         );
+    }
+
+    private static String emptyImpact() {
+        return """
+                {
+                  "activeTransitions":[],
+                  "aftermathTransitions":[],
+                  "aftermathDurationMinutes":0
+                }
+                """.strip();
     }
 }
