@@ -120,6 +120,7 @@ public final class UpdatePersonStateService {
                             .map(event -> evaluate(
                                     person,
                                     evaluationSnapshot,
+                                    preparation.settledContext(),
                                     event,
                                     currentTime
                             ))
@@ -191,6 +192,7 @@ public final class UpdatePersonStateService {
     private CompletionStage<EventEffectRegistration> evaluate(
             Person person,
             PersonStateSnapshot state,
+            StateEvolutionContext evolution,
             PersonEvent event,
             Instant evaluationTime
     ) {
@@ -205,6 +207,7 @@ public final class UpdatePersonStateService {
                 contextAssembler.assemble(
                         person,
                         state,
+                        evolution,
                         event.copy(),
                         evaluationTime
                 ),
