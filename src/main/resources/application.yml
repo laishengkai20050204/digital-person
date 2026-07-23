@@ -40,6 +40,7 @@ digital-person:
     conflict-retry-delay: ${ACTIVITY_SCHEDULER_CONFLICT_RETRY_DELAY:30s}
     lease-duration: ${ACTIVITY_SCHEDULER_LEASE_DURATION:10m}
     lease-renewal-interval: ${ACTIVITY_SCHEDULER_LEASE_RENEWAL_INTERVAL:2m}
+    decision-timeout: ${ACTIVITY_SCHEDULER_DECISION_TIMEOUT:8m}
     failure-backoff: ${ACTIVITY_SCHEDULER_FAILURE_BACKOFF:5m}
     max-failure-backoff: ${ACTIVITY_SCHEDULER_MAX_FAILURE_BACKOFF:1h}
     batch-size: ${ACTIVITY_SCHEDULER_BATCH_SIZE:10}
