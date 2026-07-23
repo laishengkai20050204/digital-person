@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.state;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
@@ -34,10 +33,9 @@ class StateUpdaterTest {
 
         StateEvolutionContext context = updater.complete(
                 preparation,
-                List.of(new ChannelStateEffect(
-                        ActivityChannel.PRIMARY,
-                        eating.getId(),
-                        List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                List.of(registration(
+                        eating,
+                        new StateTransition(StateDimension.HUNGER, -1.0)
                 ))
         );
 
@@ -71,10 +69,9 @@ class StateUpdaterTest {
         );
         StateEvolutionContext firstContext = updater.complete(
                 preparation,
-                List.of(new ChannelStateEffect(
-                        ActivityChannel.PRIMARY,
-                        eating.getId(),
-                        List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                List.of(registration(
+                        eating,
+                        new StateTransition(StateDimension.HUNGER, -1.0)
                 ))
         );
 
@@ -95,7 +92,7 @@ class StateUpdaterTest {
     }
 
     @Test
-    void completeRequiresExactPendingChannelsAndEventIds() {
+    void completeRequiresExactPendingEventsAndEventIds() {
         StateUpdater updater = new StateUpdater();
         PersonEvent eating = event(ActivityType.EAT, "吃饭");
         StateUpdatePreparation preparation = updater.prepare(
@@ -109,14 +106,14 @@ class StateUpdaterTest {
                 IllegalArgumentException.class,
                 () -> updater.complete(preparation, List.of())
         );
+        PersonEvent other = event(ActivityType.EAT, "别的事件");
         assertThrows(
                 IllegalArgumentException.class,
                 () -> updater.complete(
                         preparation,
-                        List.of(new ChannelStateEffect(
-                                ActivityChannel.PRIMARY,
-                                event(ActivityType.EAT, "别的事件").getId(),
-                                List.of()
+                        List.of(registration(
+                                other,
+                                new StateTransition(StateDimension.HUNGER, -1.0)
                         ))
                 )
         );
@@ -136,6 +133,28 @@ class StateUpdaterTest {
                         context
                 )
         );
+    }
+
+    private static EventEffectRegistration registration(
+            PersonEvent event,
+            StateTransition transition
+    ) {
+        StateEffectType type = switch (transition.dimension()) {
+            case VALENCE, ENERGY, TENSION -> StateEffectType.EMOTIONAL;
+            case FOCUS, MENTAL_LOAD, MOTIVATION -> StateEffectType.COGNITIVE;
+            case FATIGUE, SLEEPINESS, HUNGER -> StateEffectType.PHYSICAL;
+            case LONELINESS, SOCIAL_NEED -> StateEffectType.SOCIAL;
+        };
+        RegisteredStateEffect effect = RegisteredStateEffect.fromDraft(
+                StateEffectDraft.eventBound(
+                        type,
+                        "test event effect",
+                        List.of(transition)
+                ),
+                event.getId(),
+                NOW
+        );
+        return new EventEffectRegistration(event.getId(), List.of(effect));
     }
 
     private static PersonEvent event(ActivityType type, String title) {
