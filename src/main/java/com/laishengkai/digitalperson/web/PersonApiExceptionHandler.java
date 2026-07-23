@@ -80,15 +80,15 @@ public final class PersonApiExceptionHandler {
         );
     }
 
-    @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<PersonController.ErrorResponse> stateConflict(
-            IllegalStateException error
+    /**
+     * Request DTO conversion and identifier parsing currently use IllegalArgumentException for
+     * explicit caller input validation. Internal state failures and null dereferences are not
+     * classified here and therefore remain server errors.
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<PersonController.ErrorResponse> invalidRequest(
+            IllegalArgumentException error
     ) {
-        return response(HttpStatus.CONFLICT, "EVENT_STATE_CONFLICT", error.getMessage());
-    }
-
-    @ExceptionHandler({IllegalArgumentException.class, NullPointerException.class})
-    public ResponseEntity<PersonController.ErrorResponse> invalidRequest(RuntimeException error) {
         return response(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", error.getMessage());
     }
 
@@ -127,15 +127,16 @@ public final class PersonApiExceptionHandler {
         if (cause instanceof InvalidPersonActivityDecisionException invalidDecision) {
             return activityDecisionFailure(invalidDecision);
         }
-        if (cause instanceof IllegalStateException eventState) {
-            return stateConflict(eventState);
-        }
         if (cause instanceof IllegalArgumentException invalid) {
             return invalidRequest(invalid);
         }
-        if (cause instanceof NullPointerException invalid) {
-            return invalidRequest(invalid);
-        }
+        return internalFailure(cause);
+    }
+
+    @ExceptionHandler(RuntimeException.class)
+    public ResponseEntity<PersonController.ErrorResponse> internalFailure(
+            Throwable ignored
+    ) {
         return response(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 "INTERNAL_ERROR",
