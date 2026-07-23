@@ -21,7 +21,9 @@ public class StateTransitionEvaluationConfiguration {
     EventStateImpactEvaluator eventStateImpactEvaluator(
             LanguageModelGateway languageModelGateway
     ) {
-        return new LanguageModelStateTransitionEvaluator(languageModelGateway);
+        return new LanguageModelStateTransitionEvaluator(
+                new StateEffectProtocolGateway(languageModelGateway)
+        );
     }
 
     @Bean
