@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.application;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.PersonEvent;
@@ -39,12 +38,7 @@ class PersonEventCommandServiceTest {
     private static final double EPSILON = 1.0e-12;
     private static final Instant START = Instant.parse("2026-07-22T08:00:00Z");
     private static final Personality PERSONALITY = new Personality(
-            0.5,
-            0.5,
-            0.5,
-            0.5,
-            0.5,
-            0.5
+            0.5, 0.5, 0.5, 0.5, 0.5, 0.5
     );
 
     @Test
@@ -79,13 +73,11 @@ class PersonEventCommandServiceTest {
 
         double expectedHunger = 0.7 * Math.exp(-1.0 / 6.0);
         assertEquals(expectedHunger, result.state().hunger(), EPSILON);
-        assertEquals(
-                resting.getId(),
-                result.stateEvolutionContext()
-                        .channelEffects()
-                        .get(ActivityChannel.PRIMARY)
-                        .eventId()
-        );
+        assertEquals(1, result.stateEvolutionContext().effects().size());
+        assertTrue(result.stateEvolutionContext().effects().values().stream()
+                .allMatch(effect -> effect.sourceEventId().equals(resting.getId())));
+        assertTrue(result.stateEvolutionContext().evaluatedEventIds().contains(resting.getId()));
+        assertFalse(result.stateEvolutionContext().evaluatedEventIds().contains(eating.getId()));
 
         VersionedPerson stored = repository.current(person.getId());
         PersonEvent replaced = stored.person().getPersonEventById(eating.getId()).orElseThrow();
@@ -95,7 +87,7 @@ class PersonEventCommandServiceTest {
     }
 
     @Test
-    void finishSettlesThroughEndTimeThenRemovesChannelEffect() {
+    void finishSettlesThroughEndTimeThenRemovesEventBoundEffect() {
         Person person = new Person(PERSONALITY, stateWithHunger(0.7));
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
@@ -117,11 +109,8 @@ class PersonEventCommandServiceTest {
 
         double expectedHunger = 0.7 * Math.exp(-1.0 / 6.0);
         assertEquals(expectedHunger, result.state().hunger(), EPSILON);
-        assertFalse(
-                result.stateEvolutionContext()
-                        .channelEffects()
-                        .containsKey(ActivityChannel.PRIMARY)
-        );
+        assertTrue(result.stateEvolutionContext().effects().isEmpty());
+        assertTrue(result.stateEvolutionContext().evaluatedEventIds().isEmpty());
         assertEquals(EventEndReason.COMPLETED, result.event().getEndReason().orElseThrow());
         assertEquals(finishTime, result.event().getEndTime().orElseThrow());
         assertEquals(2L, repository.current(person.getId()).version());
@@ -155,7 +144,7 @@ class PersonEventCommandServiceTest {
         ).toCompletableFuture().join();
 
         assertEquals(0.7, result.state().hunger(), EPSILON);
-        assertTrue(result.stateEvolutionContext().channelEffects().isEmpty());
+        assertTrue(result.stateEvolutionContext().effects().isEmpty());
         assertTrue(result.stateEvolutionContext().previousUpdateTime().isEmpty());
         assertEquals(0, evaluationCount.get());
         assertEquals(EventEndReason.COMPLETED, result.event().getEndReason().orElseThrow());
@@ -186,7 +175,7 @@ class PersonEventCommandServiceTest {
         VersionedPerson stored = repository.current(person.getId());
         assertEquals(1L, stored.version());
         assertTrue(stored.person().getPersonEventById(eating.getId()).isEmpty());
-        assertTrue(stored.person().getStateEvolutionContext().channelEffects().isEmpty());
+        assertTrue(stored.person().getStateEvolutionContext().effects().isEmpty());
     }
 
     @Test
