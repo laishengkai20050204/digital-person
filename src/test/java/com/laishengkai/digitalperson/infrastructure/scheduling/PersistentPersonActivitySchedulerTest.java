@@ -17,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -96,7 +97,7 @@ class PersistentPersonActivitySchedulerTest {
         scheduler.reconcileMissingSchedules();
 
         verify(repository).initializeMissing(NOW.plus(Duration.ofMinutes(1)));
-        verify(repository, never()).claimDue(any(), any(Integer.class), any());
+        verify(repository, never()).claimDue(any(), anyInt(), any());
     }
 
     @Test
