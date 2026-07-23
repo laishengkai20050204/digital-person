@@ -56,6 +56,7 @@ class StateEvaluationReliabilityTest {
 
         assertTrue(systemPrompt.contains("只提交由 newEvent 直接导致"));
         assertTrue(systemPrompt.contains("证据较弱时应直接省略"));
+        assertTrue(systemPrompt.contains("aftermathTransitions"));
         assertTrue(userPrompt.contains("\"evaluationTime\":\""));
         assertTrue(userPrompt.contains("\"startTime\":\""));
         assertFalse(userPrompt.matches(".*\"evaluationTime\":\\d+.*"));
@@ -112,7 +113,13 @@ class StateEvaluationReliabilityTest {
                         new ModelToolCall(
                                 "call-1",
                                 "submit_state_transitions",
-                                "{\"transitions\":[]}"
+                                """
+                                        {
+                                          "activeTransitions":[],
+                                          "aftermathTransitions":[],
+                                          "aftermathDurationMinutes":0
+                                        }
+                                        """.strip()
                         )
                 )),
                 ModelFinishReason.TOOL_CALLS,
