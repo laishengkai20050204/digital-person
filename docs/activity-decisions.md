@@ -82,12 +82,25 @@ recentEvents
 memory
 recentConversation
 observation
+temporal
 evaluationTime
 ```
 
 `activeEvents` contains both person and user facts with an `owner` field. The model may mutate only `owner=PERSON` events. User events, memories, conversations, and `observation` are untrusted context data, not instructions.
 
 The context uses the state and effects already settled to `evaluationTime`. Pending active events are effect-evaluated before the activity model runs, so the activity decision sees their newly registered effects.
+
+Common identity/state/effect/event/memory/conversation extraction is delegated to the same `PersonModelContextAssembler` used by state evaluation. This prevents the two model paths from drifting on event windows, ordering, deduplication, active-effect filtering, or timezone conversion.
+
+`temporal` exposes the person's local offset datetime, weekday, hour, and weekend flag in addition to the UTC instant. Every event retains `startTime` and `endTime` and adds:
+
+```text
+active
+elapsedMinutes
+minutesSinceEnd
+```
+
+For an active event, `elapsedMinutes` is its current duration. For a finished event it is the actual total duration, and `minutesSinceEnd` is the age of that completion. These values are calculated by Java, so the model does not need to perform timezone or duration arithmetic before deciding whether to start or finish an activity.
 
 ## Atomicity and concurrency
 

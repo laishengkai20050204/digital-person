@@ -3,11 +3,13 @@ package com.laishengkai.digitalperson.state;
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.experience.PersonEventSnapshot;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
+import com.laishengkai.digitalperson.modelcontext.TemporalContextSnapshot;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonIdentitySnapshot;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
 
@@ -23,6 +25,7 @@ public record StateEvaluationContext(
         List<PersonEventSnapshot> recentEvents,
         PersonMemoryContext memory,
         List<ConversationTurnSnapshot> recentConversation,
+        TemporalContextSnapshot temporal,
         Instant evaluationTime
 ) {
     public StateEvaluationContext {
@@ -36,9 +39,53 @@ public record StateEvaluationContext(
         recentEvents = copy(recentEvents, "recentEvents");
         memory = Objects.requireNonNull(memory, "memory cannot be null");
         recentConversation = copy(recentConversation, "recentConversation");
+        temporal = Objects.requireNonNull(temporal, "temporal cannot be null");
         evaluationTime = Objects.requireNonNull(
                 evaluationTime,
                 "evaluationTime cannot be null"
+        );
+        if (!temporal.now().equals(evaluationTime)) {
+            throw new IllegalArgumentException(
+                    "temporal.now must equal evaluationTime"
+            );
+        }
+        if (!temporal.timeZone().equals(identity.timeZone())) {
+            throw new IllegalArgumentException(
+                    "temporal.timeZone must equal identity.timeZone"
+            );
+        }
+    }
+
+    /** Compatibility constructor for callers that have not yet supplied temporal data. */
+    public StateEvaluationContext(
+            PersonId personId,
+            PersonIdentitySnapshot identity,
+            PersonalitySnapshot personality,
+            PersonStateSnapshot currentState,
+            List<ActiveStateEffectSnapshot> activeEffects,
+            PersonEventSnapshot newEvent,
+            List<PersonEventSnapshot> activeEvents,
+            List<PersonEventSnapshot> recentEvents,
+            PersonMemoryContext memory,
+            List<ConversationTurnSnapshot> recentConversation,
+            Instant evaluationTime
+    ) {
+        this(
+                personId,
+                identity,
+                personality,
+                currentState,
+                activeEffects,
+                newEvent,
+                activeEvents,
+                recentEvents,
+                memory,
+                recentConversation,
+                TemporalContextSnapshot.from(
+                        ZoneId.of(identity.timeZone()),
+                        evaluationTime
+                ),
+                evaluationTime
         );
     }
 
@@ -65,6 +112,10 @@ public record StateEvaluationContext(
                 recentEvents,
                 memory,
                 recentConversation,
+                TemporalContextSnapshot.from(
+                        ZoneId.of(PersonIdentitySnapshot.unspecified().timeZone()),
+                        evaluationTime
+                ),
                 evaluationTime
         );
     }
