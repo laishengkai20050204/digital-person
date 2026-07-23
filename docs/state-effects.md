@@ -47,7 +47,7 @@ Example:
 }
 ```
 
-There are no title or keyword rules for breakup, conflict, study, sleep, or other events. The model selects effects from the supplied event, current state, HEXACO personality, relationship context, memory, and recent conversation.
+There are no title or keyword rules for breakup, conflict, study, sleep, or other events. The model selects effects from the supplied event, structured identity, current state, existing active effects, HEXACO personality, relationship memory, and recent conversation.
 
 ## Effect types
 
@@ -133,7 +133,7 @@ A chat can therefore end while its fixed-time emotional effect continues during 
 
 ## Persistence and API
 
-Aggregate JSON schema version 3 persists unified effects and evaluated-event markers. Schema versions 1 and 2 remain readable and are migrated into compatibility effects during aggregate restoration.
+Aggregate JSON schema version 4 persists structured identity together with unified effects and evaluated-event markers. Schema version 3 remains readable with an explicit unspecified identity; schema versions 1 and 2 additionally migrate legacy effects into the unified model.
 
 Person, state, and event-command responses expose:
 
