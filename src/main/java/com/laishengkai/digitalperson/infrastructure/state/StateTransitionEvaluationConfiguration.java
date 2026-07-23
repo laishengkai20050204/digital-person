@@ -1,7 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.state;
 
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -17,8 +17,8 @@ import org.springframework.context.annotation.Configuration;
 public class StateTransitionEvaluationConfiguration {
 
     @Bean
-    @ConditionalOnMissingBean(StateTransitionEvaluator.class)
-    StateTransitionEvaluator stateTransitionEvaluator(
+    @ConditionalOnMissingBean(EventStateImpactEvaluator.class)
+    EventStateImpactEvaluator eventStateImpactEvaluator(
             LanguageModelGateway languageModelGateway
     ) {
         return new LanguageModelStateTransitionEvaluator(languageModelGateway);
