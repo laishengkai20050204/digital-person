@@ -17,19 +17,20 @@ import com.laishengkai.digitalperson.state.PhysicalState;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
+import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 
+import static com.laishengkai.digitalperson.support.StateEffectTestFixtures.eventBoundImpact;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -50,8 +51,8 @@ class StateUpdateConsistencyRegressionTest {
         person.startPersonEvent(eating, START);
 
         InMemoryRepository repository = new InMemoryRepository(person);
-        StateTransitionEvaluator evaluator = context -> CompletableFuture.completedFuture(
-                List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+        EventStateImpactEvaluator evaluator = context -> CompletableFuture.completedFuture(
+                eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
         );
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
@@ -93,13 +94,13 @@ class StateUpdateConsistencyRegressionTest {
         PersonEvent eating = event(ActivityType.EAT, "吃饭", START);
         person.startPersonEvent(eating, START);
 
-        CompletableFuture<List<StateTransition>> eatingEvaluation =
+        CompletableFuture<EventStateImpact> eatingEvaluation =
                 new CompletableFuture<>();
-        CompletableFuture<List<StateTransition>> restEvaluation =
+        CompletableFuture<EventStateImpact> restEvaluation =
                 new CompletableFuture<>();
 
         InMemoryRepository repository = new InMemoryRepository(person);
-        StateTransitionEvaluator evaluator = context -> switch (
+        EventStateImpactEvaluator evaluator = context -> switch (
                 context.newEvent().activityType()
         ) {
             case "EAT" -> eatingEvaluation;
@@ -135,7 +136,7 @@ class StateUpdateConsistencyRegressionTest {
                 replacementTime
         );
         restEvaluation.complete(
-                List.of(new StateTransition(StateDimension.ENERGY, 1.0))
+                eventBoundImpact(new StateTransition(StateDimension.ENERGY, 1.0))
         );
         newerUpdate.toCompletableFuture().join();
 
@@ -144,7 +145,7 @@ class StateUpdateConsistencyRegressionTest {
         ));
 
         eatingEvaluation.complete(
-                List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
         );
         CompletionException conflict = assertThrows(
                 CompletionException.class,

@@ -14,7 +14,6 @@ import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdatePreparation;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.slf4j.Logger;
@@ -41,20 +40,6 @@ public final class UpdatePersonStateService {
     private final EventStateImpactEvaluator evaluator;
     private final StateEvaluationContextAssembler contextAssembler;
 
-    /** Compatibility constructor for active-only evaluators. */
-    public UpdatePersonStateService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            StateTransitionEvaluator evaluator
-    ) {
-        this(
-                personRepository,
-                stateUpdater,
-                adapt(evaluator),
-                DefaultStateEvaluationContextAssembler.withoutExternalSources()
-        );
-    }
-
     public UpdatePersonStateService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
@@ -66,16 +51,6 @@ public final class UpdatePersonStateService {
                 evaluator,
                 DefaultStateEvaluationContextAssembler.withoutExternalSources()
         );
-    }
-
-    /** Compatibility constructor for active-only evaluators with custom context. */
-    public UpdatePersonStateService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            StateTransitionEvaluator evaluator,
-            StateEvaluationContextAssembler contextAssembler
-    ) {
-        this(personRepository, stateUpdater, adapt(evaluator), contextAssembler);
     }
 
     public UpdatePersonStateService(
@@ -270,23 +245,6 @@ public final class UpdatePersonStateService {
                 effects.size()
         );
         return new EventEffectRegistration(event.getId(), effects);
-    }
-
-    private static EventStateImpactEvaluator adapt(StateTransitionEvaluator evaluator) {
-        StateTransitionEvaluator requestedEvaluator = Objects.requireNonNull(
-                evaluator,
-                "evaluator cannot be null"
-        );
-        return context -> Objects.requireNonNull(
-                        requestedEvaluator.evaluate(context),
-                        "evaluator stage cannot be null"
-                )
-                .thenApply(transitions -> EventStateImpact.activeOnly(
-                        List.copyOf(Objects.requireNonNull(
-                                transitions,
-                                "evaluator result cannot be null"
-                        ))
-                ));
     }
 
     private static Map<EventId, Instant> eventEndTimes(Person person) {

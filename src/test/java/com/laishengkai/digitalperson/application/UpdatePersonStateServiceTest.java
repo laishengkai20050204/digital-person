@@ -10,17 +10,17 @@ import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
+import static com.laishengkai.digitalperson.support.StateEffectTestFixtures.eventBoundImpact;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -39,8 +39,8 @@ class UpdatePersonStateServiceTest {
         person.startPersonEvent(event, NOW);
         InMemoryRepository repository = new InMemoryRepository(person);
 
-        StateTransitionEvaluator evaluator = context -> CompletableFuture.completedFuture(
-                List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+        EventStateImpactEvaluator evaluator = context -> CompletableFuture.completedFuture(
+                eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
         );
         UpdatePersonStateService service = new UpdatePersonStateService(
                 repository,
@@ -83,7 +83,7 @@ class UpdatePersonStateServiceTest {
                 NOW
         );
         InMemoryRepository repository = new InMemoryRepository(person);
-        StateTransitionEvaluator evaluator = context -> CompletableFuture.failedFuture(
+        EventStateImpactEvaluator evaluator = context -> CompletableFuture.failedFuture(
                 new IllegalStateException("LLM unavailable")
         );
         UpdatePersonStateService service = new UpdatePersonStateService(
