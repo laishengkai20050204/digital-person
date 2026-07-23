@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -19,13 +20,9 @@ import java.util.Objects;
 /**
  * Stateless deterministic state evolution service.
  *
- * <p>Use {@link #prepare(PersonState, List, Instant, StateEvolutionContext)}
- * before asynchronous event evaluation, then use
- * {@link #complete(StateUpdatePreparation, Collection)} to commit evaluated
- * channel effects.</p>
- *
- * <p>The service contains no person-specific mutable fields and can therefore
- * be shared safely between different person aggregates.</p>
+ * <p>Activity effects and independent residual effects are settled over exact
+ * time intervals. The service contains no person-specific mutable fields and is
+ * safe to share between aggregates.</p>
  */
 public final class StateUpdater {
     private static final Logger LOGGER = LoggerFactory.getLogger(StateUpdater.class);
@@ -51,14 +48,7 @@ public final class StateUpdater {
         );
     }
 
-    /**
-     * Settles previously active effects up to {@code now} and detects current
-     * events that still require external evaluation.
-     *
-     * <p>This compatibility overload assumes no cached effect ended between
-     * the previous update and {@code now}. Application workflows that own an
-     * event timeline should call the overload accepting effect end times.</p>
-     */
+    /** Compatibility overload for workflows without known activity end boundaries. */
     public StateUpdatePreparation prepare(
             PersonState state,
             List<PersonEvent> currentEvents,
@@ -69,17 +59,9 @@ public final class StateUpdater {
     }
 
     /**
-     * Settles previously active effects up to {@code now} and detects current
-     * events that still require external evaluation.
-     *
-     * <p>The supplied {@link PersonState} is a caller-owned working copy. It is
-     * updated deterministically, while the returned preparation object remains
-     * immutable and safe to pass across asynchronous boundaries.</p>
-     *
-     * <p>{@code cachedEffectEndTimes} contains known end boundaries for events
-     * referenced by the persisted channel effects. Effects are merged and
-     * applied separately for each interval so an event that ended before
-     * {@code now} cannot continue changing state after its actual end time.</p>
+     * Settles all cached activity and residual effects to {@code now}, retains
+     * still-active effects, and identifies current activities that need model
+     * evaluation.
      */
     public StateUpdatePreparation prepare(
             PersonState state,
@@ -101,10 +83,11 @@ public final class StateUpdater {
         Map<ActivityChannel, PersonEvent> eventsByChannel = indexByChannel(currentEvents);
 
         LOGGER.debug(
-                "Preparing state evolution: updateTime={}, currentEventCount={}, activeEffectCount={}, previousUpdateTime={}, knownEffectEndCount={}",
+                "Preparing state evolution: updateTime={}, currentEventCount={}, activeActivityEffectCount={}, residualEffectCount={}, previousUpdateTime={}, knownEffectEndCount={}",
                 currentTime,
                 eventsByChannel.size(),
                 currentContext.channelEffects().size(),
+                currentContext.residualEffects().size(),
                 currentContext.lastUpdatedAt(),
                 effectEndTimes.size()
         );
@@ -132,24 +115,33 @@ public final class StateUpdater {
             pendingEvents.put(channel, currentEvent);
         }
 
+        Map<EventId, ResidualStateEffect> retainedResidualEffects = new HashMap<>();
+        currentContext.residualEffects().forEach((sourceEventId, effect) -> {
+            if (effect.endsAt().isAfter(currentTime)) {
+                retainedResidualEffects.put(sourceEventId, effect);
+            }
+        });
+
         LOGGER.debug(
-                "Prepared state evolution: retainedChannels={}, pendingChannels={}",
+                "Prepared state evolution: retainedChannels={}, pendingChannels={}, retainedResidualEffectCount={}",
                 retainedEffects.keySet(),
-                pendingEvents.keySet()
+                pendingEvents.keySet(),
+                retainedResidualEffects.size()
         );
 
         return new StateUpdatePreparation(
-                new StateEvolutionContext(currentTime, retainedEffects),
+                new StateEvolutionContext(
+                        currentTime,
+                        retainedEffects,
+                        retainedResidualEffects
+                ),
                 pendingEvents
         );
     }
 
     /**
-     * Validates asynchronous evaluation results and combines them with retained
-     * effects from {@link #prepare(PersonState, List, Instant, StateEvolutionContext)}.
-     *
-     * <p>Every pending channel must have exactly one result and that result must
-     * reference the event that was prepared for the same channel.</p>
+     * Validates asynchronous activity evaluations and combines them with all
+     * retained activity and residual effects.
      */
     public StateEvolutionContext complete(
             StateUpdatePreparation preparation,
@@ -209,18 +201,20 @@ public final class StateUpdater {
         completedEffects.putAll(effectsByChannel);
 
         LOGGER.debug(
-                "Completed state evolution context: updateTime={}, activeChannels={}",
+                "Completed state evolution context: updateTime={}, activeChannels={}, residualEffectCount={}",
                 requestedPreparation.settledContext().lastUpdatedAt(),
-                completedEffects.keySet()
+                completedEffects.keySet(),
+                requestedPreparation.settledContext().residualEffects().size()
         );
 
         return new StateEvolutionContext(
                 requestedPreparation.settledContext().lastUpdatedAt(),
-                completedEffects
+                completedEffects,
+                requestedPreparation.settledContext().residualEffects()
         );
     }
 
-    /** Applies cached effects only across intervals in which their events remained active. */
+    /** Applies activity and residual effects across every exact lifecycle interval. */
     private void settleUntil(
             PersonState state,
             Instant now,
@@ -255,15 +249,18 @@ public final class StateUpdater {
 
         for (Instant intervalEnd : boundaries) {
             Instant currentIntervalStart = intervalStart;
-            List<ChannelStateEffect> activeEffects = context.channelEffects()
-                    .values()
-                    .stream()
+            List<StateEffect> activeEffects = new ArrayList<>();
+            context.channelEffects().values().stream()
                     .filter(effect -> remainsActiveAfter(
                             effect,
                             currentIntervalStart,
                             effectEndTimes
                     ))
-                    .toList();
+                    .forEach(activeEffects::add);
+            context.residualEffects().values().stream()
+                    .filter(effect -> effect.isActiveAt(currentIntervalStart))
+                    .forEach(activeEffects::add);
+
             List<StateTransition> mergedTransitions = transitionMerger.merge(
                     activeEffects
             );
@@ -280,9 +277,10 @@ public final class StateUpdater {
         }
 
         LOGGER.debug(
-                "Settled cached state effects: elapsedMs={}, activeEffectCount={}, boundaryCount={}, appliedIntervalCount={}",
+                "Settled cached state effects: elapsedMs={}, activityEffectCount={}, residualEffectCount={}, boundaryCount={}, appliedIntervalCount={}",
                 elapsed.toMillis(),
                 context.channelEffects().size(),
+                context.residualEffects().size(),
                 boundaries.size(),
                 appliedIntervalCount
         );
@@ -302,8 +300,16 @@ public final class StateUpdater {
                 .filter(boundary -> boundary.isAfter(start) && boundary.isBefore(end))
                 .distinct()
                 .forEach(boundaries::add);
+        context.residualEffects().values().forEach(effect -> {
+            if (effect.startsAt().isAfter(start) && effect.startsAt().isBefore(end)) {
+                boundaries.add(effect.startsAt());
+            }
+            if (effect.endsAt().isAfter(start) && effect.endsAt().isBefore(end)) {
+                boundaries.add(effect.endsAt());
+            }
+        });
         boundaries.add(end);
-        boundaries.sort(Comparator.naturalOrder());
+        boundaries = boundaries.stream().distinct().sorted(Comparator.naturalOrder()).toList();
         return List.copyOf(boundaries);
     }
 
@@ -319,7 +325,7 @@ public final class StateUpdater {
     private static Map<EventId, Instant> copyEndTimes(
             Map<EventId, Instant> cachedEffectEndTimes
     ) {
-        Map<EventId, Instant> copy = new java.util.HashMap<>();
+        Map<EventId, Instant> copy = new HashMap<>();
         Objects.requireNonNull(
                 cachedEffectEndTimes,
                 "cachedEffectEndTimes cannot be null"
