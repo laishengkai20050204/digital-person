@@ -26,6 +26,7 @@ import com.laishengkai.digitalperson.state.StateUpdater;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -56,6 +57,7 @@ public final class PersonActivityDecisionService {
     private final PersonActivityDecisionContextAssembler activityContextAssembler;
     private final EventStateImpactEvaluator effectEvaluator;
     private final StateEvaluationContextAssembler effectContextAssembler;
+    private final Clock clock;
 
     public PersonActivityDecisionService(
             PersonRepository personRepository,
@@ -69,7 +71,8 @@ public final class PersonActivityDecisionService {
                 activityDecisionModel,
                 DefaultPersonActivityDecisionContextAssembler.withoutExternalSources(),
                 effectEvaluator,
-                DefaultStateEvaluationContextAssembler.withoutExternalSources()
+                DefaultStateEvaluationContextAssembler.withoutExternalSources(),
+                Clock.systemUTC()
         );
     }
 
@@ -80,6 +83,26 @@ public final class PersonActivityDecisionService {
             PersonActivityDecisionContextAssembler activityContextAssembler,
             EventStateImpactEvaluator effectEvaluator,
             StateEvaluationContextAssembler effectContextAssembler
+    ) {
+        this(
+                personRepository,
+                stateUpdater,
+                activityDecisionModel,
+                activityContextAssembler,
+                effectEvaluator,
+                effectContextAssembler,
+                Clock.systemUTC()
+        );
+    }
+
+    public PersonActivityDecisionService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            PersonActivityDecisionModel activityDecisionModel,
+            PersonActivityDecisionContextAssembler activityContextAssembler,
+            EventStateImpactEvaluator effectEvaluator,
+            StateEvaluationContextAssembler effectContextAssembler,
+            Clock clock
     ) {
         this.personRepository = Objects.requireNonNull(
                 personRepository,
@@ -105,19 +128,37 @@ public final class PersonActivityDecisionService {
                 effectContextAssembler,
                 "effectContextAssembler cannot be null"
         );
+        this.clock = Objects.requireNonNull(clock, "clock cannot be null");
     }
 
     public CompletionStage<PersonActivityDecisionResult> decide(
             PersonId personId,
             Instant decisionTime
     ) {
-        return decide(personId, "", decisionTime);
+        return decide(personId, "", decisionTime, Instant.MAX);
     }
 
     public CompletionStage<PersonActivityDecisionResult> decide(
             PersonId personId,
             String observation,
             Instant decisionTime
+    ) {
+        return decide(personId, observation, decisionTime, Instant.MAX);
+    }
+
+    public CompletionStage<PersonActivityDecisionResult> decide(
+            PersonId personId,
+            Instant decisionTime,
+            Instant deadline
+    ) {
+        return decide(personId, "", decisionTime, deadline);
+    }
+
+    public CompletionStage<PersonActivityDecisionResult> decide(
+            PersonId personId,
+            String observation,
+            Instant decisionTime,
+            Instant deadline
     ) {
         PersonId requestedPersonId = Objects.requireNonNull(
                 personId,
@@ -127,10 +168,12 @@ public final class PersonActivityDecisionService {
                 decisionTime,
                 "decisionTime cannot be null"
         );
+        Instant requiredDeadline = requireDeadline(deadline, now);
         String normalizedObservation = normalizeObservation(observation);
         long startedAtNanos = System.nanoTime();
 
         try {
+            ensureBeforeDeadline(requiredDeadline, "person load");
             VersionedPerson loaded = personRepository.findById(requestedPersonId)
                     .orElseThrow(() -> new PersonNotFoundException(requestedPersonId));
             Person person = loaded.person().copy();
@@ -146,35 +189,49 @@ public final class PersonActivityDecisionService {
             PersonStateSnapshot decisionState = workingState.snapshot();
 
             LOGGER.info(
-                    "Starting autonomous activity decision: personId={}, expectedVersion={}, activePersonEventCount={}, pendingEventCount={}, observationPresent={}",
+                    "Starting autonomous activity decision: personId={}, expectedVersion={}, activePersonEventCount={}, pendingEventCount={}, observationPresent={}, deadline={}",
                     requestedPersonId,
                     expectedVersion,
                     person.getCurrentPersonEvents(now).size(),
                     preparation.pendingEvents().size(),
-                    !normalizedObservation.isBlank()
+                    !normalizedObservation.isBlank(),
+                    requiredDeadline
             );
 
             return completePendingEvaluations(
                     person,
                     decisionState,
                     preparation,
-                    now
-            ).thenCompose(settledContext -> assembleDecisionContext(
-                    person,
-                    decisionState,
-                    settledContext,
-                    normalizedObservation,
-                    now
-            ).thenCompose(context -> decidePlan(context)
-                    .thenCompose(plan -> applyAndEvaluate(
-                            person,
-                            decisionState,
-                            settledContext,
-                            plan,
-                            now
-                    ))
-            )).thenApply(applied -> {
+                    now,
+                    requiredDeadline
+            ).thenCompose(settledContext -> {
+                ensureBeforeDeadline(requiredDeadline, "activity context assembly");
+                return assembleDecisionContext(
+                        person,
+                        decisionState,
+                        settledContext,
+                        normalizedObservation,
+                        now,
+                        requiredDeadline
+                ).thenCompose(context -> {
+                    ensureBeforeDeadline(requiredDeadline, "activity model invocation");
+                    return decidePlan(context, requiredDeadline)
+                            .thenCompose(plan -> {
+                                ensureBeforeDeadline(requiredDeadline, "activity plan application");
+                                return applyAndEvaluate(
+                                        person,
+                                        decisionState,
+                                        settledContext,
+                                        plan,
+                                        now,
+                                        requiredDeadline
+                                );
+                            });
+                });
+            }).thenApply(applied -> {
+                ensureBeforeDeadline(requiredDeadline, "aggregate commit");
                 person.commitStateUpdate(workingState, applied.completedContext());
+                ensureBeforeDeadline(requiredDeadline, "aggregate persistence");
                 if (!personRepository.save(person, expectedVersion)) {
                     throw new PersonVersionConflictException(
                             requestedPersonId,
@@ -232,8 +289,10 @@ public final class PersonActivityDecisionService {
             PersonStateSnapshot state,
             StateEvolutionContext evolution,
             String observation,
-            Instant now
+            Instant now,
+            Instant deadline
     ) {
+        ensureBeforeDeadline(deadline, "activity context source loading");
         return Objects.requireNonNull(
                 activityContextAssembler.assemble(
                         person,
@@ -243,22 +302,30 @@ public final class PersonActivityDecisionService {
                         now
                 ),
                 "activityContextAssembler stage cannot be null"
-        ).thenApply(context -> Objects.requireNonNull(
-                context,
-                "assembled activity context cannot be null"
-        ));
+        ).thenApply(context -> {
+            ensureBeforeDeadline(deadline, "activity context completion");
+            return Objects.requireNonNull(
+                    context,
+                    "assembled activity context cannot be null"
+            );
+        });
     }
 
     private CompletionStage<PersonActivityDecisionPlan> decidePlan(
-            PersonActivityDecisionContext context
+            PersonActivityDecisionContext context,
+            Instant deadline
     ) {
+        ensureBeforeDeadline(deadline, "activity model invocation");
         return Objects.requireNonNull(
                 activityDecisionModel.decide(context),
                 "activityDecisionModel stage cannot be null"
-        ).thenApply(plan -> Objects.requireNonNull(
-                plan,
-                "activityDecisionModel result cannot be null"
-        ));
+        ).thenApply(plan -> {
+            ensureBeforeDeadline(deadline, "activity model response");
+            return Objects.requireNonNull(
+                    plan,
+                    "activityDecisionModel result cannot be null"
+            );
+        });
     }
 
     private CompletionStage<AppliedPlan> applyAndEvaluate(
@@ -266,12 +333,15 @@ public final class PersonActivityDecisionService {
             PersonStateSnapshot evaluationState,
             StateEvolutionContext settledContext,
             PersonActivityDecisionPlan plan,
-            Instant now
+            Instant now,
+            Instant deadline
     ) {
+        ensureBeforeDeadline(deadline, "activity plan validation");
         validateFinishCommands(person, plan.finishCommands(), now);
 
         LinkedHashMap<EventId, PersonEvent> finishedEvents = new LinkedHashMap<>();
         for (FinishActivityCommand finish : plan.finishCommands()) {
+            ensureBeforeDeadline(deadline, "finish command application");
             person.finishPersonEvent(finish.eventId(), now, finish.reason(), now);
             finishedEvents.put(
                     finish.eventId(),
@@ -281,6 +351,7 @@ public final class PersonActivityDecisionService {
 
         List<PersonEvent> startedEvents = new ArrayList<>();
         for (StartActivityCommand start : plan.startCommands()) {
+            ensureBeforeDeadline(deadline, "start command application");
             List<PersonEvent> replacementCandidates = person.getCurrentPersonEvents(now)
                     .stream()
                     .filter(event -> event.getChannel() == start.channel())
@@ -311,6 +382,7 @@ public final class PersonActivityDecisionService {
             ));
         }
 
+        ensureBeforeDeadline(deadline, "timeline settlement");
         StateEvolutionContext baseContext = stateUpdater.afterTimelineChange(
                 settledContext,
                 person.getCurrentPersonEvents(now),
@@ -318,6 +390,7 @@ public final class PersonActivityDecisionService {
                 eventEndTimes(person)
         );
         if (startedEvents.isEmpty()) {
+            ensureBeforeDeadline(deadline, "activity plan completion");
             return CompletableFuture.completedFuture(new AppliedPlan(
                     plan,
                     List.of(),
@@ -340,7 +413,8 @@ public final class PersonActivityDecisionService {
                         evaluationState,
                         baseContext,
                         event,
-                        now
+                        now,
+                        deadline
                 ))
                 .map(CompletionStage::toCompletableFuture)
                 .toList();
@@ -348,6 +422,7 @@ public final class PersonActivityDecisionService {
         return CompletableFuture.allOf(
                 evaluations.toArray(CompletableFuture[]::new)
         ).thenApply(ignored -> {
+            ensureBeforeDeadline(deadline, "new event effect completion");
             List<EventEffectRegistration> registrations = evaluations.stream()
                     .map(CompletableFuture::join)
                     .toList();
@@ -386,8 +461,10 @@ public final class PersonActivityDecisionService {
             Person person,
             PersonStateSnapshot state,
             StateUpdatePreparation preparation,
-            Instant evaluationTime
+            Instant evaluationTime,
+            Instant deadline
     ) {
+        ensureBeforeDeadline(deadline, "pending event evaluation");
         List<CompletableFuture<EventEffectRegistration>> evaluations =
                 preparation.eventsToEvaluate().stream()
                         .map(event -> evaluateEffect(
@@ -395,7 +472,8 @@ public final class PersonActivityDecisionService {
                                 state,
                                 preparation.settledContext(),
                                 event,
-                                evaluationTime
+                                evaluationTime,
+                                deadline
                         ))
                         .map(CompletionStage::toCompletableFuture)
                         .toList();
@@ -404,12 +482,15 @@ public final class PersonActivityDecisionService {
         }
         return CompletableFuture.allOf(
                 evaluations.toArray(CompletableFuture[]::new)
-        ).thenApply(ignored -> stateUpdater.complete(
-                preparation,
-                evaluations.stream()
-                        .map(CompletableFuture::join)
-                        .toList()
-        ));
+        ).thenApply(ignored -> {
+            ensureBeforeDeadline(deadline, "pending event effect completion");
+            return stateUpdater.complete(
+                    preparation,
+                    evaluations.stream()
+                            .map(CompletableFuture::join)
+                            .toList()
+            );
+        });
     }
 
     private CompletionStage<EventEffectRegistration> evaluateEffect(
@@ -417,8 +498,10 @@ public final class PersonActivityDecisionService {
             PersonStateSnapshot state,
             StateEvolutionContext evolution,
             PersonEvent event,
-            Instant evaluationTime
+            Instant evaluationTime,
+            Instant deadline
     ) {
+        ensureBeforeDeadline(deadline, "state effect context assembly");
         CompletionStage<StateEvaluationContext> contextStage = Objects.requireNonNull(
                 effectContextAssembler.assemble(
                         person,
@@ -429,14 +512,19 @@ public final class PersonActivityDecisionService {
                 ),
                 "effectContextAssembler stage cannot be null"
         );
-        return contextStage.thenCompose(context -> Objects.requireNonNull(
-                        effectEvaluator.evaluate(Objects.requireNonNull(
-                                context,
-                                "assembled effect context cannot be null"
-                        )),
-                        "effectEvaluator stage cannot be null"
-                ))
-                .thenApply(impact -> toRegistration(event, evaluationTime, impact));
+        return contextStage.thenCompose(context -> {
+            ensureBeforeDeadline(deadline, "state effect model invocation");
+            return Objects.requireNonNull(
+                    effectEvaluator.evaluate(Objects.requireNonNull(
+                            context,
+                            "assembled effect context cannot be null"
+                    )),
+                    "effectEvaluator stage cannot be null"
+            );
+        }).thenApply(impact -> {
+            ensureBeforeDeadline(deadline, "state effect model response");
+            return toRegistration(event, evaluationTime, impact);
+        });
     }
 
     private static EventEffectRegistration toRegistration(
@@ -476,6 +564,20 @@ public final class PersonActivityDecisionService {
             );
         }
         return normalized;
+    }
+
+    private static Instant requireDeadline(Instant deadline, Instant decisionTime) {
+        Instant value = Objects.requireNonNull(deadline, "deadline cannot be null");
+        if (!value.isAfter(decisionTime)) {
+            throw new IllegalArgumentException("deadline must be after decisionTime");
+        }
+        return value;
+    }
+
+    private void ensureBeforeDeadline(Instant deadline, String phase) {
+        if (!clock.instant().isBefore(deadline)) {
+            throw new PersonActivityDecisionDeadlineExceededException(deadline, phase);
+        }
     }
 
     private static long elapsedMillis(long startedAtNanos) {
