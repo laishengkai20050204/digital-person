@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.laishengkai.digitalperson.infrastructure.scheduling.PersonActivityScheduleRepository;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -72,5 +73,12 @@ public class MySqlPersonPersistenceConfiguration {
             PersonAggregateJsonMapper aggregateMapper
     ) {
         return new JdbcPersonRepository(jdbcTemplate, aggregateMapper);
+    }
+
+    @Bean
+    PersonActivityScheduleRepository personActivityScheduleRepository(
+            @Qualifier("personJdbcTemplate") JdbcTemplate jdbcTemplate
+    ) {
+        return new JdbcPersonActivityScheduleRepository(jdbcTemplate);
     }
 }
