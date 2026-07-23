@@ -9,11 +9,12 @@ import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
+import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
+import com.laishengkai.digitalperson.state.ResidualStateEffect;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
-import com.laishengkai.digitalperson.state.StateTransition;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdatePreparation;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -86,9 +87,9 @@ public final class PersonEventCommandService {
     }
 
     /**
-     * Starts a realtime event, replacing any open event in the same channel.
-     * Existing effects are first settled exactly to {@code commandTime}; the new
-     * event is then evaluated and committed in the same optimistic write.
+     * Starts a realtime event, replacing any open event in the same activity
+     * channel. A replaced event's model-evaluated aftermath becomes an
+     * independent residual effect instead of occupying that channel.
      */
     public CompletionStage<PersonEventCommandResult> start(
             PersonId personId,
@@ -129,11 +130,12 @@ public final class PersonEventCommandService {
                     now
             );
 
-            person.startPersonEvent(requestedEvent, now);
-            StateEvolutionContext baseContext = withoutChannel(
+            StateEvolutionContext baseContext = detachChannelEffect(
                     settled.settledContext(),
-                    requestedEvent.getChannel()
+                    requestedEvent.getChannel(),
+                    now
             );
+            person.startPersonEvent(requestedEvent, now);
             StateUpdatePreparation startPreparation = new StateUpdatePreparation(
                     baseContext,
                     Map.of(requestedEvent.getChannel(), requestedEvent)
@@ -181,9 +183,9 @@ public final class PersonEventCommandService {
     }
 
     /**
-     * Finishes an open realtime event after applying its cached effect exactly
-     * through {@code commandTime}. The finished event's channel effect is then
-     * removed while effects in other channels remain active.
+     * Finishes an open realtime event after applying its activity-bound effect
+     * exactly through {@code commandTime}. The activity channel is released and
+     * any model-evaluated aftermath is retained independently.
      */
     public CompletionStage<PersonEventCommandResult> finish(
             PersonId personId,
@@ -233,9 +235,10 @@ public final class PersonEventCommandService {
                     now
             );
             person.finishPersonEvent(requestedEventId, now, requestedReason, now);
-            StateEvolutionContext completedContext = withoutChannel(
+            StateEvolutionContext completedContext = detachChannelEffect(
                     settled.settledContext(),
-                    event.getChannel()
+                    event.getChannel(),
+                    now
             );
             person.commitStateUpdate(workingState, completedContext);
             saveOrThrow(person, expectedVersion);
@@ -387,14 +390,23 @@ public final class PersonEventCommandService {
                         )),
                         "evaluator stage cannot be null"
                 ))
-                .thenApply(transitions -> new ChannelStateEffect(
-                        event.getChannel(),
-                        event.getId(),
-                        List.copyOf(Objects.requireNonNull(
-                                transitions,
-                                "evaluator result cannot be null"
-                        ))
-                ));
+                .thenApply(impact -> toChannelEffect(event, impact));
+    }
+
+    private static ChannelStateEffect toChannelEffect(
+            PersonEvent event,
+            EventStateImpact impact
+    ) {
+        EventStateImpact safeImpact = Objects.requireNonNull(
+                impact,
+                "evaluator result cannot be null"
+        );
+        return new ChannelStateEffect(
+                event.getChannel(),
+                event.getId(),
+                safeImpact.activeTransitions(),
+                safeImpact.aftermath()
+        );
     }
 
     private void saveOrThrow(Person person, long expectedVersion) {
@@ -406,16 +418,55 @@ public final class PersonEventCommandService {
         }
     }
 
-    private static StateEvolutionContext withoutChannel(
+    /**
+     * Releases one activity channel and materializes its independent aftermath,
+     * while preserving all other activity and residual effects.
+     */
+    private static StateEvolutionContext detachChannelEffect(
             StateEvolutionContext context,
-            ActivityChannel channel
+            ActivityChannel channel,
+            Instant transitionTime
     ) {
+        StateEvolutionContext requestedContext = Objects.requireNonNull(
+                context,
+                "context cannot be null"
+        );
+        ActivityChannel requestedChannel = Objects.requireNonNull(
+                channel,
+                "channel cannot be null"
+        );
+        Instant now = Objects.requireNonNull(
+                transitionTime,
+                "transitionTime cannot be null"
+        );
+
         Map<ActivityChannel, ChannelStateEffect> retained = new EnumMap<>(
                 ActivityChannel.class
         );
-        retained.putAll(context.channelEffects());
-        retained.remove(channel);
-        return new StateEvolutionContext(context.lastUpdatedAt(), retained);
+        retained.putAll(requestedContext.channelEffects());
+        ChannelStateEffect detached = retained.remove(requestedChannel);
+
+        Map<EventId, ResidualStateEffect> residuals = new HashMap<>(
+                requestedContext.residualEffects()
+        );
+        if (detached != null && detached.hasAftermath()) {
+            ResidualStateEffect residual = ResidualStateEffect.fromPlan(
+                    detached.eventId(),
+                    now,
+                    detached.aftermath()
+            );
+            if (residuals.putIfAbsent(residual.sourceEventId(), residual) != null) {
+                throw new IllegalStateException(
+                        "residual effect already exists for source event: "
+                                + residual.sourceEventId()
+                );
+            }
+        }
+        return new StateEvolutionContext(
+                requestedContext.lastUpdatedAt(),
+                retained,
+                residuals
+        );
     }
 
     private static Map<EventId, Instant> cachedEffectEndTimes(
