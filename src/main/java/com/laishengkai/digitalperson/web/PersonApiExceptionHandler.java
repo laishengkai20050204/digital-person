@@ -1,10 +1,12 @@
 package com.laishengkai.digitalperson.web;
 
+import com.laishengkai.digitalperson.application.InvalidPersonActivityDecisionException;
 import com.laishengkai.digitalperson.application.PersonCreationConflictException;
 import com.laishengkai.digitalperson.application.PersonNotFoundException;
 import com.laishengkai.digitalperson.application.PersonVersionConflictException;
 import com.laishengkai.digitalperson.application.UnsettledPersonEventException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
+import com.laishengkai.digitalperson.infrastructure.activity.PersonActivityDecisionException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -16,7 +18,8 @@ import java.util.concurrent.CompletionException;
 /** Stable error contract for the protected person API. */
 @RestControllerAdvice(assignableTypes = {
         PersonController.class,
-        PersonEventController.class
+        PersonEventController.class,
+        PersonActivityDecisionController.class
 })
 public final class PersonApiExceptionHandler {
 
@@ -59,6 +62,20 @@ public final class PersonApiExceptionHandler {
         );
     }
 
+    @ExceptionHandler({
+            PersonActivityDecisionException.class,
+            InvalidPersonActivityDecisionException.class
+    })
+    public ResponseEntity<PersonController.ErrorResponse> activityDecisionFailure(
+            RuntimeException ignored
+    ) {
+        return response(
+                HttpStatus.BAD_GATEWAY,
+                "ACTIVITY_DECISION_FAILED",
+                "The configured language model returned no executable activity plan"
+        );
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<PersonController.ErrorResponse> stateConflict(
             IllegalStateException error
@@ -96,6 +113,12 @@ public final class PersonApiExceptionHandler {
         }
         if (cause instanceof LanguageModelException modelFailure) {
             return stateEvaluationFailure(modelFailure);
+        }
+        if (cause instanceof PersonActivityDecisionException decisionFailure) {
+            return activityDecisionFailure(decisionFailure);
+        }
+        if (cause instanceof InvalidPersonActivityDecisionException invalidDecision) {
+            return activityDecisionFailure(invalidDecision);
         }
         if (cause instanceof IllegalStateException eventState) {
             return stateConflict(eventState);
