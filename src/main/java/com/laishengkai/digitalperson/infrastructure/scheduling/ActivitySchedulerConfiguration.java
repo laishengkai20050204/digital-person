@@ -32,7 +32,6 @@ public class ActivitySchedulerConfiguration {
         scheduler.setThreadNamePrefix("activity-scheduling-");
         scheduler.setWaitForTasksToCompleteOnShutdown(false);
         scheduler.setRemoveOnCancelPolicy(true);
-        scheduler.initialize();
         return scheduler;
     }
 
