@@ -12,13 +12,13 @@ import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
 import com.laishengkai.digitalperson.state.CognitiveState;
+import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PhysicalState;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
-import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
@@ -36,7 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression coverage for state consistency across event and asynchronous boundaries. */
+/** Regression coverage for state consistency across production event boundaries. */
 class StateUpdateConsistencyRegressionTest {
     private static final double EPSILON = 1.0e-12;
     private static final Instant START = Instant.parse("2026-07-22T08:00:00Z");
@@ -48,34 +48,26 @@ class StateUpdateConsistencyRegressionTest {
     void completedEventEffectMustStopAtTheEventEndBoundary() {
         Person person = new Person(PERSONALITY, stateWithHunger(0.7));
         PersonEvent eating = event(ActivityType.EAT, "吃饭", START);
-        person.startPersonEvent(eating, START);
 
         InMemoryRepository repository = new InMemoryRepository(person);
         EventStateImpactEvaluator evaluator = context -> CompletableFuture.completedFuture(
                 eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
         );
-        UpdatePersonStateService service = new UpdatePersonStateService(
+        PersonEventCommandService service = new PersonEventCommandService(
                 repository,
                 new StateUpdater(),
                 evaluator
         );
 
-        service.update(person.getId(), START).toCompletableFuture().join();
+        service.start(person.getId(), eating, START).toCompletableFuture().join();
 
         Instant eventEnd = START.plusSeconds(600);
-        VersionedPerson loaded = repository.findById(person.getId()).orElseThrow();
-        Person endedEventPerson = loaded.person().copy();
-        endedEventPerson.finishPersonEvent(
+        service.finish(
+                person.getId(),
                 eating.getId(),
-                eventEnd,
                 EventEndReason.COMPLETED,
                 eventEnd
-        );
-        assertTrue(repository.save(endedEventPerson, loaded.version()));
-
-        service.update(person.getId(), START.plusSeconds(1800))
-                .toCompletableFuture()
-                .join();
+        ).toCompletableFuture().join();
 
         double expectedAfterTenMinutes = 0.7 * Math.exp(-1.0 / 6.0);
         Person stored = repository.current(person.getId());
@@ -92,7 +84,6 @@ class StateUpdateConsistencyRegressionTest {
     void staleEvaluationMustNotOverwriteAReplacementEventCommittedLater() {
         Person person = new Person(PERSONALITY);
         PersonEvent eating = event(ActivityType.EAT, "吃饭", START);
-        person.startPersonEvent(eating, START);
 
         CompletableFuture<EventStateImpact> eatingEvaluation =
                 new CompletableFuture<>();
@@ -112,33 +103,29 @@ class StateUpdateConsistencyRegressionTest {
                     )
             );
         };
-        UpdatePersonStateService service = new UpdatePersonStateService(
+        PersonEventCommandService service = new PersonEventCommandService(
                 repository,
                 new StateUpdater(),
                 evaluator
         );
 
-        CompletionStage<StateUpdateResult> staleUpdate = service.update(
+        CompletionStage<PersonEventCommandResult> staleStart = service.start(
                 person.getId(),
+                eating,
                 START
         );
 
         Instant replacementTime = START.plusSeconds(1);
         PersonEvent resting = event(ActivityType.REST, "休息", replacementTime);
-        VersionedPerson beforeReplacement = repository.findById(person.getId())
-                .orElseThrow();
-        Person replacementPerson = beforeReplacement.person().copy();
-        replacementPerson.startPersonEvent(resting, replacementTime);
-        assertTrue(repository.save(replacementPerson, beforeReplacement.version()));
-
-        CompletionStage<StateUpdateResult> newerUpdate = service.update(
+        CompletionStage<PersonEventCommandResult> newerStart = service.start(
                 person.getId(),
+                resting,
                 replacementTime
         );
         restEvaluation.complete(
                 eventBoundImpact(new StateTransition(StateDimension.ENERGY, 1.0))
         );
-        newerUpdate.toCompletableFuture().join();
+        newerStart.toCompletableFuture().join();
 
         assertEquals(resting.getId(), onlySourceEventId(
                 repository.current(person.getId())
@@ -149,7 +136,7 @@ class StateUpdateConsistencyRegressionTest {
         );
         CompletionException conflict = assertThrows(
                 CompletionException.class,
-                () -> staleUpdate.toCompletableFuture().join()
+                () -> staleStart.toCompletableFuture().join()
         );
         assertInstanceOf(PersonVersionConflictException.class, conflict.getCause());
 
