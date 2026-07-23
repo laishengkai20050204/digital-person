@@ -16,6 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,7 @@ import static org.mockito.Mockito.when;
 
 class PersistentPersonActivitySchedulerTest {
     private static final Instant NOW = Instant.parse("2026-07-23T12:00:00Z");
+    private static final Instant DEADLINE = NOW.plus(Duration.ofMinutes(8));
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
     @Test
@@ -44,7 +46,7 @@ class PersistentPersonActivitySchedulerTest {
                 Duration.ofMinutes(10)
         )).thenReturn(List.of(lease));
         when(heartbeat.start(lease)).thenReturn(handle);
-        when(service.decide(personId, NOW)).thenReturn(
+        when(service.decide(personId, NOW, DEADLINE)).thenReturn(
                 CompletableFuture.completedFuture(result)
         );
         when(result.nextReviewAt()).thenReturn(NOW.plus(Duration.ofMinutes(15)));
@@ -66,7 +68,7 @@ class PersistentPersonActivitySchedulerTest {
         scheduler.poll();
 
         verify(repository).initializeMissing(NOW.plus(Duration.ofMinutes(1)));
-        verify(service).decide(personId, NOW);
+        verify(service).decide(personId, NOW, DEADLINE);
         verify(repository).completeSuccess(
                 lease,
                 NOW.plus(Duration.ofMinutes(15)),
@@ -93,7 +95,7 @@ class PersistentPersonActivitySchedulerTest {
                 Duration.ofMinutes(10)
         )).thenReturn(List.of(lease));
         when(heartbeat.start(lease)).thenReturn(handle);
-        when(service.decide(personId, NOW)).thenReturn(
+        when(service.decide(personId, NOW, DEADLINE)).thenReturn(
                 CompletableFuture.failedFuture(
                         new PersonVersionConflictException(personId, 4)
                 )
@@ -140,7 +142,7 @@ class PersistentPersonActivitySchedulerTest {
                 Duration.ofMinutes(10)
         )).thenReturn(List.of(lease));
         when(heartbeat.start(lease)).thenReturn(handle);
-        when(service.decide(personId, NOW)).thenReturn(
+        when(service.decide(personId, NOW, DEADLINE)).thenReturn(
                 CompletableFuture.failedFuture(new IllegalStateException("provider unavailable"))
         );
 
@@ -181,7 +183,7 @@ class PersistentPersonActivitySchedulerTest {
                 .thenReturn(List.of(lease));
         when(heartbeat.start(lease)).thenReturn(handle);
         when(handle.leaseOwned()).thenReturn(false);
-        when(service.decide(personId, NOW)).thenReturn(
+        when(service.decide(personId, NOW, DEADLINE)).thenReturn(
                 CompletableFuture.completedFuture(result)
         );
 
@@ -194,13 +196,8 @@ class PersistentPersonActivitySchedulerTest {
         );
         scheduler.poll();
 
-        verify(repository, never()).completeSuccess(lease, NOW.plusSeconds(1), NOW);
-        verify(repository, never()).completeFailure(
-                lease,
-                NOW.plus(Duration.ofMinutes(5)),
-                "UnknownFailure",
-                NOW
-        );
+        verify(repository, never()).completeSuccess(any(), any(), any());
+        verify(repository, never()).completeFailure(any(), any(), any(), any());
         verify(handle).close();
         assertEquals(0, scheduler.inFlightCount());
     }
