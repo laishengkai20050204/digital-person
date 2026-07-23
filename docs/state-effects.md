@@ -25,6 +25,13 @@ transitions
 
 `cause` is a concise factual description of the direct reason or trigger for the effect. It is not chain-of-thought, advice, or generated dialogue.
 
+Each transition `shape` is an hourly signed exponential rate. Its absolute
+value is limited to `3.0`; this already moves a value about 95% of the remaining
+distance toward its bound in one hour. When several active effects target the
+same dimension, their signed rates are summed and the merged rate is saturated
+to `[-3.0, 3.0]` before settlement. Older persisted values outside this range
+are bounded while loading and are normalized on the next save.
+
 Example:
 
 ```json
