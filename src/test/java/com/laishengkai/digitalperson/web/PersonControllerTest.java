@@ -63,7 +63,8 @@ class PersonControllerTest {
                 .andExpect(jsonPath("$.personality.emotionality").value(0.7))
                 .andExpect(jsonPath("$.state.energy").value(0.5))
                 .andExpect(jsonPath("$.personEventCount").value(0))
-                .andExpect(jsonPath("$.activeEffectChannels").isEmpty());
+                .andExpect(jsonPath("$.activeEffectCount").value(0))
+                .andExpect(jsonPath("$.activeEffects").isEmpty());
     }
 
     @Test
@@ -74,13 +75,15 @@ class PersonControllerTest {
                         .header(PersonController.INTERNAL_TOKEN_HEADER, TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.personId").value(personId.toString()))
-                .andExpect(jsonPath("$.version").value(0));
+                .andExpect(jsonPath("$.version").value(0))
+                .andExpect(jsonPath("$.activeEffectCount").value(0));
 
         mockMvc.perform(get("/api/persons/{personId}/state", personId)
                         .header(PersonController.INTERNAL_TOKEN_HEADER, TOKEN))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.personId").value(personId.toString()))
                 .andExpect(jsonPath("$.state.valence").value(0.0))
+                .andExpect(jsonPath("$.activeEffects").isEmpty())
                 .andExpect(jsonPath("$.lastUpdatedAt").doesNotExist());
     }
 
