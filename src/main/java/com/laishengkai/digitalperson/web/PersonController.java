@@ -4,6 +4,8 @@ import com.laishengkai.digitalperson.application.PersonDetails;
 import com.laishengkai.digitalperson.application.PersonDirectoryService;
 import com.laishengkai.digitalperson.application.PersonStateDetails;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.person.PersonIdentity;
+import com.laishengkai.digitalperson.person.PersonIdentitySnapshot;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
@@ -26,7 +28,10 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 /** Token-protected HTTP boundary for creating and reading persisted persons. */
@@ -66,8 +71,13 @@ public final class PersonController {
         if (!authorized(suppliedToken)) {
             return unauthorized();
         }
+        CreatePersonRequest requested = Objects.requireNonNull(
+                request,
+                "request cannot be null"
+        );
         PersonDetails created = directoryService.create(
-                Objects.requireNonNull(request, "request cannot be null").toPersonality()
+                requested.toIdentity(),
+                requested.toPersonality()
         );
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{personId}")
@@ -121,6 +131,7 @@ public final class PersonController {
         return new PersonResponse(
                 details.personId().toString(),
                 details.version(),
+                IdentityResponse.from(details.identity()),
                 PersonalityResponse.from(details.personality()),
                 StateResponse.from(details.state()),
                 details.personEventCount(),
@@ -145,12 +156,60 @@ public final class PersonController {
         );
     }
 
-    public record CreatePersonRequest(PersonalityRequest personality) {
+    public record CreatePersonRequest(
+            IdentityRequest identity,
+            PersonalityRequest personality
+    ) {
+        public CreatePersonRequest(PersonalityRequest personality) {
+            this(null, personality);
+        }
+
+        PersonIdentity toIdentity() {
+            return identity == null
+                    ? PersonIdentity.unspecified()
+                    : identity.toDomain();
+        }
+
         Personality toPersonality() {
             return Objects.requireNonNull(
                     personality,
                     "personality cannot be null"
             ).toDomain();
+        }
+    }
+
+    public record IdentityRequest(
+            String displayName,
+            LocalDate birthDate,
+            String genderIdentity,
+            String residence,
+            String timeZone,
+            String locale,
+            List<String> roles,
+            String background
+    ) {
+        PersonIdentity toDomain() {
+            return new PersonIdentity(
+                    requiredText(displayName, "displayName"),
+                    birthDate,
+                    genderIdentity,
+                    residence,
+                    ZoneId.of(requiredText(timeZone, "timeZone")),
+                    Locale.forLanguageTag(requiredText(locale, "locale")),
+                    roles,
+                    background
+            );
+        }
+
+        private static String requiredText(String value, String name) {
+            String normalized = Objects.requireNonNull(
+                    value,
+                    name + " cannot be null"
+            ).strip();
+            if (normalized.isEmpty()) {
+                throw new IllegalArgumentException(name + " cannot be blank");
+            }
+            return normalized;
         }
     }
 
@@ -181,6 +240,7 @@ public final class PersonController {
     public record PersonResponse(
             String personId,
             long version,
+            IdentityResponse identity,
             PersonalityResponse personality,
             StateResponse state,
             int personEventCount,
@@ -234,6 +294,32 @@ public final class PersonController {
             return new TransitionResponse(
                     transition.dimension().name(),
                     transition.shape()
+            );
+        }
+    }
+
+    public record IdentityResponse(
+            String displayName,
+            LocalDate birthDate,
+            Integer age,
+            String genderIdentity,
+            String residence,
+            String timeZone,
+            String locale,
+            List<String> roles,
+            String background
+    ) {
+        static IdentityResponse from(PersonIdentitySnapshot snapshot) {
+            return new IdentityResponse(
+                    snapshot.displayName(),
+                    snapshot.birthDate(),
+                    snapshot.age(),
+                    snapshot.genderIdentity(),
+                    snapshot.residence(),
+                    snapshot.timeZone(),
+                    snapshot.locale(),
+                    snapshot.roles(),
+                    snapshot.background()
             );
         }
     }
