@@ -13,6 +13,7 @@ import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.person.PersonIdentity;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
 import com.laishengkai.digitalperson.state.CognitiveState;
@@ -30,12 +31,14 @@ import com.laishengkai.digitalperson.state.StateTransition;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -43,7 +46,7 @@ import java.util.UUID;
 
 /** Converts between the domain aggregate and the adapter-owned JSON schema. */
 final class PersonAggregateJsonMapper {
-    static final int CURRENT_SCHEMA_VERSION = 3;
+    static final int CURRENT_SCHEMA_VERSION = 4;
     private static final int OLDEST_SUPPORTED_SCHEMA_VERSION = 1;
 
     private final ObjectMapper objectMapper;
@@ -86,6 +89,7 @@ final class PersonAggregateJsonMapper {
     }
 
     private static PersonAggregateDocument toDocument(Person person) {
+        PersonIdentity identity = person.getIdentity();
         Personality personality = person.getPersonality();
         PersonStateSnapshot state = person.getStateSnapshot();
         StateEvolutionContext evolution = person.getStateEvolutionContext();
@@ -104,6 +108,16 @@ final class PersonAggregateJsonMapper {
         return new PersonAggregateDocument(
                 CURRENT_SCHEMA_VERSION,
                 person.getId().toString(),
+                new PersonAggregateDocument.IdentityDocument(
+                        identity.displayName(),
+                        identity.birthDate(),
+                        identity.genderIdentity(),
+                        identity.residence(),
+                        identity.timeZone().getId(),
+                        identity.locale().toLanguageTag(),
+                        identity.roles(),
+                        identity.background()
+                ),
                 new PersonAggregateDocument.PersonalityDocument(
                         personality.getHonestyHumility(),
                         personality.getEmotionality(),
@@ -194,6 +208,7 @@ final class PersonAggregateJsonMapper {
             );
         }
 
+        PersonIdentity identity = restoreIdentity(source);
         Personality personality = new Personality(
                 source.personality().honestyHumility(),
                 source.personality().emotionality(),
@@ -227,17 +242,38 @@ final class PersonAggregateJsonMapper {
 
         EventTimeline personTimeline = restoreTimeline(source.personEvents());
         EventTimeline userTimeline = restoreTimeline(source.userEvents());
-        StateEvolutionContext evolution = source.schemaVersion() == CURRENT_SCHEMA_VERSION
+        StateEvolutionContext evolution = source.schemaVersion() >= 3
                 ? restoreUnifiedEvolution(source.stateEvolution(), personTimeline)
                 : migrateLegacyEvolution(source.stateEvolution(), personTimeline);
 
         return new Person(
                 PersonId.parse(source.personId()),
+                identity,
                 personality,
                 state,
                 personTimeline,
                 userTimeline,
                 evolution
+        );
+    }
+
+    private static PersonIdentity restoreIdentity(PersonAggregateDocument document) {
+        if (document.schemaVersion() < 4) {
+            return PersonIdentity.unspecified();
+        }
+        PersonAggregateDocument.IdentityDocument stored = document.identity();
+        if (stored == null) {
+            throw new IllegalStateException("schema v4 identity cannot be null");
+        }
+        return new PersonIdentity(
+                stored.displayName(),
+                stored.birthDate(),
+                stored.genderIdentity(),
+                stored.residence(),
+                ZoneId.of(stored.timeZone()),
+                Locale.forLanguageTag(stored.locale()),
+                stored.roles(),
+                stored.background()
         );
     }
 

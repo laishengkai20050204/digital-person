@@ -3,12 +3,17 @@ package com.laishengkai.digitalperson.application;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.person.PersonIdentity;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -26,11 +31,23 @@ class PersonDirectoryServiceTest {
         InMemoryRepository repository = new InMemoryRepository();
         PersonDirectoryService service = new PersonDirectoryService(repository, repository);
 
-        PersonDetails result = service.create(PERSONALITY);
+        PersonIdentity identity = new PersonIdentity(
+                "沈知夏",
+                LocalDate.parse("2006-04-18"),
+                "女性",
+                "上海",
+                ZoneId.of("Asia/Shanghai"),
+                Locale.SIMPLIFIED_CHINESE,
+                List.of("大学生"),
+                "视觉传达专业大三学生"
+        );
+        PersonDetails result = service.create(identity, PERSONALITY);
 
         assertEquals(0L, result.version());
         assertEquals(0, result.personEventCount());
         assertEquals(0, result.userEventCount());
+        assertEquals("沈知夏", result.identity().displayName());
+        assertEquals("Asia/Shanghai", result.identity().timeZone());
         assertEquals(0.4, result.personality().honestyHumility());
         assertEquals(0.5, result.state().energy());
         assertTrue(result.activeEffects().isEmpty());

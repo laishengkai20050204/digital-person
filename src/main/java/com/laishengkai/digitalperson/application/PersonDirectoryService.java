@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.application;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.person.PersonIdentity;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
@@ -30,10 +31,18 @@ public final class PersonDirectoryService {
 
     /** Creates a baseline person and persists it at version zero. */
     public PersonDetails create(Personality personality) {
-        Person person = new Person(Objects.requireNonNull(
-                personality,
-                "personality cannot be null"
-        ));
+        return create(PersonIdentity.unspecified(), personality);
+    }
+
+    /** Creates a person with explicit stable identity and persists it at version zero. */
+    public PersonDetails create(
+            PersonIdentity identity,
+            Personality personality
+    ) {
+        Person person = new Person(
+                Objects.requireNonNull(identity, "identity cannot be null"),
+                Objects.requireNonNull(personality, "personality cannot be null")
+        );
         if (!creationRepository.insert(person)) {
             throw new PersonCreationConflictException(person.getId());
         }

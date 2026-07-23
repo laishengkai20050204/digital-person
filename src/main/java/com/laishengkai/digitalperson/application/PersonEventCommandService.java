@@ -147,24 +147,29 @@ public final class PersonEventCommandService {
                         Map.of(requestedEvent.getChannel(), requestedEvent)
                 );
 
-                return evaluate(person, evaluationState, requestedEvent, now)
-                        .thenApply(registration -> {
-                            StateEvolutionContext completedContext = stateUpdater.complete(
-                                    startPreparation,
-                                    List.of(registration)
-                            );
-                            person.commitStateUpdate(workingState, completedContext);
-                            saveOrThrow(person, expectedVersion);
-                            PersonEvent committedEvent = person.getPersonEventById(
-                                    requestedEvent.getId()
-                            ).orElseThrow();
-                            return new PersonEventCommandResult(
-                                    person.getId(),
-                                    committedEvent,
-                                    person.getStateSnapshot(),
-                                    completedContext
-                            );
-                        });
+                return evaluate(
+                        person,
+                        evaluationState,
+                        baseContext,
+                        requestedEvent,
+                        now
+                ).thenApply(registration -> {
+                    StateEvolutionContext completedContext = stateUpdater.complete(
+                            startPreparation,
+                            List.of(registration)
+                    );
+                    person.commitStateUpdate(workingState, completedContext);
+                    saveOrThrow(person, expectedVersion);
+                    PersonEvent committedEvent = person.getPersonEventById(
+                            requestedEvent.getId()
+                    ).orElseThrow();
+                    return new PersonEventCommandResult(
+                            person.getId(),
+                            committedEvent,
+                            person.getStateSnapshot(),
+                            completedContext
+                    );
+                });
             }).whenComplete((result, error) -> logCompletion(
                     "start",
                     requestedPersonId,
@@ -394,6 +399,7 @@ public final class PersonEventCommandService {
                     .map(event -> evaluate(
                             person,
                             state,
+                            preparation.settledContext(),
                             event,
                             evaluationTime
                     ))
@@ -450,6 +456,7 @@ public final class PersonEventCommandService {
     private CompletionStage<EventEffectRegistration> evaluate(
             Person person,
             PersonStateSnapshot state,
+            StateEvolutionContext evolution,
             PersonEvent event,
             Instant evaluationTime
     ) {
@@ -457,6 +464,7 @@ public final class PersonEventCommandService {
                 contextAssembler.assemble(
                         person,
                         state,
+                        evolution,
                         event.copy(),
                         evaluationTime
                 ),

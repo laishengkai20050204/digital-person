@@ -18,7 +18,9 @@ import com.laishengkai.digitalperson.memory.MemoryItem;
 import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.person.PersonIdentitySnapshot;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
+import com.laishengkai.digitalperson.state.ActiveStateEffectSnapshot;
 import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.StateDimension;
@@ -111,6 +113,9 @@ class LanguageModelStateTransitionEvaluatorTest {
                 UserModelMessage.class,
                 request.messages().get(1)
         );
+        assertTrue(userMessage.text().contains("\"displayName\":\"沈知夏\""));
+        assertTrue(userMessage.text().contains("\"activeEffects\""));
+        assertTrue(userMessage.text().contains("既有考试压力"));
         assertTrue(userMessage.text().contains("\"activityType\":\"STUDY\""));
         assertTrue(userMessage.text().contains("\"valence\":0.2"));
         assertTrue(userMessage.text().contains("\"emotionality\":0.8"));
@@ -309,8 +314,28 @@ class LanguageModelStateTransitionEvaluatorTest {
         );
         return new StateEvaluationContext(
                 PersonId.random(),
+                new PersonIdentitySnapshot(
+                        "沈知夏",
+                        java.time.LocalDate.parse("2006-04-18"),
+                        20,
+                        "女性",
+                        "上海",
+                        "Asia/Shanghai",
+                        "zh-CN",
+                        List.of("大学生"),
+                        "视觉传达专业大三学生"
+                ),
                 new PersonalitySnapshot(0.6, 0.8, 0.4, 0.7, 0.9, 0.6),
                 state(),
+                List.of(new ActiveStateEffectSnapshot(
+                        StateEffectType.COGNITIVE,
+                        "既有考试压力",
+                        event.getId().toString(),
+                        now.minusSeconds(1800),
+                        StateEffectEndPolicy.FIXED_TIME,
+                        now.plusSeconds(1800),
+                        List.of(new StateTransition(StateDimension.MENTAL_LOAD, 0.2))
+                )),
                 PersonEventSnapshot.from(PersonEventSnapshot.Owner.PERSON, event),
                 List.of(PersonEventSnapshot.from(
                         PersonEventSnapshot.Owner.PERSON,

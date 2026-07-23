@@ -19,7 +19,7 @@ import java.util.Optional;
 /**
  * Aggregate root for one persistent digital person.
  *
- * <p>The aggregate owns stable personality data, mutable short-term state and
+ * <p>The aggregate owns stable identity and personality data, mutable short-term state and
  * two independent event timelines: one for the digital person and one for the
  * user. Mutable internals are never returned directly; callers receive defensive
  * copies or immutable snapshots.</p>
@@ -30,6 +30,7 @@ import java.util.Optional;
  */
 public final class Person {
     private final PersonId id;
+    private final PersonIdentity identity;
     private final Personality personality;
     private PersonState state;
     private final EventTimeline personTimeline;
@@ -37,8 +38,13 @@ public final class Person {
     private StateEvolutionContext stateEvolutionContext;
 
     public Person(Personality personality) {
+        this(PersonIdentity.unspecified(), personality);
+    }
+
+    public Person(PersonIdentity identity, Personality personality) {
         this(
                 PersonId.random(),
+                identity,
                 personality,
                 new PersonState(new AffectState(0.0, 0.5, 0.0)),
                 new EventTimeline(),
@@ -48,8 +54,17 @@ public final class Person {
     }
 
     public Person(Personality personality, PersonState state) {
+        this(PersonIdentity.unspecified(), personality, state);
+    }
+
+    public Person(
+            PersonIdentity identity,
+            Personality personality,
+            PersonState state
+    ) {
         this(
                 PersonId.random(),
+                identity,
                 personality,
                 state,
                 new EventTimeline(),
@@ -65,7 +80,24 @@ public final class Person {
             EventTimeline userTimeline
     ) {
         this(
+                PersonIdentity.unspecified(),
+                personality,
+                state,
+                personTimeline,
+                userTimeline
+        );
+    }
+
+    public Person(
+            PersonIdentity identity,
+            Personality personality,
+            PersonState state,
+            EventTimeline personTimeline,
+            EventTimeline userTimeline
+    ) {
+        this(
                 PersonId.random(),
+                identity,
                 personality,
                 state,
                 personTimeline,
@@ -88,7 +120,28 @@ public final class Person {
             EventTimeline userTimeline,
             StateEvolutionContext stateEvolutionContext
     ) {
+        this(
+                id,
+                PersonIdentity.unspecified(),
+                personality,
+                state,
+                personTimeline,
+                userTimeline,
+                stateEvolutionContext
+        );
+    }
+
+    public Person(
+            PersonId id,
+            PersonIdentity identity,
+            Personality personality,
+            PersonState state,
+            EventTimeline personTimeline,
+            EventTimeline userTimeline,
+            StateEvolutionContext stateEvolutionContext
+    ) {
         this.id = Objects.requireNonNull(id, "id cannot be null");
+        this.identity = Objects.requireNonNull(identity, "identity cannot be null");
         this.personality = Objects.requireNonNull(
                 personality,
                 "personality cannot be null"
@@ -112,6 +165,7 @@ public final class Person {
     public Person copy() {
         return new Person(
                 id,
+                identity,
                 personality,
                 state,
                 personTimeline,
@@ -122,6 +176,10 @@ public final class Person {
 
     public PersonId getId() {
         return id;
+    }
+
+    public PersonIdentity getIdentity() {
+        return identity;
     }
 
     public Personality getPersonality() {

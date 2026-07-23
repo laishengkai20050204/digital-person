@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Objects;
 
@@ -8,6 +9,7 @@ import java.util.Objects;
 record PersonAggregateDocument(
         int schemaVersion,
         String personId,
+        IdentityDocument identity,
         PersonalityDocument personality,
         StateDocument state,
         List<EventDocument> personEvents,
@@ -27,6 +29,27 @@ record PersonAggregateDocument(
                 stateEvolution,
                 "stateEvolution cannot be null"
         );
+    }
+
+    record IdentityDocument(
+            String displayName,
+            LocalDate birthDate,
+            String genderIdentity,
+            String residence,
+            String timeZone,
+            String locale,
+            List<String> roles,
+            String background
+    ) {
+        IdentityDocument {
+            displayName = requireText(displayName, "displayName");
+            genderIdentity = normalize(genderIdentity);
+            residence = normalize(residence);
+            timeZone = requireText(timeZone, "timeZone");
+            locale = requireText(locale, "locale");
+            roles = copy(roles, "roles");
+            background = normalize(background);
+        }
     }
 
     record PersonalityDocument(
@@ -83,7 +106,7 @@ record PersonAggregateDocument(
     }
 
     /**
-     * Schema v3 uses effects/evaluatedEventIds. channelEffects/residualEffects are retained
+     * Schema v3+ uses effects/evaluatedEventIds. channelEffects/residualEffects are retained
      * only so schema v1 and v2 documents remain readable.
      */
     record StateEvolutionDocument(
