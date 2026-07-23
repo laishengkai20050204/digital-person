@@ -10,6 +10,7 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -41,15 +42,14 @@ public class PersonActivityDecisionConfiguration {
     }
 
     /**
-     * Creates the autonomous activity boundary whenever the protected person API is enabled.
-     * Required dependencies are resolved after all bean definitions have been registered,
-     * avoiding order-sensitive {@code ConditionalOnBean} checks during component scanning.
+     * Creates the autonomous activity boundary for either the protected API or the
+     * persistent scheduler. The decision is based only on configuration properties,
+     * avoiding order-sensitive bean-presence checks during component scanning.
      */
     @Bean
-    @ConditionalOnProperty(
-            prefix = "digital-person.person-api",
-            name = "enabled",
-            havingValue = "true"
+    @ConditionalOnExpression(
+            "'${digital-person.person-api.enabled:false}' == 'true' || "
+                    + "'${digital-person.activity-scheduler.enabled:false}' == 'true'"
     )
     @ConditionalOnMissingBean(PersonActivityDecisionService.class)
     PersonActivityDecisionService personActivityDecisionService(
