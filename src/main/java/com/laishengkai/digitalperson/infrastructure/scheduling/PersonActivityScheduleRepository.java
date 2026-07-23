@@ -17,6 +17,17 @@ public interface PersonActivityScheduleRepository {
             Duration leaseDuration
     );
 
+    /**
+     * Extends an unexpired claim owned by the supplied lease token.
+     *
+     * @return {@code false} when the claim has expired, was released, or is now owned elsewhere
+     */
+    boolean renewLease(
+            PersonActivityScheduleLease lease,
+            Instant newLeaseUntil,
+            Instant renewedAt
+    );
+
     /** Completes a claimed cycle and stores the model-recommended next review time. */
     boolean completeSuccess(
             PersonActivityScheduleLease lease,
