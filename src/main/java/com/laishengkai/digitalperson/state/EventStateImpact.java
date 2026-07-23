@@ -1,47 +1,63 @@
 package com.laishengkai.digitalperson.state;
 
-import java.util.EnumSet;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
-/** Model-evaluated impact of one event while active and after it ends. */
-public record EventStateImpact(
-        List<StateTransition> activeTransitions,
-        AftermathStateEffectPlan aftermath
-) {
+/** Model-evaluated independent effects caused by one event. */
+public record EventStateImpact(List<StateEffectDraft> effects) {
     public EventStateImpact {
-        activeTransitions = copyActiveTransitions(activeTransitions);
-        aftermath = Objects.requireNonNull(aftermath, "aftermath cannot be null");
+        effects = List.copyOf(Objects.requireNonNull(effects, "effects cannot be null"));
+        for (StateEffectDraft effect : effects) {
+            Objects.requireNonNull(effect, "effect cannot be null");
+        }
     }
 
+    /** Compatibility adapter for legacy evaluators that return event-bound transitions only. */
     public static EventStateImpact activeOnly(List<StateTransition> transitions) {
-        return new EventStateImpact(transitions, AftermathStateEffectPlan.none());
+        List<StateTransition> safeTransitions = List.copyOf(Objects.requireNonNull(
+                transitions,
+                "transitions cannot be null"
+        ));
+        if (safeTransitions.isEmpty()) {
+            return none();
+        }
+
+        Map<StateEffectType, List<StateTransition>> grouped = new EnumMap<>(
+                StateEffectType.class
+        );
+        for (StateTransition transition : safeTransitions) {
+            StateTransition nonNullTransition = Objects.requireNonNull(
+                    transition,
+                    "transition cannot be null"
+            );
+            StateEffectType type = typeOf(nonNullTransition.dimension());
+            grouped.computeIfAbsent(type, ignored -> new ArrayList<>())
+                    .add(nonNullTransition);
+        }
+
+        List<StateEffectDraft> drafts = grouped.entrySet().stream()
+                .map(entry -> StateEffectDraft.eventBound(
+                        entry.getKey(),
+                        "Legacy evaluator event-bound effect",
+                        entry.getValue()
+                ))
+                .toList();
+        return new EventStateImpact(drafts);
     }
 
     public static EventStateImpact none() {
-        return activeOnly(List.of());
+        return new EventStateImpact(List.of());
     }
 
-    private static List<StateTransition> copyActiveTransitions(
-            List<StateTransition> requestedTransitions
-    ) {
-        List<StateTransition> copied = List.copyOf(Objects.requireNonNull(
-                requestedTransitions,
-                "activeTransitions cannot be null"
-        ));
-        Set<StateDimension> dimensions = EnumSet.noneOf(StateDimension.class);
-        for (StateTransition transition : copied) {
-            StateTransition nonNullTransition = Objects.requireNonNull(
-                    transition,
-                    "active transition cannot be null"
-            );
-            if (!dimensions.add(nonNullTransition.dimension())) {
-                throw new IllegalArgumentException(
-                        "only one active transition is allowed per state dimension"
-                );
-            }
-        }
-        return copied;
+    private static StateEffectType typeOf(StateDimension dimension) {
+        return switch (dimension) {
+            case VALENCE, ENERGY, TENSION -> StateEffectType.EMOTIONAL;
+            case FOCUS, MENTAL_LOAD, MOTIVATION -> StateEffectType.COGNITIVE;
+            case FATIGUE, SLEEPINESS, HUNGER -> StateEffectType.PHYSICAL;
+            case LONELINESS, SOCIAL_NEED -> StateEffectType.SOCIAL;
+        };
     }
 }
