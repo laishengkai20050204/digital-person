@@ -13,7 +13,6 @@ import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,8 +24,6 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -47,7 +44,7 @@ public final class PersonController {
     public static final String INTERNAL_TOKEN_HEADER = "X-Internal-Token";
 
     private final PersonDirectoryService directoryService;
-    private final byte[] expectedToken;
+    private final InternalTokenGuard tokenGuard;
 
     public PersonController(
             PersonDirectoryService directoryService,
@@ -57,10 +54,10 @@ public final class PersonController {
                 directoryService,
                 "directoryService cannot be null"
         );
-        this.expectedToken = Objects.requireNonNull(
+        this.tokenGuard = new InternalTokenGuard(Objects.requireNonNull(
                 properties,
                 "properties cannot be null"
-        ).requiredToken().getBytes(StandardCharsets.UTF_8);
+        ).requiredToken());
     }
 
     @PostMapping
@@ -68,9 +65,7 @@ public final class PersonController {
             @RequestHeader(name = INTERNAL_TOKEN_HEADER, required = false) String suppliedToken,
             @RequestBody CreatePersonRequest request
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         CreatePersonRequest requested = Objects.requireNonNull(
                 request,
                 "request cannot be null"
@@ -91,9 +86,7 @@ public final class PersonController {
             @PathVariable String personId,
             @RequestHeader(name = INTERNAL_TOKEN_HEADER, required = false) String suppliedToken
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         return ResponseEntity.ok(toResponse(
                 directoryService.get(PersonId.parse(personId))
         ));
@@ -104,24 +97,10 @@ public final class PersonController {
             @PathVariable String personId,
             @RequestHeader(name = INTERNAL_TOKEN_HEADER, required = false) String suppliedToken
     ) {
-        if (!authorized(suppliedToken)) {
-            return unauthorized();
-        }
+        tokenGuard.requireAuthorized(suppliedToken);
         return ResponseEntity.ok(toStateResponse(
                 directoryService.getState(PersonId.parse(personId))
         ));
-    }
-
-    private boolean authorized(String suppliedToken) {
-        return suppliedToken != null && MessageDigest.isEqual(
-                expectedToken,
-                suppliedToken.getBytes(StandardCharsets.UTF_8)
-        );
-    }
-
-    private static ResponseEntity<ErrorResponse> unauthorized() {
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                .body(new ErrorResponse("UNAUTHORIZED", "Invalid internal token"));
     }
 
     private static PersonResponse toResponse(PersonDetails details) {
@@ -171,10 +150,10 @@ public final class PersonController {
         }
 
         Personality toPersonality() {
-            return Objects.requireNonNull(
-                    personality,
-                    "personality cannot be null"
-            ).toDomain();
+            if (personality == null) {
+                throw new IllegalArgumentException("personality cannot be null");
+            }
+            return personality.toDomain();
         }
     }
 
@@ -202,10 +181,10 @@ public final class PersonController {
         }
 
         private static String requiredText(String value, String name) {
-            String normalized = Objects.requireNonNull(
-                    value,
-                    name + " cannot be null"
-            ).strip();
+            if (value == null) {
+                throw new IllegalArgumentException(name + " cannot be null");
+            }
+            String normalized = value.strip();
             if (normalized.isEmpty()) {
                 throw new IllegalArgumentException(name + " cannot be blank");
             }
@@ -233,7 +212,10 @@ public final class PersonController {
         }
 
         private static double required(Double value, String name) {
-            return Objects.requireNonNull(value, name + " cannot be null");
+            if (value == null) {
+                throw new IllegalArgumentException(name + " cannot be null");
+            }
+            return value;
         }
     }
 
