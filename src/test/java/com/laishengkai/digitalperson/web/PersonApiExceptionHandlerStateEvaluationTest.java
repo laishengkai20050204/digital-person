@@ -42,7 +42,7 @@ class PersonApiExceptionHandlerStateEvaluationTest {
     ) {
         assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
         PersonController.ErrorResponse body = Objects.requireNonNull(response.getBody());
-        assertEquals("STATE_EVALUATION_FAILED", body.code());
+        assertEquals("STATE_EVALUATION_FAILED", body.status());
         assertEquals(
                 "The configured language model could not evaluate the event",
                 body.message()
