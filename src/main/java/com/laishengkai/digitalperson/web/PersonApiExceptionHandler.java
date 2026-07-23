@@ -31,6 +31,15 @@ public final class PersonApiExceptionHandler {
             PersonEventController.class.getName() + "#requireText"
     );
 
+    @ExceptionHandler(InvalidInternalTokenException.class)
+    public ResponseEntity<PersonController.ErrorResponse> unauthorized() {
+        return response(
+                HttpStatus.UNAUTHORIZED,
+                "UNAUTHORIZED",
+                "Invalid internal token"
+        );
+    }
+
     @ExceptionHandler(PersonNotFoundException.class)
     public ResponseEntity<PersonController.ErrorResponse> notFound(
             PersonNotFoundException error
@@ -123,6 +132,9 @@ public final class PersonApiExceptionHandler {
             CompletionException error
     ) {
         Throwable cause = unwrap(error);
+        if (cause instanceof InvalidInternalTokenException) {
+            return unauthorized();
+        }
         if (cause instanceof PersonNotFoundException notFound) {
             return notFound(notFound);
         }
