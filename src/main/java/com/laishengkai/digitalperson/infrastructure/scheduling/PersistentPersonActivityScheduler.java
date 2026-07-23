@@ -111,7 +111,11 @@ public final class PersistentPersonActivityScheduler {
             return;
         }
         try {
-            decisionService.decide(lease.personId(), lease.claimedAt())
+            decisionService.decide(
+                            lease.personId(),
+                            lease.claimedAt(),
+                            lease.claimedAt().plus(properties.decisionTimeout())
+                    )
                     .whenComplete((result, error) -> complete(
                             lease,
                             heartbeatHandle,
