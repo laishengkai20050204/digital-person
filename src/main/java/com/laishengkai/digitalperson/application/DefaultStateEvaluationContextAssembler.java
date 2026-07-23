@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.application;
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.conversation.RecentConversationQuery;
+import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.PersonEventSnapshot;
 import com.laishengkai.digitalperson.memory.MemorySection;
@@ -17,9 +18,12 @@ import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
@@ -110,6 +114,19 @@ public final class DefaultStateEvaluationContextAssembler
                 "evaluationTime cannot be null"
         );
         String relevanceQuery = relevanceQuery(event);
+        List<PersonEventSnapshot> activeEvents = snapshotActiveEvents(
+                source,
+                now,
+                event.getId()
+        );
+        Set<String> recentExclusions = new HashSet<>();
+        recentExclusions.add(event.getId().toString());
+        activeEvents.forEach(active -> recentExclusions.add(active.eventId()));
+        List<PersonEventSnapshot> recentEvents = snapshotRecentEvents(
+                source,
+                now,
+                recentExclusions
+        );
 
         CompletionStage<PersonMemoryContext> memoryStage = Objects.requireNonNull(
                 memoryGateway.retrieve(new PersonMemoryQuery(
@@ -136,8 +153,8 @@ public final class DefaultStateEvaluationContextAssembler
                         PersonalitySnapshot.from(source.getPersonality()),
                         state,
                         PersonEventSnapshot.from(PersonEventSnapshot.Owner.PERSON, event),
-                        snapshotActiveEvents(source, now),
-                        snapshotRecentEvents(source, now),
+                        activeEvents,
+                        recentEvents,
                         Objects.requireNonNull(memory, "memory result cannot be null"),
                         List.copyOf(Objects.requireNonNull(
                                 conversation,
@@ -148,44 +165,69 @@ public final class DefaultStateEvaluationContextAssembler
         );
     }
 
-    private List<PersonEventSnapshot> snapshotActiveEvents(Person person, Instant now) {
+    private List<PersonEventSnapshot> snapshotActiveEvents(
+            Person person,
+            Instant now,
+            EventId newEventId
+    ) {
         List<PersonEventSnapshot> result = new ArrayList<>();
         addSnapshots(
                 result,
                 PersonEventSnapshot.Owner.PERSON,
-                person.getCurrentPersonEvents(now)
+                person.getCurrentPersonEvents(now),
+                Set.of(newEventId.toString())
         );
         addSnapshots(
                 result,
                 PersonEventSnapshot.Owner.USER,
-                person.getCurrentUserEvents(now)
+                person.getCurrentUserEvents(now),
+                Set.of(newEventId.toString())
         );
-        return List.copyOf(result);
+        return sortedSnapshots(result);
     }
 
-    private List<PersonEventSnapshot> snapshotRecentEvents(Person person, Instant now) {
+    private List<PersonEventSnapshot> snapshotRecentEvents(
+            Person person,
+            Instant now,
+            Set<String> excludedEventIds
+    ) {
         List<PersonEventSnapshot> result = new ArrayList<>();
         addSnapshots(
                 result,
                 PersonEventSnapshot.Owner.PERSON,
-                person.getRecentPersonEvents(now, recentEventWindow)
+                person.getRecentPersonEvents(now, recentEventWindow),
+                excludedEventIds
         );
         addSnapshots(
                 result,
                 PersonEventSnapshot.Owner.USER,
-                person.getRecentUserEvents(now, recentEventWindow)
+                person.getRecentUserEvents(now, recentEventWindow),
+                excludedEventIds
         );
-        return List.copyOf(result);
+        return sortedSnapshots(result);
     }
 
     private static void addSnapshots(
             List<PersonEventSnapshot> target,
             PersonEventSnapshot.Owner owner,
-            List<PersonEvent> events
+            List<PersonEvent> events,
+            Set<String> excludedEventIds
     ) {
         events.stream()
+                .filter(event -> !excludedEventIds.contains(event.getId().toString()))
                 .map(event -> PersonEventSnapshot.from(owner, event))
                 .forEach(target::add);
+    }
+
+    private static List<PersonEventSnapshot> sortedSnapshots(
+            List<PersonEventSnapshot> snapshots
+    ) {
+        return snapshots.stream()
+                .sorted(Comparator
+                        .comparing(PersonEventSnapshot::startTime)
+                        .thenComparing(PersonEventSnapshot::owner)
+                        .thenComparing(PersonEventSnapshot::eventId))
+                .toList();
     }
 
     private static String relevanceQuery(PersonEvent event) {
