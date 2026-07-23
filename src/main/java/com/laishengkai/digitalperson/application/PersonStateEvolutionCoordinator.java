@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.function.Consumer;
 
@@ -110,7 +111,8 @@ public final class PersonStateEvolutionCoordinator {
                 state,
                 preparation,
                 evaluationTime,
-                NO_CHECKPOINT
+                NO_CHECKPOINT,
+                PendingEvaluationPolicy.FAIL_COMMAND
         );
     }
 
@@ -120,6 +122,41 @@ public final class PersonStateEvolutionCoordinator {
             StateUpdatePreparation preparation,
             Instant evaluationTime,
             Consumer<String> checkpoint
+    ) {
+        return completePending(
+                person,
+                state,
+                preparation,
+                evaluationTime,
+                checkpoint,
+                PendingEvaluationPolicy.FAIL_COMMAND
+        );
+    }
+
+    public CompletionStage<StateEvolutionContext> completePending(
+            Person person,
+            PersonStateSnapshot state,
+            StateUpdatePreparation preparation,
+            Instant evaluationTime,
+            PendingEvaluationPolicy policy
+    ) {
+        return completePending(
+                person,
+                state,
+                preparation,
+                evaluationTime,
+                NO_CHECKPOINT,
+                policy
+        );
+    }
+
+    public CompletionStage<StateEvolutionContext> completePending(
+            Person person,
+            PersonStateSnapshot state,
+            StateUpdatePreparation preparation,
+            Instant evaluationTime,
+            Consumer<String> checkpoint,
+            PendingEvaluationPolicy policy
     ) {
         Person safePerson = Objects.requireNonNull(person, "person cannot be null");
         PersonStateSnapshot safeState = Objects.requireNonNull(
@@ -135,48 +172,71 @@ public final class PersonStateEvolutionCoordinator {
                 "evaluationTime cannot be null"
         );
         Consumer<String> guard = requireCheckpoint(checkpoint);
+        PendingEvaluationPolicy requiredPolicy = Objects.requireNonNull(
+                policy,
+                "policy cannot be null"
+        );
 
+        final List<CompletableFuture<EventEffectRegistration>> evaluations;
         try {
             guard.accept("pending event evaluation");
-            List<CompletableFuture<EventEffectRegistration>> evaluations =
-                    safePreparation.eventsToEvaluate().stream()
-                            .map(event -> evaluateEvent(
-                                    safePerson,
-                                    safeState,
-                                    safePreparation.settledContext(),
-                                    event,
-                                    now,
-                                    guard
-                            ))
-                            .map(CompletionStage::toCompletableFuture)
-                            .toList();
-            if (evaluations.isEmpty()) {
-                return CompletableFuture.completedFuture(
-                        safePreparation.settledContext()
-                );
+            evaluations = safePreparation.eventsToEvaluate().stream()
+                    .map(event -> evaluateEvent(
+                            safePerson,
+                            safeState,
+                            safePreparation.settledContext(),
+                            event,
+                            now,
+                            guard
+                    ))
+                    .map(CompletionStage::toCompletableFuture)
+                    .toList();
+        } catch (RuntimeException error) {
+            return pendingEvaluationFailure(
+                    safePerson,
+                    safePreparation,
+                    requiredPolicy,
+                    error
+            );
+        }
+
+        if (evaluations.isEmpty()) {
+            return CompletableFuture.completedFuture(
+                    safePreparation.settledContext()
+            );
+        }
+
+        LOGGER.info(
+                "Automatically evaluating pending person events: personId={}, pendingEventIds={}",
+                safePerson.getId(),
+                safePreparation.eventsToEvaluate().stream()
+                        .map(PersonEvent::getId)
+                        .toList()
+        );
+        return CompletableFuture.allOf(
+                evaluations.toArray(CompletableFuture[]::new)
+        ).handle((ignored, evaluationError) -> {
+            if (evaluationError != null) {
+                Throwable failure = unwrapCompletionFailure(evaluationError);
+                if (requiredPolicy == PendingEvaluationPolicy.CONTINUE_WITH_SETTLED_CONTEXT) {
+                    logPendingEvaluationFallback(
+                            safePerson,
+                            safePreparation,
+                            failure
+                    );
+                    return safePreparation.settledContext();
+                }
+                throw new CompletionException(failure);
             }
 
-            LOGGER.info(
-                    "Automatically evaluating pending person events: personId={}, pendingEventIds={}",
-                    safePerson.getId(),
-                    safePreparation.eventsToEvaluate().stream()
-                            .map(PersonEvent::getId)
+            guard.accept("pending event effect completion");
+            return stateUpdater.complete(
+                    safePreparation,
+                    evaluations.stream()
+                            .map(CompletableFuture::join)
                             .toList()
             );
-            return CompletableFuture.allOf(
-                    evaluations.toArray(CompletableFuture[]::new)
-            ).thenApply(ignored -> {
-                guard.accept("pending event effect completion");
-                return stateUpdater.complete(
-                        safePreparation,
-                        evaluations.stream()
-                                .map(CompletableFuture::join)
-                                .toList()
-                );
-            });
-        } catch (RuntimeException error) {
-            return CompletableFuture.failedFuture(error);
-        }
+        });
     }
 
     public StateEvolutionContext afterTimelineChange(
@@ -255,9 +315,6 @@ public final class PersonStateEvolutionCoordinator {
                 startedEvents,
                 "startedEvents cannot be null"
         ));
-        if (events.stream().anyMatch(Objects::isNull)) {
-            throw new NullPointerException("startedEvents cannot contain null");
-        }
         Instant now = Objects.requireNonNull(
                 evaluationTime,
                 "evaluationTime cannot be null"
@@ -347,6 +404,42 @@ public final class PersonStateEvolutionCoordinator {
         });
     }
 
+    private static CompletionStage<StateEvolutionContext> pendingEvaluationFailure(
+            Person person,
+            StateUpdatePreparation preparation,
+            PendingEvaluationPolicy policy,
+            RuntimeException error
+    ) {
+        if (policy == PendingEvaluationPolicy.CONTINUE_WITH_SETTLED_CONTEXT) {
+            logPendingEvaluationFallback(person, preparation, error);
+            return CompletableFuture.completedFuture(preparation.settledContext());
+        }
+        return CompletableFuture.failedFuture(error);
+    }
+
+    private static void logPendingEvaluationFallback(
+            Person person,
+            StateUpdatePreparation preparation,
+            Throwable failure
+    ) {
+        LOGGER.warn(
+                "Continuing lifecycle command after pending-effect evaluation failed: personId={}, pendingEventIds={}",
+                person.getId(),
+                preparation.pendingEvents().values().stream()
+                        .map(PersonEvent::getId)
+                        .toList(),
+                failure
+        );
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable error) {
+        Throwable current = Objects.requireNonNull(error, "error cannot be null");
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
     private static EventEffectRegistration toRegistration(
             PersonEvent event,
             Instant evaluationTime,
@@ -378,5 +471,10 @@ public final class PersonStateEvolutionCoordinator {
 
     private static Consumer<String> requireCheckpoint(Consumer<String> checkpoint) {
         return Objects.requireNonNull(checkpoint, "checkpoint cannot be null");
+    }
+
+    public enum PendingEvaluationPolicy {
+        FAIL_COMMAND,
+        CONTINUE_WITH_SETTLED_CONTEXT
     }
 }
