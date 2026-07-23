@@ -60,6 +60,9 @@ class PersonControllerTest {
                 .andExpect(header().string("Location", endsWith("/api/persons/" + repository.onlyId())))
                 .andExpect(jsonPath("$.personId").value(repository.onlyId().toString()))
                 .andExpect(jsonPath("$.version").value(0))
+                .andExpect(jsonPath("$.identity.displayName").value("沈知夏"))
+                .andExpect(jsonPath("$.identity.timeZone").value("Asia/Shanghai"))
+                .andExpect(jsonPath("$.identity.roles[0]").value("大学生"))
                 .andExpect(jsonPath("$.personality.emotionality").value(0.7))
                 .andExpect(jsonPath("$.state.energy").value(0.5))
                 .andExpect(jsonPath("$.personEventCount").value(0))
@@ -131,6 +134,16 @@ class PersonControllerTest {
     private static String validRequest() {
         return """
                 {
+                  "identity": {
+                    "displayName": "沈知夏",
+                    "birthDate": "2006-04-18",
+                    "genderIdentity": "女性",
+                    "residence": "上海",
+                    "timeZone": "Asia/Shanghai",
+                    "locale": "zh-CN",
+                    "roles": ["大学生", "视觉传达专业学生"],
+                    "background": "大三学生"
+                  },
                   "personality": {
                     "honestyHumility": 0.4,
                     "emotionality": 0.7,
