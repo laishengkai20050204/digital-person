@@ -166,7 +166,8 @@ public final class PersonEventController {
                 result.stateEvolutionContext().channelEffects().keySet().stream()
                         .map(Enum::name)
                         .sorted()
-                        .toList()
+                        .toList(),
+                result.stateEvolutionContext().residualEffects().size()
         );
     }
 
@@ -270,7 +271,8 @@ public final class PersonEventController {
             String notes,
             PersonController.StateResponse state,
             Instant stateLastUpdatedAt,
-            List<String> activeEffectChannels
+            List<String> activeEffectChannels,
+            int residualEffectCount
     ) {
     }
 }
