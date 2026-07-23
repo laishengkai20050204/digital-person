@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
@@ -12,8 +11,11 @@ import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
-import com.laishengkai.digitalperson.state.ChannelStateEffect;
+import com.laishengkai.digitalperson.state.EffectId;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.flywaydb.core.Flyway;
@@ -29,6 +31,7 @@ import org.testcontainers.mysql.MySQLContainer;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -208,21 +211,25 @@ class JdbcPersonRepositoryMySqlTest {
                 TimeRange.openEnded(NOW.minusSeconds(600))
         );
         person.startPersonEvent(music, NOW.minusSeconds(600));
+        RegisteredStateEffect effect = new RegisteredStateEffect(
+                EffectId.random(),
+                music.getId(),
+                StateEffectType.EMOTIONAL,
+                "音乐降低当前紧张感",
+                music.getStartTime(),
+                StateEffectEndPolicy.EVENT_END,
+                null,
+                List.of(new StateTransition(
+                        StateDimension.TENSION,
+                        -0.3
+                ))
+        );
         person.commitStateUpdate(
                 person.getState(),
                 new StateEvolutionContext(
                         NOW.minusSeconds(600),
-                        Map.of(
-                                ActivityChannel.AUDIO,
-                                new ChannelStateEffect(
-                                        ActivityChannel.AUDIO,
-                                        music.getId(),
-                                        List.of(new StateTransition(
-                                                StateDimension.TENSION,
-                                                -0.3
-                                        ))
-                                )
-                        )
+                        Map.of(effect.effectId(), effect),
+                        Set.of(music.getId())
                 )
         );
         return person;
