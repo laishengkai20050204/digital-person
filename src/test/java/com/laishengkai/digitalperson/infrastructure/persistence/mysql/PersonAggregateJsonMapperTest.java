@@ -2,6 +2,7 @@ package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventEndReason;
@@ -11,6 +12,7 @@ import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.TimeRange;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
+import com.laishengkai.digitalperson.person.PersonIdentity;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
 import com.laishengkai.digitalperson.state.CognitiveState;
@@ -27,7 +29,10 @@ import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -46,9 +51,11 @@ class PersonAggregateJsonMapperTest {
         String json = mapper.write(source);
         Person restored = mapper.read(json);
 
-        assertTrue(json.contains("\"schemaVersion\":3"));
+        assertTrue(json.contains("\"schemaVersion\":4"));
+        assertTrue(json.contains("\"displayName\":\"沈知夏\""));
         assertTrue(json.contains("\"cause\":\"音乐带来放松感\""));
         assertEquals(source.getId(), restored.getId());
+        assertEquals(source.getIdentity(), restored.getIdentity());
         assertEquals(source.getPersonality(), restored.getPersonality());
         assertEquals(source.getStateSnapshot(), restored.getStateSnapshot());
         assertEquals(
@@ -77,9 +84,24 @@ class PersonAggregateJsonMapperTest {
     void rejectsUnknownDocumentSchemaVersion() {
         PersonAggregateJsonMapper mapper = new PersonAggregateJsonMapper(objectMapper());
         String json = mapper.write(completePerson())
-                .replace("\"schemaVersion\":3", "\"schemaVersion\":99");
+                .replace("\"schemaVersion\":4", "\"schemaVersion\":99");
 
         assertThrows(PersonPersistenceException.class, () -> mapper.read(json));
+    }
+
+    @Test
+    void readsSchemaVersionThreeWithoutIdentityUsingExplicitLegacyDefault() throws Exception {
+        Person source = completePerson();
+        PersonAggregateJsonMapper mapper = new PersonAggregateJsonMapper(objectMapper());
+        ObjectMapper jsonMapper = objectMapper();
+        ObjectNode document = (ObjectNode) jsonMapper.readTree(mapper.write(source));
+        document.put("schemaVersion", 3);
+        document.remove("identity");
+
+        Person restored = mapper.read(jsonMapper.writeValueAsString(document));
+
+        assertEquals(PersonIdentity.unspecified(), restored.getIdentity());
+        assertEquals(source.getStateEvolutionContext(), restored.getStateEvolutionContext());
     }
 
     @Test
@@ -102,6 +124,16 @@ class PersonAggregateJsonMapperTest {
     }
 
     private static Person completePerson() {
+        PersonIdentity identity = new PersonIdentity(
+                "沈知夏",
+                LocalDate.parse("2006-04-18"),
+                "女性",
+                "上海",
+                ZoneId.of("Asia/Shanghai"),
+                Locale.SIMPLIFIED_CHINESE,
+                List.of("大学生", "视觉传达专业学生"),
+                "大三学生"
+        );
         Personality personality = new Personality(0.7, 0.8, 0.4, 0.6, 0.9, 0.75);
         PersonState state = new PersonState(
                 new AffectState(-0.2, 0.65, 0.35),
@@ -166,6 +198,7 @@ class PersonAggregateJsonMapperTest {
 
         return new Person(
                 PersonId.random(),
+                identity,
                 personality,
                 state,
                 personTimeline,
