@@ -15,20 +15,24 @@ import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
+import com.laishengkai.digitalperson.state.AftermathStateEffectPlan;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.CognitiveState;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.PhysicalState;
+import com.laishengkai.digitalperson.state.ResidualStateEffect;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +41,8 @@ import java.util.Set;
 
 /** Converts between the domain aggregate and the adapter-owned JSON schema. */
 final class PersonAggregateJsonMapper {
-    static final int CURRENT_SCHEMA_VERSION = 1;
+    static final int CURRENT_SCHEMA_VERSION = 2;
+    private static final int OLDEST_SUPPORTED_SCHEMA_VERSION = 1;
 
     private final ObjectMapper objectMapper;
 
@@ -82,12 +87,19 @@ final class PersonAggregateJsonMapper {
         PersonStateSnapshot state = person.getStateSnapshot();
         StateEvolutionContext evolution = person.getStateEvolutionContext();
 
-        List<PersonAggregateDocument.ChannelEffectDocument> effects = evolution
+        List<PersonAggregateDocument.ChannelEffectDocument> channelEffects = evolution
                 .channelEffects()
                 .entrySet()
                 .stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(entry -> toDocument(entry.getValue()))
+                .toList();
+        List<PersonAggregateDocument.ResidualEffectDocument> residualEffects = evolution
+                .residualEffects()
+                .values()
+                .stream()
+                .sorted(Comparator.comparing(effect -> effect.sourceEventId().toString()))
+                .map(PersonAggregateJsonMapper::toDocument)
                 .toList();
 
         return new PersonAggregateDocument(
@@ -122,7 +134,8 @@ final class PersonAggregateJsonMapper {
                         .toList(),
                 new PersonAggregateDocument.StateEvolutionDocument(
                         evolution.lastUpdatedAt(),
-                        effects
+                        channelEffects,
+                        residualEffects
                 )
         );
     }
@@ -144,16 +157,40 @@ final class PersonAggregateJsonMapper {
     private static PersonAggregateDocument.ChannelEffectDocument toDocument(
             ChannelStateEffect effect
     ) {
+        PersonAggregateDocument.AftermathPlanDocument aftermath = effect.hasAftermath()
+                ? new PersonAggregateDocument.AftermathPlanDocument(
+                        effect.aftermath().duration().toSeconds(),
+                        toDocuments(effect.aftermath().transitions())
+                )
+                : null;
         return new PersonAggregateDocument.ChannelEffectDocument(
                 effect.channel().name(),
                 effect.eventId().toString(),
-                effect.transitions().stream()
-                        .map(transition -> new PersonAggregateDocument.TransitionDocument(
-                                transition.dimension().name(),
-                                transition.shape()
-                        ))
-                        .toList()
+                toDocuments(effect.transitions()),
+                aftermath
         );
+    }
+
+    private static PersonAggregateDocument.ResidualEffectDocument toDocument(
+            ResidualStateEffect effect
+    ) {
+        return new PersonAggregateDocument.ResidualEffectDocument(
+                effect.sourceEventId().toString(),
+                effect.startsAt(),
+                effect.endsAt(),
+                toDocuments(effect.transitions())
+        );
+    }
+
+    private static List<PersonAggregateDocument.TransitionDocument> toDocuments(
+            List<StateTransition> transitions
+    ) {
+        return transitions.stream()
+                .map(transition -> new PersonAggregateDocument.TransitionDocument(
+                        transition.dimension().name(),
+                        transition.shape()
+                ))
+                .toList();
     }
 
     private static Person fromDocument(PersonAggregateDocument document) {
@@ -161,7 +198,8 @@ final class PersonAggregateJsonMapper {
                 document,
                 "document cannot be null"
         );
-        if (source.schemaVersion() != CURRENT_SCHEMA_VERSION) {
+        if (source.schemaVersion() < OLDEST_SUPPORTED_SCHEMA_VERSION
+                || source.schemaVersion() > CURRENT_SCHEMA_VERSION) {
             throw new PersonPersistenceException(
                     "unsupported person aggregate schema version: "
                             + source.schemaVersion()
@@ -284,10 +322,9 @@ final class PersonAggregateJsonMapper {
             PersonAggregateDocument.StateEvolutionDocument document,
             EventTimeline personTimeline
     ) {
-        Map<ActivityChannel, ChannelStateEffect> effects = new EnumMap<>(
+        Map<ActivityChannel, ChannelStateEffect> channelEffects = new EnumMap<>(
                 ActivityChannel.class
         );
-        Set<StateDimension> dimensions = new HashSet<>();
 
         for (PersonAggregateDocument.ChannelEffectDocument storedEffect
                 : document.channelEffects()) {
@@ -305,35 +342,88 @@ final class PersonAggregateJsonMapper {
             }
             if (!event.isOpen()) {
                 throw new IllegalStateException(
-                        "state effect cannot reference a finished event"
+                        "activity state effect cannot reference a finished event"
                 );
             }
 
-            dimensions.clear();
-            List<StateTransition> transitions = storedEffect.transitions().stream()
-                    .map(storedTransition -> new StateTransition(
-                            StateDimension.valueOf(storedTransition.dimension()),
-                            storedTransition.shape()
-                    ))
-                    .peek(transition -> {
-                        if (!dimensions.add(transition.dimension())) {
-                            throw new IllegalStateException(
-                                    "duplicate transition dimension in one channel effect"
-                            );
-                        }
-                    })
-                    .toList();
+            AftermathStateEffectPlan aftermath = storedEffect.aftermath() == null
+                    ? AftermathStateEffectPlan.none()
+                    : new AftermathStateEffectPlan(
+                            Duration.ofSeconds(storedEffect.aftermath().durationSeconds()),
+                            restoreTransitions(
+                                    storedEffect.aftermath().transitions(),
+                                    "aftermath plan"
+                            )
+                    );
             ChannelStateEffect effect = new ChannelStateEffect(
                     channel,
                     eventId,
-                    transitions
+                    restoreTransitions(storedEffect.transitions(), "activity effect"),
+                    aftermath
             );
-            if (effects.put(channel, effect) != null) {
+            if (channelEffects.put(channel, effect) != null) {
                 throw new IllegalStateException(
                         "duplicate state effect channel in stored aggregate"
                 );
             }
         }
-        return new StateEvolutionContext(document.lastUpdatedAt(), effects);
+
+        Map<EventId, ResidualStateEffect> residualEffects = new HashMap<>();
+        for (PersonAggregateDocument.ResidualEffectDocument storedEffect
+                : document.residualEffects()) {
+            EventId sourceEventId = EventId.parse(storedEffect.sourceEventId());
+            PersonEvent sourceEvent = personTimeline.getById(sourceEventId).orElseThrow(
+                    () -> new IllegalStateException(
+                            "residual effect references an unknown person event"
+                    )
+            );
+            Instant sourceEndTime = sourceEvent.getEndTime().orElseThrow(
+                    () -> new IllegalStateException(
+                            "residual effect source event must be finished"
+                    )
+            );
+            if (!sourceEndTime.equals(storedEffect.startsAt())) {
+                throw new IllegalStateException(
+                        "residual effect must start when its source event ends"
+                );
+            }
+            ResidualStateEffect effect = new ResidualStateEffect(
+                    sourceEventId,
+                    storedEffect.startsAt(),
+                    storedEffect.endsAt(),
+                    restoreTransitions(storedEffect.transitions(), "residual effect")
+            );
+            if (residualEffects.put(sourceEventId, effect) != null) {
+                throw new IllegalStateException(
+                        "duplicate residual effect source event in stored aggregate"
+                );
+            }
+        }
+
+        return new StateEvolutionContext(
+                document.lastUpdatedAt(),
+                channelEffects,
+                residualEffects
+        );
+    }
+
+    private static List<StateTransition> restoreTransitions(
+            List<PersonAggregateDocument.TransitionDocument> storedTransitions,
+            String effectName
+    ) {
+        Set<StateDimension> dimensions = new HashSet<>();
+        return storedTransitions.stream()
+                .map(storedTransition -> new StateTransition(
+                        StateDimension.valueOf(storedTransition.dimension()),
+                        storedTransition.shape()
+                ))
+                .peek(transition -> {
+                    if (!dimensions.add(transition.dimension())) {
+                        throw new IllegalStateException(
+                                "duplicate transition dimension in " + effectName
+                        );
+                    }
+                })
+                .toList();
     }
 }
