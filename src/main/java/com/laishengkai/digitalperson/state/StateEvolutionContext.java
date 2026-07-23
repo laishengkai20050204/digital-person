@@ -1,76 +1,64 @@
 package com.laishengkai.digitalperson.state;
 
-import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.EventId;
 
 import java.time.Instant;
-import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
-/**
- * Immutable runtime state required to continue deterministic state evolution.
- *
- * <p>Activity-bound effects are indexed by concurrency channel. Residual effects
- * are indexed by their source event, so they can survive event completion and
- * overlap unrelated activities and other residual effects.</p>
- */
+/** Immutable runtime state required to continue deterministic state evolution. */
 public record StateEvolutionContext(
         Instant lastUpdatedAt,
-        Map<ActivityChannel, ChannelStateEffect> channelEffects,
-        Map<EventId, ResidualStateEffect> residualEffects
+        Map<EffectId, RegisteredStateEffect> effects,
+        Set<EventId> evaluatedEventIds
 ) {
     public StateEvolutionContext(
             Instant lastUpdatedAt,
-            Map<ActivityChannel, ChannelStateEffect> channelEffects
+            Map<EffectId, RegisteredStateEffect> effects
     ) {
-        this(lastUpdatedAt, channelEffects, Map.of());
+        this(lastUpdatedAt, effects, Set.of());
     }
 
     public StateEvolutionContext {
-        Map<ActivityChannel, ChannelStateEffect> channelCopy =
-                new EnumMap<>(ActivityChannel.class);
-        Map<ActivityChannel, ChannelStateEffect> requestedChannelEffects =
-                Objects.requireNonNull(channelEffects, "channelEffects cannot be null");
-
-        requestedChannelEffects.forEach((channel, effect) -> {
-            Objects.requireNonNull(channel, "channel cannot be null");
-            ChannelStateEffect nonNullEffect = Objects.requireNonNull(
-                    effect,
-                    "effect cannot be null"
-            );
-            if (nonNullEffect.channel() != channel) {
-                throw new IllegalArgumentException("effect channel must match map key");
-            }
-            channelCopy.put(channel, nonNullEffect);
-        });
-        channelEffects = Map.copyOf(channelCopy);
-
-        Map<EventId, ResidualStateEffect> residualCopy = new HashMap<>();
-        Objects.requireNonNull(residualEffects, "residualEffects cannot be null")
-                .forEach((sourceEventId, effect) -> {
-                    EventId nonNullEventId = Objects.requireNonNull(
-                            sourceEventId,
-                            "residual effect source event id cannot be null"
+        Map<EffectId, RegisteredStateEffect> effectCopy = new HashMap<>();
+        Objects.requireNonNull(effects, "effects cannot be null")
+                .forEach((effectId, effect) -> {
+                    EffectId nonNullId = Objects.requireNonNull(
+                            effectId,
+                            "effectId cannot be null"
                     );
-                    ResidualStateEffect nonNullEffect = Objects.requireNonNull(
+                    RegisteredStateEffect nonNullEffect = Objects.requireNonNull(
                             effect,
-                            "residual effect cannot be null"
+                            "effect cannot be null"
                     );
-                    if (!nonNullEventId.equals(nonNullEffect.sourceEventId())) {
+                    if (!nonNullId.equals(nonNullEffect.effectId())) {
                         throw new IllegalArgumentException(
-                                "residual effect source event id must match map key"
+                                "effect id must match map key"
                         );
                     }
-                    residualCopy.put(nonNullEventId, nonNullEffect);
+                    effectCopy.put(nonNullId, nonNullEffect);
                 });
-        residualEffects = Map.copyOf(residualCopy);
+        effects = Map.copyOf(effectCopy);
+
+        Set<EventId> evaluatedCopy = new HashSet<>();
+        for (EventId eventId : Objects.requireNonNull(
+                evaluatedEventIds,
+                "evaluatedEventIds cannot be null"
+        )) {
+            evaluatedCopy.add(Objects.requireNonNull(
+                    eventId,
+                    "evaluated event id cannot be null"
+            ));
+        }
+        evaluatedEventIds = Set.copyOf(evaluatedCopy);
     }
 
     public static StateEvolutionContext initial() {
-        return new StateEvolutionContext(null, Map.of(), Map.of());
+        return new StateEvolutionContext(null, Map.of(), Set.of());
     }
 
     public Optional<Instant> previousUpdateTime() {
