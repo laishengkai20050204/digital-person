@@ -3,7 +3,7 @@ package com.laishengkai.digitalperson.web;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.person.PersonRepository;
-import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -39,7 +39,7 @@ public class PersonApiConfiguration {
     PersonEventCommandService personEventCommandService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
-            StateTransitionEvaluator evaluator,
+            EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
         return new PersonEventCommandService(
