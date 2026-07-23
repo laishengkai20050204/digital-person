@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.person;
 
-import com.laishengkai.digitalperson.dialogue.DialogueResult;
 import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.EventTimeline;
@@ -16,7 +15,6 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CompletionStage;
 
 /**
  * Aggregate root for one persistent digital person.
@@ -213,16 +211,6 @@ public final class Person {
             Instant now
     ) {
         userTimeline.finish(eventId, endTime, reason, now);
-    }
-
-    /**
-     * @deprecated Dialogue orchestration belongs to an application service.
-     */
-    @Deprecated(forRemoval = true)
-    public CompletionStage<DialogueResult> chatAsync(String userMessage) {
-        throw new UnsupportedOperationException(
-                "Use an application-layer chat service instead"
-        );
     }
 
     /**

@@ -1,13 +1,9 @@
 package com.laishengkai.digitalperson.dialogue;
 
-import com.laishengkai.digitalperson.person.Person;
-
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Final user-facing result returned by {@link Person#chatAsync(String)}.
- */
+/** Final user-facing dialogue result produced by application orchestration. */
 public record DialogueResult(
         String decisionSummary,
         List<String> replies

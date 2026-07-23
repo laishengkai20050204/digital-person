@@ -14,6 +14,8 @@ import com.laishengkai.digitalperson.state.CognitiveState;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PhysicalState;
 import com.laishengkai.digitalperson.state.SocialState;
+import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -28,6 +30,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static com.laishengkai.digitalperson.support.StateEffectTestFixtures.eventBoundImpact;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -49,10 +52,10 @@ class PersonEventCommandServiceTest {
                 repository,
                 context -> switch (context.newEvent().activityType()) {
                     case "EAT" -> CompletableFuture.completedFuture(
-                            List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                            eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
                     );
                     case "REST" -> CompletableFuture.completedFuture(
-                            List.of(new StateTransition(StateDimension.ENERGY, 1.0))
+                            eventBoundImpact(new StateTransition(StateDimension.ENERGY, 1.0))
                     );
                     default -> CompletableFuture.failedFuture(
                             new IllegalArgumentException("unexpected activity")
@@ -93,7 +96,7 @@ class PersonEventCommandServiceTest {
         PersonEventCommandService service = service(
                 repository,
                 context -> CompletableFuture.completedFuture(
-                        List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                        eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
                 )
         );
         PersonEvent eating = openEvent(ActivityType.EAT, "吃饭", START);
@@ -124,7 +127,7 @@ class PersonEventCommandServiceTest {
         PersonEventCommandService service = service(repository, context -> {
             evaluationCount.incrementAndGet();
             return CompletableFuture.completedFuture(
-                    List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                    eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
             );
         });
         PersonEvent historical = new PersonEvent(
@@ -155,7 +158,7 @@ class PersonEventCommandServiceTest {
     void staleStartEvaluationCannotCommitAfterConcurrentVersionChange() {
         Person person = new Person(PERSONALITY);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
-        CompletableFuture<List<StateTransition>> evaluation = new CompletableFuture<>();
+        CompletableFuture<EventStateImpact> evaluation = new CompletableFuture<>();
         PersonEventCommandService service = service(repository, context -> evaluation);
         PersonEvent eating = openEvent(ActivityType.EAT, "吃饭", START);
 
@@ -166,7 +169,7 @@ class PersonEventCommandServiceTest {
         ).toCompletableFuture();
         repository.advanceVersion(person.getId());
         evaluation.complete(
-                List.of(new StateTransition(StateDimension.HUNGER, -1.0))
+                eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
         );
 
         CompletionException error = assertThrows(CompletionException.class, pending::join);
@@ -184,7 +187,7 @@ class PersonEventCommandServiceTest {
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
-                context -> CompletableFuture.completedFuture(List.of())
+                context -> CompletableFuture.completedFuture(EventStateImpact.none())
         );
         PersonEvent pastEvent = openEvent(
                 ActivityType.REST,
@@ -207,7 +210,7 @@ class PersonEventCommandServiceTest {
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
-                context -> CompletableFuture.completedFuture(List.of())
+                context -> CompletableFuture.completedFuture(EventStateImpact.none())
         );
         Instant replacementTime = START.plusSeconds(1);
         PersonEvent replacement = openEvent(
@@ -228,7 +231,7 @@ class PersonEventCommandServiceTest {
 
     private static PersonEventCommandService service(
             PersonRepository repository,
-            com.laishengkai.digitalperson.state.StateTransitionEvaluator evaluator
+            EventStateImpactEvaluator evaluator
     ) {
         return new PersonEventCommandService(
                 repository,
