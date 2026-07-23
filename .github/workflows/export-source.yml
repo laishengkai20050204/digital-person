@@ -1,0 +1,28 @@
+name: Export source
+
+on:
+  push:
+    branches:
+      - refactor/remove-legacy-state-api
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-snapshot
+          path: |
+            .github
+            docs
+            ops
+            pom.xml
+            src
+          retention-days: 1
