@@ -10,6 +10,7 @@ import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.state.ChannelStateEffect;
 import com.laishengkai.digitalperson.state.EventStateImpact;
+import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.ResidualStateEffect;
@@ -46,13 +47,27 @@ public final class PersonEventCommandService {
 
     private final PersonRepository personRepository;
     private final StateUpdater stateUpdater;
-    private final StateTransitionEvaluator evaluator;
+    private final EventStateImpactEvaluator evaluator;
     private final StateEvaluationContextAssembler contextAssembler;
 
+    /** Compatibility constructor for active-only evaluators. */
     public PersonEventCommandService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
             StateTransitionEvaluator evaluator
+    ) {
+        this(
+                personRepository,
+                stateUpdater,
+                adapt(evaluator),
+                DefaultStateEvaluationContextAssembler.withoutExternalSources()
+        );
+    }
+
+    public PersonEventCommandService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            EventStateImpactEvaluator evaluator
     ) {
         this(
                 personRepository,
@@ -62,10 +77,20 @@ public final class PersonEventCommandService {
         );
     }
 
+    /** Compatibility constructor for active-only evaluators with custom context. */
     public PersonEventCommandService(
             PersonRepository personRepository,
             StateUpdater stateUpdater,
             StateTransitionEvaluator evaluator,
+            StateEvaluationContextAssembler contextAssembler
+    ) {
+        this(personRepository, stateUpdater, adapt(evaluator), contextAssembler);
+    }
+
+    public PersonEventCommandService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            EventStateImpactEvaluator evaluator,
             StateEvaluationContextAssembler contextAssembler
     ) {
         this.personRepository = Objects.requireNonNull(
@@ -273,11 +298,7 @@ public final class PersonEventCommandService {
         }
     }
 
-    /**
-     * Records a completed historical event without settling or replaying state.
-     * This is the explicit non-retroactive path for events discovered after they
-     * already happened.
-     */
+    /** Records a completed historical event without replaying current state. */
     public CompletionStage<PersonEventCommandResult> recordHistorical(
             PersonId personId,
             PersonEvent event,
@@ -409,6 +430,23 @@ public final class PersonEventCommandService {
         );
     }
 
+    private static EventStateImpactEvaluator adapt(StateTransitionEvaluator evaluator) {
+        StateTransitionEvaluator requestedEvaluator = Objects.requireNonNull(
+                evaluator,
+                "evaluator cannot be null"
+        );
+        return context -> Objects.requireNonNull(
+                        requestedEvaluator.evaluate(context),
+                        "evaluator stage cannot be null"
+                )
+                .thenApply(transitions -> EventStateImpact.activeOnly(
+                        List.copyOf(Objects.requireNonNull(
+                                transitions,
+                                "evaluator result cannot be null"
+                        ))
+                ));
+    }
+
     private void saveOrThrow(Person person, long expectedVersion) {
         if (!personRepository.save(person, expectedVersion)) {
             throw new PersonVersionConflictException(
@@ -418,10 +456,7 @@ public final class PersonEventCommandService {
         }
     }
 
-    /**
-     * Releases one activity channel and materializes its independent aftermath,
-     * while preserving all other activity and residual effects.
-     */
+    /** Releases one activity channel and materializes its independent aftermath. */
     private static StateEvolutionContext detachChannelEffect(
             StateEvolutionContext context,
             ActivityChannel channel,
