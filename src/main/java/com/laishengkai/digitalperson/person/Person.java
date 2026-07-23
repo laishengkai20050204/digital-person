@@ -37,6 +37,57 @@ public final class Person {
     private final EventTimeline userTimeline;
     private StateEvolutionContext stateEvolutionContext;
 
+    /** Creates a new aggregate with an unspecified identity and baseline state. */
+    public static Person create(Personality personality) {
+        return create(PersonIdentity.unspecified(), personality);
+    }
+
+    /** Creates a new aggregate with a generated id and baseline state. */
+    public static Person create(PersonIdentity identity, Personality personality) {
+        return new Person(identity, personality);
+    }
+
+    /** Reconstitutes a complete aggregate from persistence with an unspecified identity. */
+    public static Person reconstitute(
+            PersonId id,
+            Personality personality,
+            PersonState state,
+            EventTimeline personTimeline,
+            EventTimeline userTimeline,
+            StateEvolutionContext stateEvolutionContext
+    ) {
+        return reconstitute(
+                id,
+                PersonIdentity.unspecified(),
+                personality,
+                state,
+                personTimeline,
+                userTimeline,
+                stateEvolutionContext
+        );
+    }
+
+    /** Reconstitutes a complete aggregate from persistence. */
+    public static Person reconstitute(
+            PersonId id,
+            PersonIdentity identity,
+            Personality personality,
+            PersonState state,
+            EventTimeline personTimeline,
+            EventTimeline userTimeline,
+            StateEvolutionContext stateEvolutionContext
+    ) {
+        return new Person(
+                id,
+                identity,
+                personality,
+                state,
+                personTimeline,
+                userTimeline,
+                stateEvolutionContext
+        );
+    }
+
     public Person(Personality personality) {
         this(PersonIdentity.unspecified(), personality);
     }
@@ -107,10 +158,9 @@ public final class Person {
     }
 
     /**
-     * Reconstitutes a complete aggregate from persistence.
-     *
-     * <p>Every mutable value is copied so repository implementations cannot
-     * retain aliases to the aggregate's internal state.</p>
+     * Compatibility constructor for persisted aggregates without stable identity data.
+     * New persistence code should prefer {@link #reconstitute(PersonId, Personality,
+     * PersonState, EventTimeline, EventTimeline, StateEvolutionContext)}.
      */
     public Person(
             PersonId id,
@@ -131,6 +181,11 @@ public final class Person {
         );
     }
 
+    /**
+     * Compatibility constructor for complete persisted aggregates. New persistence
+     * code should prefer {@link #reconstitute(PersonId, PersonIdentity, Personality,
+     * PersonState, EventTimeline, EventTimeline, StateEvolutionContext)}.
+     */
     public Person(
             PersonId id,
             PersonIdentity identity,
@@ -163,7 +218,7 @@ public final class Person {
 
     /** Returns a fully detached aggregate copy for repository and application boundaries. */
     public Person copy() {
-        return new Person(
+        return reconstitute(
                 id,
                 identity,
                 personality,
