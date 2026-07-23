@@ -7,10 +7,10 @@ import com.laishengkai.digitalperson.dialogue.ModelToolCall;
 import com.laishengkai.digitalperson.dialogue.ModelToolSpecification;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
-import com.laishengkai.digitalperson.infrastructure.langchain4j.LanguageModelProperties;
+import com.laishengkai.digitalperson.infrastructure.diagnostics.DiagnosticsProperties;
 import com.laishengkai.digitalperson.infrastructure.state.StateTransitionEvaluationDiagnostic;
 import com.laishengkai.digitalperson.state.StateTransition;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,10 +30,9 @@ import java.util.concurrent.CompletionStage;
 /** Protected diagnostics that expose exact synthetic prompts and raw model output. */
 @RestController
 @RequestMapping("/internal/state/evaluation-diagnostics")
-@ConditionalOnProperty(
-        prefix = "digital-person.llm",
-        name = {"enabled", "connection-test.enabled"},
-        havingValue = "true"
+@ConditionalOnExpression(
+        "'${digital-person.llm.enabled:false}' == 'true' && "
+                + "'${digital-person.diagnostics.enabled:false}' == 'true'"
 )
 public final class StateEvaluationDiagnosticController {
 
@@ -44,14 +43,13 @@ public final class StateEvaluationDiagnosticController {
 
     public StateEvaluationDiagnosticController(
             StateTransitionEvaluationDiagnostic diagnostic,
-            LanguageModelProperties properties
+            DiagnosticsProperties properties
     ) {
         this.diagnostic = Objects.requireNonNull(
                 diagnostic,
                 "diagnostic cannot be null"
         );
         this.expectedToken = Objects.requireNonNull(properties, "properties cannot be null")
-                .connectionTest()
                 .requiredToken()
                 .getBytes(StandardCharsets.UTF_8);
     }

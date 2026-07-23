@@ -18,6 +18,17 @@ public final class JdbcPersonActivityScheduleRepository
         implements PersonActivityScheduleRepository {
     private static final int MAX_ERROR_TYPE_LENGTH = 128;
 
+    private static final String ENSURE_SCHEDULED_SQL = """
+            INSERT IGNORE INTO person_activity_schedule (
+                person_id,
+                enabled,
+                next_review_at,
+                failure_count,
+                created_at,
+                updated_at
+            ) VALUES (?, TRUE, ?, 0, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+            """;
+
     private static final String INITIALIZE_MISSING_SQL = """
             INSERT IGNORE INTO person_activity_schedule (
                 person_id,
@@ -107,6 +118,26 @@ public final class JdbcPersonActivityScheduleRepository
         this.jdbcTemplate = Objects.requireNonNull(
                 jdbcTemplate,
                 "jdbcTemplate cannot be null"
+        );
+    }
+
+    @Override
+    public boolean ensureScheduled(PersonId personId, Instant firstReviewAt) {
+        PersonId requestedPersonId = Objects.requireNonNull(
+                personId,
+                "personId cannot be null"
+        );
+        Instant reviewAt = Objects.requireNonNull(
+                firstReviewAt,
+                "firstReviewAt cannot be null"
+        );
+        return exactlyOneOrNone(
+                jdbcTemplate.update(
+                        ENSURE_SCHEDULED_SQL,
+                        requestedPersonId.toString(),
+                        Timestamp.from(reviewAt)
+                ),
+                "activity schedule provisioning"
         );
     }
 

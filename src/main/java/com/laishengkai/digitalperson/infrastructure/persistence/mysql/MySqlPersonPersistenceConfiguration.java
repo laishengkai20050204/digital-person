@@ -4,20 +4,29 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.laishengkai.digitalperson.infrastructure.scheduling.ActivitySchedulerProperties;
 import com.laishengkai.digitalperson.infrastructure.scheduling.PersonActivityScheduleRepository;
+import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
+import java.time.Clock;
 
 /** Creates the MySQL repository only when explicitly enabled. */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(MySqlPersonPersistenceProperties.class)
+@EnableConfigurationProperties({
+        MySqlPersonPersistenceProperties.class,
+        ActivitySchedulerProperties.class
+})
 @ConditionalOnProperty(
         prefix = "digital-person.persistence.mysql",
         name = "enabled",
@@ -58,6 +67,21 @@ public class MySqlPersonPersistenceConfiguration {
         return new JdbcTemplate(dataSource);
     }
 
+    @Bean(name = "personTransactionManager")
+    DataSourceTransactionManager personTransactionManager(
+            @Qualifier("personDataSource") DataSource dataSource
+    ) {
+        return new DataSourceTransactionManager(dataSource);
+    }
+
+    @Bean(name = "personTransactionTemplate")
+    TransactionTemplate personTransactionTemplate(
+            @Qualifier("personTransactionManager")
+            DataSourceTransactionManager transactionManager
+    ) {
+        return new TransactionTemplate(transactionManager);
+    }
+
     @Bean
     PersonAggregateJsonMapper personAggregateJsonMapper() {
         return new PersonAggregateJsonMapper(
@@ -80,5 +104,27 @@ public class MySqlPersonPersistenceConfiguration {
             @Qualifier("personJdbcTemplate") JdbcTemplate jdbcTemplate
     ) {
         return new JdbcPersonActivityScheduleRepository(jdbcTemplate);
+    }
+
+    /**
+     * Primary creation capability: aggregate insertion and first schedule provisioning
+     * commit or roll back together on the same MySQL datasource.
+     */
+    @Bean
+    @Primary
+    PersonCreationRepository scheduledPersonCreationRepository(
+            JdbcPersonRepository personRepository,
+            PersonActivityScheduleRepository scheduleRepository,
+            ActivitySchedulerProperties schedulerProperties,
+            Clock clock,
+            @Qualifier("personTransactionTemplate") TransactionTemplate transactionTemplate
+    ) {
+        return new ScheduledPersonCreationRepository(
+                personRepository,
+                scheduleRepository,
+                schedulerProperties,
+                clock,
+                transactionTemplate
+        );
     }
 }

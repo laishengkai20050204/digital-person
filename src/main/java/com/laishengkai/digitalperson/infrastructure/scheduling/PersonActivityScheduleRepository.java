@@ -1,11 +1,20 @@
 package com.laishengkai.digitalperson.infrastructure.scheduling;
 
+import com.laishengkai.digitalperson.person.PersonId;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
 /** Persistent queue and lease boundary for autonomous activity decisions. */
 public interface PersonActivityScheduleRepository {
+
+    /**
+     * Idempotently creates the first schedule for one persisted person.
+     *
+     * @return {@code true} when a row was inserted, {@code false} when it already existed
+     */
+    boolean ensureScheduled(PersonId personId, Instant firstReviewAt);
 
     /** Creates a first schedule for every persisted person that has no schedule row yet. */
     int initializeMissing(Instant firstReviewAt);

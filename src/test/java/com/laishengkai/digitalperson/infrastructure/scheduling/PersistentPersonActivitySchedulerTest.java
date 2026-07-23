@@ -17,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,7 +29,7 @@ class PersistentPersonActivitySchedulerTest {
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
     @Test
-    void initializesClaimsAndPersistsTheNextSuccessfulReview() {
+    void claimsWithoutScanningAllPersonsAndPersistsTheNextSuccessfulReview() {
         PersonActivityScheduleRepository repository = mock(
                 PersonActivityScheduleRepository.class
         );
@@ -67,7 +68,7 @@ class PersistentPersonActivitySchedulerTest {
         );
         scheduler.poll();
 
-        verify(repository).initializeMissing(NOW.plus(Duration.ofMinutes(1)));
+        verify(repository, never()).initializeMissing(any());
         verify(service).decide(personId, NOW, DEADLINE);
         verify(repository).completeSuccess(
                 lease,
@@ -76,6 +77,27 @@ class PersistentPersonActivitySchedulerTest {
         );
         verify(handle).close();
         assertEquals(0, scheduler.inFlightCount());
+    }
+
+    @Test
+    void reconciliationRepairsMissingRowsSeparatelyFromPolling() {
+        PersonActivityScheduleRepository repository = mock(
+                PersonActivityScheduleRepository.class
+        );
+        when(repository.initializeMissing(NOW.plus(Duration.ofMinutes(1))))
+                .thenReturn(2);
+        PersistentPersonActivityScheduler scheduler = new PersistentPersonActivityScheduler(
+                repository,
+                mock(PersonActivityDecisionService.class),
+                mock(PersonActivityLeaseHeartbeat.class),
+                properties(),
+                CLOCK
+        );
+
+        scheduler.reconcileMissingSchedules();
+
+        verify(repository).initializeMissing(NOW.plus(Duration.ofMinutes(1)));
+        verify(repository, never()).claimDue(any(), anyInt(), any());
     }
 
     @Test
