@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.state;
 
-import java.util.List;
 import java.util.concurrent.CompletionStage;
 
 /**
@@ -10,5 +9,5 @@ import java.util.concurrent.CompletionStage;
  */
 @FunctionalInterface
 public interface StateTransitionEvaluator {
-    CompletionStage<List<StateTransition>> evaluate(StateEvaluationContext context);
+    CompletionStage<EventStateImpact> evaluate(StateEvaluationContext context);
 }
