@@ -10,12 +10,25 @@ import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import com.laishengkai.digitalperson.person.Person;
+import com.laishengkai.digitalperson.person.PersonIdentity;
 import com.laishengkai.digitalperson.personality.Personality;
+import com.laishengkai.digitalperson.state.EffectId;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
+import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
+import com.laishengkai.digitalperson.state.StateEvolutionContext;
+import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -28,7 +41,19 @@ class DefaultStateEvaluationContextAssemblerTest {
 
     @Test
     void assemblesPersonalityEventsMemoryConversationAndRuntimeTime() {
-        Person person = new Person(new Personality(0.6, 0.8, 0.4, 0.7, 0.9, 0.5));
+        Person person = new Person(
+                new PersonIdentity(
+                        "沈知夏",
+                        LocalDate.parse("2006-04-18"),
+                        "女性",
+                        "上海",
+                        ZoneId.of("Asia/Shanghai"),
+                        Locale.SIMPLIFIED_CHINESE,
+                        List.of("大学生", "视觉传达专业学生"),
+                        "大三学生"
+                ),
+                new Personality(0.6, 0.8, 0.4, 0.7, 0.9, 0.5)
+        );
         PersonEvent study = event(ActivityType.STUDY, "Prepare exam", 600);
         PersonEvent music = event(ActivityType.LISTEN_MUSIC, "Background music", 500);
         PersonEvent userChat = event(ActivityType.CHAT, "User sent a message", 60);
@@ -49,6 +74,23 @@ class DefaultStateEvaluationContextAssemblerTest {
         person.startPersonEvent(study, NOW);
         person.startPersonEvent(music, NOW);
         person.startUserEvent(userChat, NOW);
+
+        RegisteredStateEffect musicEffect = new RegisteredStateEffect(
+                EffectId.random(),
+                music.getId(),
+                StateEffectType.EMOTIONAL,
+                "轻音乐带来放松感",
+                music.getStartTime(),
+                StateEffectEndPolicy.EVENT_END,
+                null,
+                List.of(new StateTransition(StateDimension.TENSION, -0.4))
+        );
+        StateEvolutionContext evolution = new StateEvolutionContext(
+                NOW.minusSeconds(300),
+                Map.of(musicEffect.effectId(), musicEffect),
+                Set.of(music.getId())
+        );
+        person.commitStateUpdate(person.getState(), evolution);
 
         AtomicReference<PersonMemoryQuery> receivedQuery = new AtomicReference<>();
         DefaultStateEvaluationContextAssembler assembler =
@@ -78,12 +120,19 @@ class DefaultStateEvaluationContextAssemblerTest {
         StateEvaluationContext context = assembler.assemble(
                 person,
                 person.getStateSnapshot(),
+                evolution,
                 study,
                 NOW
         ).toCompletableFuture().join();
 
         assertEquals(person.getId(), context.personId());
+        assertEquals("沈知夏", context.identity().displayName());
+        assertEquals(20, context.identity().age());
+        assertEquals("Asia/Shanghai", context.identity().timeZone());
         assertEquals(0.8, context.personality().emotionality());
+        assertEquals(1, context.activeEffects().size());
+        assertEquals("轻音乐带来放松感", context.activeEffects().getFirst().cause());
+        assertEquals(music.getId().toString(), context.activeEffects().getFirst().sourceEventId());
         assertEquals(NOW, context.evaluationTime());
         assertEquals(1, context.memory().items().size());
         assertEquals(1, context.recentConversation().size());
