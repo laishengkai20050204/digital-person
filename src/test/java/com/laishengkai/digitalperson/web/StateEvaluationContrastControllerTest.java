@@ -28,7 +28,7 @@ class StateEvaluationContrastControllerTest {
     @Test
     void shouldListThreeProtectedContrastGroups() {
         StateEvaluationContrastController controller = controller(request ->
-                CompletableFuture.completedFuture(response("{\"transitions\":[]}"))
+                CompletableFuture.completedFuture(response(emptyImpact()))
         );
 
         assertEquals(
@@ -55,10 +55,15 @@ class StateEvaluationContrastControllerTest {
         StateEvaluationContrastController controller = controller(request -> {
             captured.set(request);
             return CompletableFuture.completedFuture(response("""
-                    {"transitions":[
-                      {"dimension":"VALENCE","shape":-0.45},
-                      {"dimension":"TENSION","shape":0.50}
-                    ]}
+                    {
+                      "activeTransitions":[
+                        {"dimension":"TENSION","shape":0.50}
+                      ],
+                      "aftermathTransitions":[
+                        {"dimension":"VALENCE","shape":-0.45}
+                      ],
+                      "aftermathDurationMinutes":240
+                    }
                     """.strip()));
         });
 
@@ -132,5 +137,15 @@ class StateEvaluationContrastControllerTest {
                 ModelFinishReason.TOOL_CALLS,
                 new ModelUsage(900, 80, 980)
         );
+    }
+
+    private static String emptyImpact() {
+        return """
+                {
+                  "activeTransitions":[],
+                  "aftermathTransitions":[],
+                  "aftermathDurationMinutes":0
+                }
+                """.strip();
     }
 }
