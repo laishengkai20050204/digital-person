@@ -12,12 +12,8 @@ import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
-import java.util.stream.Stream;
 
-/**
- * Executes the exact production state-evaluation protocol while retaining the
- * full provider-neutral request and raw response for internal diagnostics.
- */
+/** Executes the production state-effect protocol and retains request and response diagnostics. */
 public final class StateTransitionEvaluationDiagnostic {
 
     private static final int MAX_DIAGNOSTIC_MESSAGE_LENGTH = 1_000;
@@ -55,7 +51,6 @@ public final class StateTransitionEvaluationDiagnostic {
             if (invocationError != null) {
                 return Result.failure(request, response, invocationError);
             }
-
             try {
                 EventStateImpact impact =
                         LanguageModelStateTransitionEvaluator.parseResponse(response);
@@ -91,7 +86,6 @@ public final class StateTransitionEvaluationDiagnostic {
         if (message.isEmpty()) {
             return "";
         }
-
         String redacted = message
                 .replaceAll("(?i)Bearer\\s+[^\\s,;]+", "Bearer <redacted>")
                 .replaceAll("\\bsk-[A-Za-z0-9_-]{8,}\\b", "<redacted>");
@@ -109,16 +103,14 @@ public final class StateTransitionEvaluationDiagnostic {
         if (rootCause == exposedError) {
             return outerMessage;
         }
-
         String rootType = rootCause.getClass().getSimpleName();
         String rootMessage = safeMessage(rootCause);
         String rootDetails = rootMessage.isEmpty()
                 ? rootType
                 : rootType + ": " + rootMessage;
-        if (outerMessage.isEmpty()) {
-            return "rootCause=" + rootDetails;
-        }
-        return outerMessage + " | rootCause=" + rootDetails;
+        return outerMessage.isEmpty()
+                ? "rootCause=" + rootDetails
+                : outerMessage + " | rootCause=" + rootDetails;
     }
 
     private static String normalize(String value) {
@@ -176,12 +168,11 @@ public final class StateTransitionEvaluationDiagnostic {
             );
         }
 
-        /** Compatibility view used by existing direction-based diagnostic expectations. */
+        /** Compatibility view used by direction-based diagnostic expectations. */
         public List<StateTransition> transitions() {
-            return Stream.concat(
-                    impact.activeTransitions().stream(),
-                    impact.aftermath().transitions().stream()
-            ).toList();
+            return impact.effects().stream()
+                    .flatMap(effect -> effect.transitions().stream())
+                    .toList();
         }
 
         public boolean successful() {
