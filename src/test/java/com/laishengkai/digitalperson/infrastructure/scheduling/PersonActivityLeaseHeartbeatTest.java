@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -30,16 +31,15 @@ class PersonActivityLeaseHeartbeatTest {
                 PersonActivityScheduleRepository.class
         );
         TaskScheduler taskScheduler = mock(TaskScheduler.class);
-        @SuppressWarnings("unchecked")
-        ScheduledFuture<Object> future = mock(ScheduledFuture.class);
+        ScheduledFuture<?> future = mock(ScheduledFuture.class);
         PersonActivityScheduleLease lease = lease();
         ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
 
-        when(taskScheduler.scheduleAtFixedRate(
+        doReturn(future).when(taskScheduler).scheduleAtFixedRate(
                 task.capture(),
                 eq(NOW.plus(Duration.ofMinutes(2))),
                 eq(Duration.ofMinutes(2))
-        )).thenReturn(future);
+        );
         when(repository.renewLease(
                 lease,
                 NOW.plus(Duration.ofMinutes(10)),
@@ -71,16 +71,15 @@ class PersonActivityLeaseHeartbeatTest {
                 PersonActivityScheduleRepository.class
         );
         TaskScheduler taskScheduler = mock(TaskScheduler.class);
-        @SuppressWarnings("unchecked")
-        ScheduledFuture<Object> future = mock(ScheduledFuture.class);
+        ScheduledFuture<?> future = mock(ScheduledFuture.class);
         PersonActivityScheduleLease lease = lease();
         ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
 
-        when(taskScheduler.scheduleAtFixedRate(
+        doReturn(future).when(taskScheduler).scheduleAtFixedRate(
                 task.capture(),
                 any(Instant.class),
                 eq(Duration.ofMinutes(2))
-        )).thenReturn(future);
+        );
         when(repository.renewLease(any(), any(), any())).thenReturn(false);
 
         PersonActivityLeaseHeartbeat heartbeat = new PersonActivityLeaseHeartbeat(
