@@ -1,6 +1,8 @@
 package com.laishengkai.digitalperson.infrastructure.context;
 
+import com.laishengkai.digitalperson.application.DefaultPersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.DefaultStateEvaluationContextAssembler;
+import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.conversation.NoOpRecentConversationGateway;
@@ -27,14 +29,22 @@ public class StateEvaluationContextConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(StateEvaluationContextAssembler.class)
-    StateEvaluationContextAssembler stateEvaluationContextAssembler(
+    @ConditionalOnMissingBean(PersonModelContextAssembler.class)
+    PersonModelContextAssembler personModelContextAssembler(
             PersonMemoryGateway memoryGateway,
             RecentConversationGateway conversationGateway
     ) {
-        return new DefaultStateEvaluationContextAssembler(
+        return new DefaultPersonModelContextAssembler(
                 memoryGateway,
                 conversationGateway
         );
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(StateEvaluationContextAssembler.class)
+    StateEvaluationContextAssembler stateEvaluationContextAssembler(
+            PersonModelContextAssembler commonAssembler
+    ) {
+        return new DefaultStateEvaluationContextAssembler(commonAssembler);
     }
 }
