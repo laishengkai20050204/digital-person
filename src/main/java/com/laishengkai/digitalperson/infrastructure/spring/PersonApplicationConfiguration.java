@@ -39,17 +39,9 @@ public class PersonApplicationConfiguration {
         return DefaultStateEvaluationContextAssembler.withoutExternalSources();
     }
 
-    /**
-     * The protected person API owns the directory boundary explicitly. Required
-     * persistence dependencies are constructor-resolved so an enabled API fails
-     * startup clearly instead of silently omitting routes because of configuration order.
-     */
+    /** Directory capability exists only when both read and create persistence ports exist. */
     @Bean
-    @ConditionalOnProperty(
-            prefix = "digital-person.person-api",
-            name = "enabled",
-            havingValue = "true"
-    )
+    @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
     @ConditionalOnMissingBean(PersonDirectoryService.class)
     PersonDirectoryService personDirectoryService(
             PersonRepository personRepository,
@@ -77,8 +69,8 @@ public class PersonApplicationConfiguration {
 
     /**
      * Core person-event application services are owned here, not by the web adapter.
-     * Property-based registration avoids the previous order-sensitive ConditionalOnBean
-     * path while keeping the API disabled by default.
+     * Property-based registration avoids the previous duplicate, order-sensitive web
+     * fallback while keeping the protected API disabled by default.
      */
     @Bean
     @ConditionalOnProperty(
