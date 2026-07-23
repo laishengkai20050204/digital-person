@@ -129,6 +129,22 @@ class StateTransitionModelTest {
         );
         assertThrows(
                 IllegalArgumentException.class,
+                () -> new StateTransition(
+                        StateDimension.HUNGER,
+                        StateTransition.MAX_ABSOLUTE_SHAPE + 0.01
+                )
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> model.calculate(
+                        StateDimension.HUNGER,
+                        0.5,
+                        -(StateTransition.MAX_ABSOLUTE_SHAPE + 0.01),
+                        Duration.ofMinutes(1)
+                )
+        );
+        assertThrows(
+                IllegalArgumentException.class,
                 () -> model.calculate(
                         StateDimension.HUNGER,
                         -0.1,
