@@ -4,12 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
-/**
- * Stable JSON document persisted for one complete digital-person aggregate.
- *
- * <p>This type belongs exclusively to the MySQL adapter. Domain objects remain
- * unaware of Jackson, JDBC, database columns and document-schema evolution.</p>
- */
+/** Stable adapter-owned JSON document for one complete digital-person aggregate. */
 record PersonAggregateDocument(
         int schemaVersion,
         String personId,
@@ -87,17 +82,50 @@ record PersonAggregateDocument(
         }
     }
 
+    /**
+     * Schema v3 uses effects/evaluatedEventIds. channelEffects/residualEffects are retained
+     * only so schema v1 and v2 documents remain readable.
+     */
     record StateEvolutionDocument(
             Instant lastUpdatedAt,
+            List<StateEffectDocument> effects,
+            List<String> evaluatedEventIds,
             List<ChannelEffectDocument> channelEffects,
             List<ResidualEffectDocument> residualEffects
     ) {
         StateEvolutionDocument {
+            effects = copyNullable(effects, "effects");
+            evaluatedEventIds = copyNullable(evaluatedEventIds, "evaluatedEventIds");
             channelEffects = copyNullable(channelEffects, "channelEffects");
             residualEffects = copyNullable(residualEffects, "residualEffects");
         }
     }
 
+    record StateEffectDocument(
+            String effectId,
+            String sourceEventId,
+            String type,
+            String cause,
+            Instant startsAt,
+            String endPolicy,
+            Instant fixedEndsAt,
+            List<TransitionDocument> transitions
+    ) {
+        StateEffectDocument {
+            effectId = requireText(effectId, "effectId");
+            sourceEventId = normalizeNullable(sourceEventId);
+            type = requireText(type, "type");
+            cause = requireText(cause, "cause");
+            startsAt = Objects.requireNonNull(startsAt, "startsAt cannot be null");
+            endPolicy = requireText(endPolicy, "endPolicy");
+            transitions = copy(transitions, "transitions");
+            if (transitions.isEmpty()) {
+                throw new IllegalArgumentException("state effect transitions cannot be empty");
+            }
+        }
+    }
+
+    /** Legacy schema v1/v2 activity-bound effect. */
     record ChannelEffectDocument(
             String channel,
             String eventId,
@@ -111,6 +139,7 @@ record PersonAggregateDocument(
         }
     }
 
+    /** Legacy schema v2 pending aftermath plan. */
     record AftermathPlanDocument(
             long durationSeconds,
             List<TransitionDocument> transitions
@@ -128,6 +157,7 @@ record PersonAggregateDocument(
         }
     }
 
+    /** Legacy schema v2 independent residual effect. */
     record ResidualEffectDocument(
             String sourceEventId,
             Instant startsAt,
