@@ -6,11 +6,12 @@ import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
-import com.laishengkai.digitalperson.state.ChannelStateEffect;
+import com.laishengkai.digitalperson.state.EventEffectRegistration;
 import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
+import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransitionEvaluator;
@@ -50,6 +51,19 @@ public final class UpdatePersonStateService {
                 personRepository,
                 stateUpdater,
                 adapt(evaluator),
+                DefaultStateEvaluationContextAssembler.withoutExternalSources()
+        );
+    }
+
+    public UpdatePersonStateService(
+            PersonRepository personRepository,
+            StateUpdater stateUpdater,
+            EventStateImpactEvaluator evaluator
+    ) {
+        this(
+                personRepository,
+                stateUpdater,
+                evaluator,
                 DefaultStateEvaluationContextAssembler.withoutExternalSources()
         );
     }
@@ -104,37 +118,29 @@ public final class UpdatePersonStateService {
 
         try {
             VersionedPerson loadedPerson = personRepository.findById(requestedPersonId)
-                    .orElseThrow(() -> {
-                        LOGGER.warn(
-                                "Cannot update missing person: personId={}",
-                                requestedPersonId
-                        );
-                        return new PersonNotFoundException(requestedPersonId);
-                    });
+                    .orElseThrow(() -> new PersonNotFoundException(requestedPersonId));
             Person person = loadedPerson.person().copy();
             long expectedVersion = loadedPerson.version();
 
             PersonState workingState = person.getState();
-            StateEvolutionContext existingContext = person.getStateEvolutionContext();
             StateUpdatePreparation preparation = stateUpdater.prepare(
                     workingState,
                     person.getCurrentPersonEvents(currentTime),
                     currentTime,
-                    existingContext,
-                    cachedEffectEndTimes(person, existingContext)
+                    person.getStateEvolutionContext(),
+                    eventEndTimes(person)
             );
             PersonStateSnapshot evaluationSnapshot = workingState.snapshot();
 
             LOGGER.debug(
-                    "Prepared person state update: personId={}, expectedVersion={}, pendingChannels={}, retainedActivityEffectCount={}, retainedResidualEffectCount={}",
+                    "Prepared person state update: personId={}, expectedVersion={}, pendingChannels={}, retainedEffectCount={}",
                     requestedPersonId,
                     expectedVersion,
                     preparation.pendingEvents().keySet(),
-                    preparation.settledContext().channelEffects().size(),
-                    preparation.settledContext().residualEffects().size()
+                    preparation.settledContext().effects().size()
             );
 
-            List<CompletableFuture<ChannelStateEffect>> evaluations =
+            List<CompletableFuture<EventEffectRegistration>> evaluations =
                     preparation.eventsToEvaluate().stream()
                             .map(event -> evaluate(
                                     person,
@@ -150,16 +156,17 @@ public final class UpdatePersonStateService {
             );
 
             CompletionStage<StateUpdateResult> updateStage = allEvaluations.thenApply(ignored -> {
-                List<ChannelStateEffect> effects = new ArrayList<>(evaluations.size());
-                for (CompletableFuture<ChannelStateEffect> evaluation : evaluations) {
-                    effects.add(evaluation.join());
+                List<EventEffectRegistration> registrations = new ArrayList<>(
+                        evaluations.size()
+                );
+                for (CompletableFuture<EventEffectRegistration> evaluation : evaluations) {
+                    registrations.add(evaluation.join());
                 }
 
                 StateEvolutionContext completedContext = stateUpdater.complete(
                         preparation,
-                        effects
+                        registrations
                 );
-
                 person.commitStateUpdate(workingState, completedContext);
                 if (!personRepository.save(person, expectedVersion)) {
                     throw new PersonVersionConflictException(
@@ -206,14 +213,14 @@ public final class UpdatePersonStateService {
         }
     }
 
-    private CompletionStage<ChannelStateEffect> evaluate(
+    private CompletionStage<EventEffectRegistration> evaluate(
             Person person,
             PersonStateSnapshot state,
             PersonEvent event,
             Instant evaluationTime
     ) {
         LOGGER.debug(
-                "Evaluating event state effect: eventId={}, channel={}, activityType={}",
+                "Evaluating event effects: eventId={}, channel={}, activityType={}",
                 event.getId(),
                 event.getChannel(),
                 event.getActivityType()
@@ -236,33 +243,33 @@ public final class UpdatePersonStateService {
                         )),
                         "evaluator stage cannot be null"
                 ))
-                .thenApply(impact -> toChannelEffect(event, impact));
+                .thenApply(impact -> toRegistration(event, evaluationTime, impact));
     }
 
-    private static ChannelStateEffect toChannelEffect(
+    private static EventEffectRegistration toRegistration(
             PersonEvent event,
+            Instant evaluationTime,
             EventStateImpact impact
     ) {
         EventStateImpact safeImpact = Objects.requireNonNull(
                 impact,
                 "evaluator result cannot be null"
         );
+        List<RegisteredStateEffect> effects = safeImpact.effects().stream()
+                .map(draft -> RegisteredStateEffect.fromDraft(
+                        draft,
+                        event.getId(),
+                        evaluationTime
+                ))
+                .toList();
 
         LOGGER.debug(
-                "Evaluated event state effect: eventId={}, channel={}, activeTransitionCount={}, aftermathTransitionCount={}, aftermathDuration={}",
+                "Evaluated event effects: eventId={}, channel={}, effectCount={}",
                 event.getId(),
                 event.getChannel(),
-                safeImpact.activeTransitions().size(),
-                safeImpact.aftermath().transitions().size(),
-                safeImpact.aftermath().duration()
+                effects.size()
         );
-
-        return new ChannelStateEffect(
-                event.getChannel(),
-                event.getId(),
-                safeImpact.activeTransitions(),
-                safeImpact.aftermath()
-        );
+        return new EventEffectRegistration(event.getId(), effects);
     }
 
     private static EventStateImpactEvaluator adapt(StateTransitionEvaluator evaluator) {
@@ -282,15 +289,12 @@ public final class UpdatePersonStateService {
                 ));
     }
 
-    private static Map<EventId, Instant> cachedEffectEndTimes(
-            Person person,
-            StateEvolutionContext context
-    ) {
+    private static Map<EventId, Instant> eventEndTimes(Person person) {
         Map<EventId, Instant> endTimes = new HashMap<>();
-        context.channelEffects().values().forEach(effect ->
-                person.getPersonEventById(effect.eventId())
-                        .flatMap(PersonEvent::getEndTime)
-                        .ifPresent(endTime -> endTimes.put(effect.eventId(), endTime))
+        person.getPersonTimeline().getAll().forEach(event ->
+                event.getEndTime().ifPresent(endTime ->
+                        endTimes.put(event.getId(), endTime)
+                )
         );
         return Map.copyOf(endTimes);
     }
