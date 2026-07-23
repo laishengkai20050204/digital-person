@@ -31,8 +31,10 @@ class PersistentPersonActivitySchedulerTest {
                 PersonActivityScheduleRepository.class
         );
         PersonActivityDecisionService service = mock(PersonActivityDecisionService.class);
+        PersonActivityLeaseHeartbeat heartbeat = mock(PersonActivityLeaseHeartbeat.class);
         PersonId personId = PersonId.random();
         PersonActivityScheduleLease lease = lease(personId, 0);
+        PersonActivityLeaseHeartbeat.LeaseHandle handle = ownedHandle();
         PersonActivityDecisionResult result = mock(PersonActivityDecisionResult.class);
         PersonActivityDecisionPlan plan = mock(PersonActivityDecisionPlan.class);
 
@@ -41,6 +43,7 @@ class PersistentPersonActivitySchedulerTest {
                 4,
                 Duration.ofMinutes(10)
         )).thenReturn(List.of(lease));
+        when(heartbeat.start(lease)).thenReturn(handle);
         when(service.decide(personId, NOW)).thenReturn(
                 CompletableFuture.completedFuture(result)
         );
@@ -56,6 +59,7 @@ class PersistentPersonActivitySchedulerTest {
         PersistentPersonActivityScheduler scheduler = new PersistentPersonActivityScheduler(
                 repository,
                 service,
+                heartbeat,
                 properties(),
                 CLOCK
         );
@@ -68,6 +72,7 @@ class PersistentPersonActivitySchedulerTest {
                 NOW.plus(Duration.ofMinutes(15)),
                 NOW
         );
+        verify(handle).close();
         assertEquals(0, scheduler.inFlightCount());
     }
 
@@ -77,14 +82,17 @@ class PersistentPersonActivitySchedulerTest {
                 PersonActivityScheduleRepository.class
         );
         PersonActivityDecisionService service = mock(PersonActivityDecisionService.class);
+        PersonActivityLeaseHeartbeat heartbeat = mock(PersonActivityLeaseHeartbeat.class);
         PersonId personId = PersonId.random();
         PersonActivityScheduleLease lease = lease(personId, 3);
+        PersonActivityLeaseHeartbeat.LeaseHandle handle = ownedHandle();
 
         when(repository.claimDue(
                 NOW,
                 4,
                 Duration.ofMinutes(10)
         )).thenReturn(List.of(lease));
+        when(heartbeat.start(lease)).thenReturn(handle);
         when(service.decide(personId, NOW)).thenReturn(
                 CompletableFuture.failedFuture(
                         new PersonVersionConflictException(personId, 4)
@@ -94,6 +102,7 @@ class PersistentPersonActivitySchedulerTest {
         PersistentPersonActivityScheduler scheduler = new PersistentPersonActivityScheduler(
                 repository,
                 service,
+                heartbeat,
                 properties(),
                 CLOCK
         );
@@ -110,6 +119,7 @@ class PersistentPersonActivitySchedulerTest {
                 "PersonVersionConflictException",
                 NOW
         );
+        verify(handle).close();
         assertEquals(0, scheduler.inFlightCount());
     }
 
@@ -119,14 +129,17 @@ class PersistentPersonActivitySchedulerTest {
                 PersonActivityScheduleRepository.class
         );
         PersonActivityDecisionService service = mock(PersonActivityDecisionService.class);
+        PersonActivityLeaseHeartbeat heartbeat = mock(PersonActivityLeaseHeartbeat.class);
         PersonId personId = PersonId.random();
         PersonActivityScheduleLease lease = lease(personId, 3);
+        PersonActivityLeaseHeartbeat.LeaseHandle handle = ownedHandle();
 
         when(repository.claimDue(
                 NOW,
                 4,
                 Duration.ofMinutes(10)
         )).thenReturn(List.of(lease));
+        when(heartbeat.start(lease)).thenReturn(handle);
         when(service.decide(personId, NOW)).thenReturn(
                 CompletableFuture.failedFuture(new IllegalStateException("provider unavailable"))
         );
@@ -134,6 +147,7 @@ class PersistentPersonActivitySchedulerTest {
         PersistentPersonActivityScheduler scheduler = new PersistentPersonActivityScheduler(
                 repository,
                 service,
+                heartbeat,
                 properties(),
                 CLOCK
         );
@@ -145,7 +159,58 @@ class PersistentPersonActivitySchedulerTest {
                 "IllegalStateException",
                 NOW
         );
+        verify(handle).close();
         assertEquals(0, scheduler.inFlightCount());
+    }
+
+    @Test
+    void lostLeaseSkipsQueueCompletion() {
+        PersonActivityScheduleRepository repository = mock(
+                PersonActivityScheduleRepository.class
+        );
+        PersonActivityDecisionService service = mock(PersonActivityDecisionService.class);
+        PersonActivityLeaseHeartbeat heartbeat = mock(PersonActivityLeaseHeartbeat.class);
+        PersonId personId = PersonId.random();
+        PersonActivityScheduleLease lease = lease(personId, 0);
+        PersonActivityLeaseHeartbeat.LeaseHandle handle = mock(
+                PersonActivityLeaseHeartbeat.LeaseHandle.class
+        );
+        PersonActivityDecisionResult result = mock(PersonActivityDecisionResult.class);
+
+        when(repository.claimDue(NOW, 4, Duration.ofMinutes(10)))
+                .thenReturn(List.of(lease));
+        when(heartbeat.start(lease)).thenReturn(handle);
+        when(handle.leaseOwned()).thenReturn(false);
+        when(service.decide(personId, NOW)).thenReturn(
+                CompletableFuture.completedFuture(result)
+        );
+
+        PersistentPersonActivityScheduler scheduler = new PersistentPersonActivityScheduler(
+                repository,
+                service,
+                heartbeat,
+                properties(),
+                CLOCK
+        );
+        scheduler.poll();
+
+        verify(repository, never()).completeSuccess(lease, NOW.plusSeconds(1), NOW);
+        verify(repository, never()).completeFailure(
+                lease,
+                NOW.plus(Duration.ofMinutes(5)),
+                "UnknownFailure",
+                NOW
+        );
+        verify(handle).close();
+        assertEquals(0, scheduler.inFlightCount());
+    }
+
+    private static PersonActivityLeaseHeartbeat.LeaseHandle ownedHandle() {
+        PersonActivityLeaseHeartbeat.LeaseHandle handle = mock(
+                PersonActivityLeaseHeartbeat.LeaseHandle.class
+        );
+        when(handle.leaseOwned()).thenReturn(true);
+        return handle;
     }
 
     private static PersonActivityScheduleLease lease(PersonId personId, int failureCount) {
@@ -167,6 +232,8 @@ class PersistentPersonActivitySchedulerTest {
                 Duration.ofMinutes(1),
                 Duration.ofSeconds(30),
                 Duration.ofMinutes(10),
+                Duration.ofMinutes(2),
+                Duration.ofMinutes(8),
                 Duration.ofMinutes(5),
                 Duration.ofHours(1),
                 10,
