@@ -8,7 +8,6 @@ import com.laishengkai.digitalperson.application.PersonActivityDecisionService;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.state.RegisteredStateEffect;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,7 +31,6 @@ import java.util.concurrent.CompletionStage;
 /** Token-protected trigger for one autonomous person activity decision cycle. */
 @RestController
 @RequestMapping("/api/persons/{personId}/activity-decisions")
-@ConditionalOnBean(PersonActivityDecisionService.class)
 @ConditionalOnProperty(
         prefix = "digital-person.person-api",
         name = "enabled",
