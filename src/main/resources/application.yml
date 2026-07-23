@@ -35,6 +35,8 @@ digital-person:
     enabled: ${ACTIVITY_SCHEDULER_ENABLED:false}
     poll-interval: ${ACTIVITY_SCHEDULER_POLL_INTERVAL:10s}
     initial-delay: ${ACTIVITY_SCHEDULER_INITIAL_DELAY:30s}
+    reconciliation-interval: ${ACTIVITY_SCHEDULER_RECONCILIATION_INTERVAL:1h}
+    reconciliation-initial-delay: ${ACTIVITY_SCHEDULER_RECONCILIATION_INITIAL_DELAY:5s}
     initial-review-delay: ${ACTIVITY_SCHEDULER_INITIAL_REVIEW_DELAY:1m}
     minimum-review-delay: ${ACTIVITY_SCHEDULER_MINIMUM_REVIEW_DELAY:1m}
     conflict-retry-delay: ${ACTIVITY_SCHEDULER_CONFLICT_RETRY_DELAY:30s}
@@ -45,6 +47,9 @@ digital-person:
     max-failure-backoff: ${ACTIVITY_SCHEDULER_MAX_FAILURE_BACKOFF:1h}
     batch-size: ${ACTIVITY_SCHEDULER_BATCH_SIZE:10}
     max-in-flight: ${ACTIVITY_SCHEDULER_MAX_IN_FLIGHT:4}
+  diagnostics:
+    enabled: ${DIAGNOSTICS_ENABLED:false}
+    token: ${DIAGNOSTICS_TOKEN:}
   llm:
     enabled: ${LLM_ENABLED:false}
     base-url: ${LLM_BASE_URL:https://openrouter.ai/api/v1}
