@@ -16,7 +16,8 @@ public record PersonStateDetails(
         long version,
         PersonStateSnapshot state,
         Instant lastUpdatedAt,
-        Set<ActivityChannel> activeEffectChannels
+        Set<ActivityChannel> activeEffectChannels,
+        int residualEffectCount
 ) {
     public PersonStateDetails {
         personId = Objects.requireNonNull(personId, "personId cannot be null");
@@ -28,6 +29,9 @@ public record PersonStateDetails(
                 activeEffectChannels,
                 "activeEffectChannels cannot be null"
         ));
+        if (residualEffectCount < 0) {
+            throw new IllegalArgumentException("residualEffectCount cannot be negative");
+        }
     }
 
     public static PersonStateDetails from(VersionedPerson versionedPerson) {
@@ -41,7 +45,8 @@ public record PersonStateDetails(
                 source.version(),
                 source.person().getStateSnapshot(),
                 context.lastUpdatedAt(),
-                context.channelEffects().keySet()
+                context.channelEffects().keySet(),
+                context.residualEffects().size()
         );
     }
 }
