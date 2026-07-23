@@ -4,7 +4,6 @@ import com.laishengkai.digitalperson.application.DefaultStateEvaluationContextAs
 import com.laishengkai.digitalperson.application.PersonDirectoryService;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
-import com.laishengkai.digitalperson.application.UpdatePersonStateService;
 import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
@@ -48,23 +47,6 @@ public class PersonApplicationConfiguration {
             PersonCreationRepository creationRepository
     ) {
         return new PersonDirectoryService(personRepository, creationRepository);
-    }
-
-    @Bean
-    @ConditionalOnBean({PersonRepository.class, EventStateImpactEvaluator.class})
-    @ConditionalOnMissingBean(UpdatePersonStateService.class)
-    UpdatePersonStateService updatePersonStateService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            EventStateImpactEvaluator evaluator,
-            StateEvaluationContextAssembler contextAssembler
-    ) {
-        return new UpdatePersonStateService(
-                personRepository,
-                stateUpdater,
-                evaluator,
-                contextAssembler
-        );
     }
 
     /**

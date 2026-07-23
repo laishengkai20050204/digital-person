@@ -39,7 +39,7 @@ public final class PersonDirectoryService {
             PersonIdentity identity,
             Personality personality
     ) {
-        Person person = new Person(
+        Person person = Person.create(
                 Objects.requireNonNull(identity, "identity cannot be null"),
                 Objects.requireNonNull(personality, "personality cannot be null")
         );
