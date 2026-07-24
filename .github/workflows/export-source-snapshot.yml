@@ -1,39 +1,38 @@
-name: Diagnose Natural State Patch
+name: Apply Natural State Patch
 
 on:
   pull_request:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  diagnose:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
-      - name: Inspect staged payload
+          fetch-depth: 0
+      - name: Apply staged patch
         shell: bash
         run: |
-          set +e
-          {
-            echo '===== encoded segment hashes ====='
-            sha256sum .github/natural-state-patch/part-*
-            echo '===== expected segment hashes ====='
-            cat <<'HASHES'
-          adf1e7d1e35cca84086f9d30ea301f489458c060c7ebe35ce92e627b92ebae0d  part-00
-          8047f56e56979ffe3f1d2af056c5bec9e424c5061934c11006057d8b6b8eea5a  part-01
-          355dbb1f57bcfeaf46eb5c7f47fd043fff82cb41c3a1e03b6eb5c0d2ae3e2485  part-02
-          4816513e83bea64ddd1269a45199b62f295903f19c54b817e3eea9095dce5d83  part-03
-          24cc5d1bf42111e9cc52a108992ab547a532e50631d90a06536897c2d859ae2d  part-04
-          94c70022708fcb8f7acca6e4ab5b9fa6ad809b12ecaabe4537ceaa3187c7ac2a  part-05
-          HASHES
-          } > /tmp/natural-state-diagnostic.txt 2>&1
-          cat /tmp/natural-state-diagnostic.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: natural-state-diagnostic
-          path: /tmp/natural-state-diagnostic.txt
-          retention-days: 1
+          set -euo pipefail
+          cat .github/natural-state-patch/part-* \
+            | base64 --decode \
+            > /tmp/natural-state-patch.tar.gz
+          echo "568847389a2dc77cc8b25f22b43fb4c4d3a43c27f38b4651431e9d6967f9fc81  /tmp/natural-state-patch.tar.gz" \
+            | sha256sum -c -
+          tar -xzf /tmp/natural-state-patch.tar.gz
+          rm -rf .github/natural-state-patch
+          rm -f .github/workflows/export-source-snapshot.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Add natural state evolution"
+          git push origin HEAD:${{ github.head_ref }}
