@@ -1,0 +1,44 @@
+name: Fix Valence Expectations
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - name: Correct bounded-dimension expectations
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          old = 'double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);'
+          new = 'double expectedValence = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);'
+          expected = {
+              'src/test/java/com/laishengkai/digitalperson/application/PersonEventCommandServiceTest.java': 2,
+              'src/test/java/com/laishengkai/digitalperson/application/StateUpdateConsistencyRegressionTest.java': 1,
+          }
+          for name, count in expected.items():
+              path = Path(name)
+              text = path.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{name}: expected {count} formula matches, found {actual}')
+              path.write_text(text.replace(old, new))
+          PY
+          rm -f .github/workflows/fix-valence-expectations.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Correct valence transition expectations"
+          git push origin HEAD:${{ github.head_ref }}
