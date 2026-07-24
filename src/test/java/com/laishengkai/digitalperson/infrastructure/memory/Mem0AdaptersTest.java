@@ -58,6 +58,14 @@ class Mem0AdaptersTest {
                           "created_at": "2026-07-20T01:00:00Z",
                           "updated_at": "2026-07-21T01:00:00Z",
                           "metadata": {"section": "RELATIONSHIP"}
+                        },
+                        {
+                          "id": "memory-low",
+                          "memory": "与当前问题关系很弱的记忆",
+                          "score": 0.29,
+                          "created_at": "2026-07-19T01:00:00Z",
+                          "updated_at": "2026-07-19T01:00:00Z",
+                          "metadata": {"section": "RELATIONSHIP"}
                         }
                       ]
                     }
@@ -90,10 +98,10 @@ class Mem0AdaptersTest {
     }
 
     @Test
-    void mapsSearchResultsAndUsesAgentScopedFilters() {
+    void mapsSearchResultsAndFiltersBelowConfiguredRelevance() {
         PersonId personId = PersonId.random();
         Mem0HttpClient client = client(true);
-        Mem0PersonMemoryGateway gateway = new Mem0PersonMemoryGateway(client);
+        Mem0PersonMemoryGateway gateway = new Mem0PersonMemoryGateway(client, 0.30);
 
         PersonMemoryContext context = gateway.retrieve(new PersonMemoryQuery(
                 personId,
@@ -112,11 +120,12 @@ class Mem0AdaptersTest {
                 .isEqualTo(Instant.parse("2026-07-20T01:00:00Z"));
         assertThat(searchBody.get()).contains("\"agent_id\":\"" + personId + "\"");
         assertThat(searchBody.get()).contains("\"top_k\":5");
+        assertThat(searchBody.get()).contains("\"threshold\":0.3");
         assertThat(apiKey.get()).isEqualTo("mem0-test-key");
     }
 
     @Test
-    void mapsWriteAndDeleteOperations() {
+    void mapsWriteAndDeleteOperationsWithChineseExtractionInstructions() {
         PersonId personId = PersonId.random();
         Mem0PersonMemoryStore store = new Mem0PersonMemoryStore(client(false));
 
@@ -140,7 +149,28 @@ class Mem0AdaptersTest {
         assertThat(addBody.get()).contains("\"agent_id\":\"" + personId + "\"");
         assertThat(addBody.get()).contains("\"role\":\"user\"");
         assertThat(addBody.get()).contains("\"section\":\"PREFERENCE\"");
+        assertThat(addBody.get()).contains("\"prompt\":");
+        assertThat(addBody.get()).contains("始终写成简体中文");
         assertThat(deleteMethod.get()).isEqualTo("DELETE");
+    }
+
+    @Test
+    void defaultsLanguageAndRelevanceSettings() {
+        Mem0Properties properties = new Mem0Properties(
+                false,
+                false,
+                false,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        assertThat(properties.minimumRelevance()).isEqualTo(0.30);
+        assertThat(properties.extractionInstructions()).contains("简体中文");
     }
 
     @Test
@@ -151,7 +181,7 @@ class Mem0AdaptersTest {
                 500,
                 "{\"detail\":\"provider failed\"}"
         ));
-        Mem0PersonMemoryGateway gateway = new Mem0PersonMemoryGateway(client(false));
+        Mem0PersonMemoryGateway gateway = new Mem0PersonMemoryGateway(client(false), 0.30);
 
         PersonMemoryContext context = gateway.retrieve(new PersonMemoryQuery(
                 PersonId.random(),
@@ -215,6 +245,8 @@ class Mem0AdaptersTest {
                 true,
                 false,
                 retrievalEnabled,
+                0.30,
+                Mem0Properties.DEFAULT_EXTRACTION_INSTRUCTIONS,
                 baseUrl,
                 "mem0-test-key",
                 Duration.ofSeconds(1),
