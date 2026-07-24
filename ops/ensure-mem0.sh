@@ -34,16 +34,101 @@ MEM0_SOURCE_DIR="$MEM0_INSTALL_DIR/source"
 MEM0_BASE_URL="${MEM0_BASE_URL:-http://127.0.0.1:8888}"
 MEM0_HEALTH_URL="${MEM0_HEALTH_URL:-${MEM0_BASE_URL%/}/auth/setup-status}"
 MEM0_START_TIMEOUT_SECONDS="${MEM0_START_TIMEOUT_SECONDS:-180}"
-MEM0_OPENAI_API_KEY="${MEM0_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}"
+MEM0_LLM_API_KEY="${MEM0_LLM_API_KEY:-${MEM0_OPENAI_API_KEY:-${LLM_API_KEY:-${OPENAI_API_KEY:-}}}}"
+MEM0_LLM_BASE_URL="${MEM0_LLM_BASE_URL:-${LLM_BASE_URL:-https://api.openai.com/v1}}"
+MEM0_LLM_MODEL="${MEM0_LLM_MODEL:-${LLM_MODEL:-gpt-4.1-nano-2025-04-14}}"
+MEM0_EMBEDDER_API_KEY="${MEM0_EMBEDDER_API_KEY:-${MEM0_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}}"
+MEM0_EMBEDDER_BASE_URL="${MEM0_EMBEDDER_BASE_URL:-https://api.openai.com/v1}"
+MEM0_EMBEDDER_MODEL="${MEM0_EMBEDDER_MODEL:-text-embedding-3-small}"
 MEM0_ADMIN_API_KEY="${MEM0_API_KEY:-${ADMIN_API_KEY:-}}"
 MEM0_JWT_SECRET="${MEM0_JWT_SECRET:-${JWT_SECRET:-}}"
+GENERATED_ADMIN_KEY_FILE="$MEM0_INSTALL_DIR/generated-admin-api-key"
+
+if [ -z "$MEM0_EMBEDDER_API_KEY" ] && [ "$MEM0_LLM_BASE_URL" = "https://api.openai.com/v1" ]; then
+  MEM0_EMBEDDER_API_KEY="$MEM0_LLM_API_KEY"
+fi
+
+if [ -z "$MEM0_ADMIN_API_KEY" ] && [ -r "$GENERATED_ADMIN_KEY_FILE" ]; then
+  MEM0_ADMIN_API_KEY="$(tr -d '\r\n' < "$GENERATED_ADMIN_KEY_FILE")"
+fi
+
+for command_name in curl jq; do
+  if ! command -v "$command_name" >/dev/null 2>&1; then
+    echo "Mem0 自动准备失败：缺少命令 $command_name" >&2
+    exit 1
+  fi
+done
+
+if [ -z "$MEM0_LLM_API_KEY" ]; then
+  echo "Mem0 缺少记忆提取模型密钥：请配置 MEM0_LLM_API_KEY 或 LLM_API_KEY" >&2
+  exit 1
+fi
+
+if [ -z "$MEM0_EMBEDDER_API_KEY" ]; then
+  echo "Mem0 还需要独立的 embedding API Key：请配置 MEM0_EMBEDDER_API_KEY" >&2
+  echo "OpenRouter 不能作为 embedding 服务；可使用 OpenAI 或其他 OpenAI 兼容 embedding 接口" >&2
+  exit 1
+fi
+
+build_config_payload() {
+  jq -n \
+    --arg llm_key "$MEM0_LLM_API_KEY" \
+    --arg llm_base "$MEM0_LLM_BASE_URL" \
+    --arg llm_model "$MEM0_LLM_MODEL" \
+    --arg embedder_key "$MEM0_EMBEDDER_API_KEY" \
+    --arg embedder_base "$MEM0_EMBEDDER_BASE_URL" \
+    --arg embedder_model "$MEM0_EMBEDDER_MODEL" \
+    '{
+      llm: {
+        provider: "openai",
+        config: {
+          api_key: $llm_key,
+          openai_base_url: $llm_base,
+          model: $llm_model,
+          temperature: 0.2
+        }
+      },
+      embedder: {
+        provider: "openai",
+        config: {
+          api_key: $embedder_key,
+          openai_base_url: $embedder_base,
+          model: $embedder_model
+        }
+      }
+    }'
+}
+
+apply_mem0_configuration() {
+  if [ -z "$MEM0_ADMIN_API_KEY" ]; then
+    echo "Mem0 已运行，但缺少 MEM0_API_KEY/ADMIN_API_KEY，无法写入受保护的 /configure" >&2
+    return 1
+  fi
+
+  local config_payload
+  config_payload="$(build_config_payload)"
+
+  curl -fsS \
+    --max-time 30 \
+    -X POST \
+    -H "X-API-Key: $MEM0_ADMIN_API_KEY" \
+    -H "Content-Type: application/json" \
+    --data-binary @- \
+    "${MEM0_BASE_URL%/}/configure" \
+    <<< "$config_payload" >/dev/null
+}
 
 if curl -fsS --max-time 3 "$MEM0_HEALTH_URL" >/dev/null 2>&1; then
-  echo "Mem0 已运行：$MEM0_BASE_URL"
+  echo "Mem0 已运行，重新应用 LLM/embedding 配置：$MEM0_BASE_URL"
+  if ! apply_mem0_configuration; then
+    echo "Mem0 服务可访问，但配置刷新失败" >&2
+    exit 1
+  fi
+  echo "Mem0 配置已更新"
   exit 0
 fi
 
-for command_name in git docker curl openssl; do
+for command_name in git docker openssl; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Mem0 自动准备失败：缺少命令 $command_name" >&2
     exit 1
@@ -100,17 +185,11 @@ fi
 ENV_FILE="$SERVER_DIR/.env"
 umask 077
 
-if [ -z "$MEM0_OPENAI_API_KEY" ]; then
-  echo "Mem0 已下载，但缺少 MEM0_OPENAI_API_KEY/OPENAI_API_KEY，暂不启动" >&2
-  echo "请在受保护的环境文件中配置供应商密钥" >&2
-  exit 1
-fi
-
 if [ -z "$MEM0_ADMIN_API_KEY" ]; then
   MEM0_ADMIN_API_KEY="$(openssl rand -hex 32)"
-  printf '%s\n' "$MEM0_ADMIN_API_KEY" > "$MEM0_INSTALL_DIR/generated-admin-api-key"
-  chmod 600 "$MEM0_INSTALL_DIR/generated-admin-api-key"
-  echo "已生成 Mem0 管理 API Key，保存在：$MEM0_INSTALL_DIR/generated-admin-api-key"
+  printf '%s\n' "$MEM0_ADMIN_API_KEY" > "$GENERATED_ADMIN_KEY_FILE"
+  chmod 600 "$GENERATED_ADMIN_KEY_FILE"
+  echo "已生成 Mem0 管理 API Key，保存在：$GENERATED_ADMIN_KEY_FILE"
 fi
 
 if [ -z "$MEM0_JWT_SECRET" ]; then
@@ -118,7 +197,9 @@ if [ -z "$MEM0_JWT_SECRET" ]; then
 fi
 
 cat > "$ENV_FILE" <<ENV
-OPENAI_API_KEY=$MEM0_OPENAI_API_KEY
+OPENAI_API_KEY=$MEM0_LLM_API_KEY
+MEM0_DEFAULT_LLM_MODEL=$MEM0_LLM_MODEL
+MEM0_DEFAULT_EMBEDDER_MODEL=$MEM0_EMBEDDER_MODEL
 JWT_SECRET=$MEM0_JWT_SECRET
 ADMIN_API_KEY=$MEM0_ADMIN_API_KEY
 AUTH_DISABLED=false
@@ -138,7 +219,12 @@ fi
 
 for attempt in $(seq 1 "$attempts"); do
   if curl -fsS --max-time 3 "$MEM0_HEALTH_URL" >/dev/null 2>&1; then
-    echo "Mem0 启动成功：$MEM0_BASE_URL"
+    if ! apply_mem0_configuration; then
+      echo "Mem0 已启动，但模型/向量配置写入失败" >&2
+      exit 1
+    fi
+
+    echo "Mem0 启动成功并已应用 LLM/embedding 配置：$MEM0_BASE_URL"
     exit 0
   fi
   echo "等待 Mem0 启动：$attempt/$attempts"
