@@ -30,6 +30,30 @@ public record Mem0Properties(
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final String DEFAULT_HEALTH_PATH = "/auth/setup-status";
 
+    public Mem0Properties(
+            boolean enabled,
+            boolean required,
+            boolean retrievalEnabled,
+            URI baseUrl,
+            String apiKey,
+            Duration connectTimeout,
+            Duration requestTimeout,
+            String healthPath
+    ) {
+        this(
+                enabled,
+                required,
+                retrievalEnabled,
+                null,
+                null,
+                baseUrl,
+                apiKey,
+                connectTimeout,
+                requestTimeout,
+                healthPath
+        );
+    }
+
     public Mem0Properties {
         minimumRelevance = probability(minimumRelevance, "minimumRelevance");
         extractionInstructions = normalizeInstructions(extractionInstructions);
