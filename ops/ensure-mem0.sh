@@ -188,6 +188,9 @@ if ! docker compose version >/dev/null 2>&1; then
 fi
 
 mkdir -p "$MEM0_INSTALL_DIR"
+# Docker Compose may inspect the inherited current directory even when all project
+# paths are absolute. Use a deploy-owned directory instead of /home/ubuntu.
+cd "$MEM0_INSTALL_DIR"
 
 if [ ! -d "$MEM0_SOURCE_DIR/.git" ]; then
   rm -rf "$MEM0_SOURCE_DIR"
@@ -254,10 +257,12 @@ ENV
 chmod 600 "$ENV_FILE"
 
 echo "启动 Mem0 $MEM0_VERSION"
+# Digital Person only consumes the Mem0 HTTP API. Targeting the mem0 service also
+# starts PostgreSQL through depends_on, while avoiding the optional dashboard build.
 docker compose \
   --project-directory "$SERVER_DIR" \
   -f "$COMPOSE_FILE" \
-  up -d --build
+  up -d --build mem0
 
 attempts=$((MEM0_START_TIMEOUT_SECONDS / 3))
 if [ "$attempts" -lt 1 ]; then
