@@ -110,7 +110,7 @@ class Mem0AdaptersTest {
         assertThat(context.items().getFirst().createdAt())
                 .isEqualTo(Instant.parse("2026-07-20T01:00:00Z"));
         assertThat(searchBody.get()).contains("\"agent_id\":\"" + personId + "\"");
-        assertThat(searchBody.get()).contains("\"limit\":5");
+        assertThat(searchBody.get()).contains("\"top_k\":5");
         assertThat(apiKey.get()).isEqualTo("mem0-test-key");
     }
 

@@ -51,7 +51,7 @@ final class Mem0HttpClient {
                         ? "relevant long-term person memory"
                         : query.relevanceQuery()
         );
-        payload.put("limit", query.maxItems());
+        payload.put("top_k", query.maxItems());
         payload.putObject("filters")
                 .put("agent_id", query.personId().toString());
         return sendJson("/search", "POST", payload);
