@@ -28,6 +28,10 @@ jobs:
         run: |
           bash -n ops/deploy-from-git.sh
           bash -n ops/ensure-mem0.sh
+          bash -n ops/test-ensure-mem0-secret-handling.sh
+
+      - name: Verify Mem0 secret handling
+        run: bash ops/test-ensure-mem0-secret-handling.sh
 
       - name: Verify
         run: set -o pipefail; mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven.log
