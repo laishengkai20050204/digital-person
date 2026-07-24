@@ -16,11 +16,12 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.concurrent.CompletionException;
 
-/** Stable error contract for the protected person API. */
+/** Stable error contract for protected internal and person APIs. */
 @RestControllerAdvice(assignableTypes = {
         PersonController.class,
         PersonEventController.class,
-        PersonActivityDecisionController.class
+        PersonActivityDecisionController.class,
+        MemoryTestController.class
 })
 public final class PersonApiExceptionHandler {
 
@@ -89,6 +90,26 @@ public final class PersonApiExceptionHandler {
         );
     }
 
+    @ExceptionHandler(MemoryTestUnavailableException.class)
+    public ResponseEntity<PersonController.ErrorResponse> memoryTestUnavailable(
+            MemoryTestUnavailableException error
+    ) {
+        return response(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "MEMORY_TEST_UNAVAILABLE",
+                error.getMessage()
+        );
+    }
+
+    @ExceptionHandler(MemoryTestProviderException.class)
+    public ResponseEntity<PersonController.ErrorResponse> memoryProviderFailure() {
+        return response(
+                HttpStatus.BAD_GATEWAY,
+                "MEMORY_PROVIDER_FAILED",
+                "The configured memory provider could not complete the request"
+        );
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<PersonController.ErrorResponse> invalidRequest(
             IllegalArgumentException error
@@ -133,6 +154,12 @@ public final class PersonApiExceptionHandler {
         }
         if (cause instanceof InvalidPersonActivityDecisionException invalidDecision) {
             return activityDecisionFailure(invalidDecision);
+        }
+        if (cause instanceof MemoryTestUnavailableException unavailable) {
+            return memoryTestUnavailable(unavailable);
+        }
+        if (cause instanceof MemoryTestProviderException) {
+            return memoryProviderFailure();
         }
         if (cause instanceof IllegalArgumentException invalid) {
             return invalidRequest(invalid);

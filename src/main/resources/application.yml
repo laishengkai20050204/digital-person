@@ -57,6 +57,9 @@ digital-person:
       connect-timeout: ${MEM0_CONNECT_TIMEOUT:2s}
       request-timeout: ${MEM0_REQUEST_TIMEOUT:30s}
       health-path: ${MEM0_HEALTH_PATH:/auth/setup-status}
+    test-api:
+      enabled: ${MEMORY_TEST_API_ENABLED:false}
+      token: ${MEMORY_TEST_API_TOKEN:}
   diagnostics:
     enabled: ${DIAGNOSTICS_ENABLED:false}
     token: ${DIAGNOSTICS_TOKEN:}
