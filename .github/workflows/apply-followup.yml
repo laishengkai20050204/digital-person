@@ -1,0 +1,42 @@
+name: Apply CI follow-up fixes
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+
+      - name: Apply verified follow-up patch
+        shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -Eeuo pipefail
+          git apply --check .agent-fix/followup.patch
+          git apply .agent-fix/followup.patch
+          rm -rf .agent-fix
+          rm -f .github/workflows/apply-followup.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Fix CI wiring and timeout cancellation'
+          git push origin HEAD:"$TARGET_BRANCH"
