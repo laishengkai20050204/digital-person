@@ -126,8 +126,8 @@ class MemoryTestControllerTest {
     @Test
     void reportsWhichMem0CapabilityIsNotEnabled() {
         MemoryTestController controller = new MemoryTestController(
-                null,
-                null,
+                (PersonMemoryStore) null,
+                (PersonMemoryGateway) null,
                 new MemoryTestApiProperties(true, TOKEN)
         );
         PersonId personId = PersonId.random();
