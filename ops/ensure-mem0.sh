@@ -43,6 +43,7 @@ MEM0_EMBEDDER_MODEL="${MEM0_EMBEDDER_MODEL:-text-embedding-3-small}"
 MEM0_ADMIN_API_KEY="${MEM0_API_KEY:-${ADMIN_API_KEY:-}}"
 MEM0_JWT_SECRET="${MEM0_JWT_SECRET:-${JWT_SECRET:-}}"
 GENERATED_ADMIN_KEY_FILE="$MEM0_INSTALL_DIR/generated-admin-api-key"
+SECRET_WORK_DIR=""
 
 if [ -z "$MEM0_EMBEDDER_API_KEY" ] && [ "$MEM0_LLM_BASE_URL" = "https://api.openai.com/v1" ]; then
   MEM0_EMBEDDER_API_KEY="$MEM0_LLM_API_KEY"
@@ -52,7 +53,16 @@ if [ -z "$MEM0_ADMIN_API_KEY" ] && [ -r "$GENERATED_ADMIN_KEY_FILE" ]; then
   MEM0_ADMIN_API_KEY="$(tr -d '\r\n' < "$GENERATED_ADMIN_KEY_FILE")"
 fi
 
-for command_name in curl jq; do
+# Keep provider and admin secrets out of child-process environments. Values remain
+# shell-local and are passed through protected files or stdin only.
+for secret_name in \
+  MEM0_LLM_API_KEY MEM0_OPENAI_API_KEY LLM_API_KEY OPENAI_API_KEY \
+  MEM0_EMBEDDER_API_KEY MEM0_API_KEY ADMIN_API_KEY \
+  MEM0_JWT_SECRET JWT_SECRET; do
+  export -n "$secret_name" 2>/dev/null || true
+done
+
+for command_name in curl jq mktemp; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Mem0 自动准备失败：缺少命令 $command_name" >&2
     exit 1
@@ -70,12 +80,44 @@ if [ -z "$MEM0_EMBEDDER_API_KEY" ]; then
   exit 1
 fi
 
+cleanup_secret_files() {
+  if [ -n "$SECRET_WORK_DIR" ] && [ -d "$SECRET_WORK_DIR" ]; then
+    rm -rf "$SECRET_WORK_DIR"
+  fi
+}
+trap cleanup_secret_files EXIT
+
+ensure_secret_work_dir() {
+  if [ -z "$SECRET_WORK_DIR" ]; then
+    SECRET_WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/person-ai-mem0.XXXXXX")"
+    chmod 700 "$SECRET_WORK_DIR"
+  fi
+}
+
+write_secret_file() {
+  local target="$1"
+  local value="$2"
+
+  ensure_secret_work_dir
+  umask 077
+  printf '%s' "$value" > "$target"
+  chmod 600 "$target"
+}
+
 build_config_payload() {
+  ensure_secret_work_dir
+
+  local llm_key_file="$SECRET_WORK_DIR/llm-api-key"
+  local embedder_key_file="$SECRET_WORK_DIR/embedder-api-key"
+
+  write_secret_file "$llm_key_file" "$MEM0_LLM_API_KEY"
+  write_secret_file "$embedder_key_file" "$MEM0_EMBEDDER_API_KEY"
+
   jq -n \
-    --arg llm_key "$MEM0_LLM_API_KEY" \
+    --rawfile llm_key "$llm_key_file" \
     --arg llm_base "$MEM0_LLM_BASE_URL" \
     --arg llm_model "$MEM0_LLM_MODEL" \
-    --arg embedder_key "$MEM0_EMBEDDER_API_KEY" \
+    --rawfile embedder_key "$embedder_key_file" \
     --arg embedder_base "$MEM0_EMBEDDER_BASE_URL" \
     --arg embedder_model "$MEM0_EMBEDDER_MODEL" \
     '{
@@ -105,17 +147,22 @@ apply_mem0_configuration() {
     return 1
   fi
 
-  local config_payload
-  config_payload="$(build_config_payload)"
+  ensure_secret_work_dir
+
+  local admin_header_file="$SECRET_WORK_DIR/admin-header"
+  local config_payload_file="$SECRET_WORK_DIR/config-payload.json"
+
+  write_secret_file "$admin_header_file" "X-API-Key: $MEM0_ADMIN_API_KEY"
+  build_config_payload > "$config_payload_file"
+  chmod 600 "$config_payload_file"
 
   curl -fsS \
     --max-time 30 \
     -X POST \
-    -H "X-API-Key: $MEM0_ADMIN_API_KEY" \
+    -H @"$admin_header_file" \
     -H "Content-Type: application/json" \
-    --data-binary @- \
-    "${MEM0_BASE_URL%/}/configure" \
-    <<< "$config_payload" >/dev/null
+    --data-binary @"$config_payload_file" \
+    "${MEM0_BASE_URL%/}/configure" >/dev/null
 }
 
 if curl -fsS --max-time 3 "$MEM0_HEALTH_URL" >/dev/null 2>&1; then
