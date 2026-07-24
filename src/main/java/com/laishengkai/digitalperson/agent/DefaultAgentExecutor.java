@@ -24,6 +24,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 /** Default application-owned implementation of the bounded model/tool loop. */
@@ -458,6 +459,7 @@ public final class DefaultAgentExecutor implements AgentExecutor {
         Duration safeTimeout = requirePositive(timeout, "timeout");
         CompletableFuture<T> source = safeStage.toCompletableFuture();
         CompletableFuture<T> guarded = new CompletableFuture<>();
+        AtomicBoolean settled = new AtomicBoolean(false);
         CompletableFuture.delayedExecutor(
                 safeTimeout.toNanos(),
                 TimeUnit.NANOSECONDS
@@ -466,11 +468,15 @@ public final class DefaultAgentExecutor implements AgentExecutor {
                     timeoutException.get(),
                     "timeoutException cannot return null"
             );
-            if (guarded.completeExceptionally(failure)) {
+            if (settled.compareAndSet(false, true)) {
                 source.cancel(true);
+                guarded.completeExceptionally(failure);
             }
         });
         source.whenComplete((value, error) -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
             if (error == null) {
                 guarded.complete(value);
             } else {
