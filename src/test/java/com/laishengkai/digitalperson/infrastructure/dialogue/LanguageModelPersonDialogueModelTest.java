@@ -97,6 +97,7 @@ class LanguageModelPersonDialogueModelTest {
 
         assertThatThrownBy(() -> model.reply(context, "你好").toCompletableFuture().join())
                 .isInstanceOf(CompletionException.class)
-                .hasRootCauseInstanceOf(PersonDialogueException.class);
+                .hasCauseInstanceOf(PersonDialogueException.class)
+                .hasRootCauseInstanceOf(RuntimeException.class);
     }
 }
