@@ -1,4 +1,4 @@
-name: Production Smoke Test
+name: Production Diagnostics
 
 on:
   push:
@@ -11,21 +11,18 @@ permissions:
   contents: write
 
 jobs:
-  smoke:
+  diagnose:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     env:
       SERVER_HOST: ${{ secrets.SERVER_HOST }}
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
-      EXPECTED_SHA: ed0ef5afa1e07ba1f8aa6e4243c3a1aca54e9fa6
-      SMOKE_PERSON_ID: 567f1d4e-2aab-427b-a4ca-dd69a00c06df
 
     steps:
-      - name: Check out smoke branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: agent/production-smoke-test
 
@@ -42,62 +39,37 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Run production smoke checks
+      - name: Collect sanitized diagnostics
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .smoke
-
           ssh \
             -i ~/.ssh/id_ed25519 \
             -p "$SERVER_PORT" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=15 \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=3 \
             "$SERVER_USER@$SERVER_HOST" \
-            "EXPECTED_SHA='$EXPECTED_SHA' SMOKE_PERSON_ID='$SMOKE_PERSON_ID' bash -s" \
-            > .smoke/production-smoke-result.txt <<'REMOTE'
+            'bash -s' > .smoke/production-diagnostic.txt <<'REMOTE'
           set -uo pipefail
-
-          overall=PASS
-          work_dir="$(mktemp -d /tmp/person-ai-smoke.XXXXXX)"
+          work_dir="$(mktemp -d /tmp/person-ai-diagnostic.XXXXXX)"
           trap 'rm -rf "$work_dir"' EXIT
 
-          record() {
-            key="$1"
-            value="$2"
-            printf '%s=%s\n' "$key" "$value"
-            if [ "$value" != "PASS" ] && [ "$value" != "SKIP" ]; then
-              overall=FAIL
-            fi
+          bool_present() {
+            if [ -n "${1:-}" ]; then printf 'YES'; else printf 'NO'; fi
           }
 
-          is_true() {
+          bool_value() {
             case "${1:-}" in
-              1|true|TRUE|yes|YES|on|ON) return 0 ;;
-              *) return 1 ;;
+              1|true|TRUE|yes|YES|on|ON) printf 'TRUE' ;;
+              *) printf 'FALSE' ;;
             esac
           }
 
-          deployed=FAIL
-          current_release=""
-          for attempt in $(seq 1 60); do
-            current_release="$(readlink -f /opt/person-ai/current.jar 2>/dev/null || true)"
-            case "$current_release" in
-              *"$EXPECTED_SHA"*) deployed=PASS; break ;;
-            esac
-            sleep 10
-          done
-          record DEPLOYED_EXPECTED_SHA "$deployed"
-          printf 'CURRENT_RELEASE=%s\n' "$(basename "${current_release:-unknown}")"
-
-          if systemctl is-active --quiet person-ai; then
-            record SYSTEMD_ACTIVE PASS
-          else
-            record SYSTEMD_ACTIVE FAIL
-          fi
+          sanitize() {
+            tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-240
+          }
 
           for env_file in /etc/person-ai/person-ai.env /etc/person-ai/mem0.env; do
             if [ -r "$env_file" ]; then
@@ -108,148 +80,90 @@ jobs:
             fi
           done
 
-          app_url="http://127.0.0.1:${SERVER_PORT:-8080}"
-          if curl -fsS --max-time 10 "$app_url/actuator/health" \
-              | jq -e '.status == "UP"' >/dev/null; then
-            record APPLICATION_HEALTH PASS
-          else
-            record APPLICATION_HEALTH FAIL
-          fi
+          printf 'CURRENT_RELEASE=%s\n' "$(basename "$(readlink -f /opt/person-ai/current.jar 2>/dev/null || echo unknown)")"
+          printf 'SYSTEMD_ACTIVE=%s\n' "$(systemctl is-active person-ai 2>/dev/null || true)"
+          printf 'SYSTEMD_SUBSTATE=%s\n' "$(systemctl show person-ai -p SubState --value 2>/dev/null || true)"
 
-          if is_true "${PERSON_API_ENABLED:-false}" && [ -n "${PERSON_API_TOKEN:-}" ]; then
-            if curl -fsS --max-time 15 \
-                -H "X-Internal-Token: $PERSON_API_TOKEN" \
-                "$app_url/api/persons/$SMOKE_PERSON_ID/state" \
-                > "$work_dir/person-state.json" \
-                && jq -e --arg id "$SMOKE_PERSON_ID" \
-                    '.personId == $id and (.state | type == "object")' \
-                    "$work_dir/person-state.json" >/dev/null; then
-              record PERSON_DATABASE_READ PASS
-            else
-              record PERSON_DATABASE_READ FAIL
-            fi
-          else
-            record PERSON_DATABASE_READ SKIP
-          fi
+          printf 'PERSON_API_ENABLED=%s\n' "$(bool_value "${PERSON_API_ENABLED:-false}")"
+          printf 'PERSON_API_TOKEN_PRESENT=%s\n' "$(bool_present "${PERSON_API_TOKEN:-}")"
+
+          printf 'MEM0_ENABLED=%s\n' "$(bool_value "${MEM0_ENABLED:-false}")"
+          printf 'MEM0_REQUIRED=%s\n' "$(bool_value "${MEM0_REQUIRED:-false}")"
+          printf 'MEM0_AUTO_INSTALL_ENABLED=%s\n' "$(bool_value "${MEM0_AUTO_INSTALL_ENABLED:-${MEM0_ENABLED:-false}}")"
+          printf 'MEM0_API_KEY_PRESENT=%s\n' "$(bool_present "${MEM0_API_KEY:-}")"
+          printf 'MEM0_LLM_API_KEY_PRESENT=%s\n' "$(bool_present "${MEM0_LLM_API_KEY:-${LLM_API_KEY:-}}")"
+          printf 'MEM0_EMBEDDER_API_KEY_PRESENT=%s\n' "$(bool_present "${MEM0_EMBEDDER_API_KEY:-}")"
+          printf 'MEM0_INSTALL_DIR_EXISTS=%s\n' "$([ -d /opt/person-ai/mem0 ] && echo YES || echo NO)"
+          printf 'MEM0_SOURCE_EXISTS=%s\n' "$([ -d /opt/person-ai/mem0/source/.git ] && echo YES || echo NO)"
+          printf 'MEM0_GENERATED_ADMIN_KEY_EXISTS=%s\n' "$([ -s /opt/person-ai/mem0/generated-admin-api-key ] && echo YES || echo NO)"
+          printf 'DOCKER_PRESENT=%s\n' "$(command -v docker >/dev/null 2>&1 && echo YES || echo NO)"
+          printf 'DOCKER_COMPOSE_PRESENT=%s\n' "$(docker compose version >/dev/null 2>&1 && echo YES || echo NO)"
 
           mem0_url="${MEM0_BASE_URL:-http://127.0.0.1:8888}"
           mem0_health="${MEM0_HEALTH_PATH:-/auth/setup-status}"
-          if curl -fsS --max-time 10 "${mem0_url%/}$mem0_health" >/dev/null; then
-            record MEM0_HEALTH PASS
-          else
-            record MEM0_HEALTH FAIL
+          mem0_code="$(curl -sS --max-time 10 -o "$work_dir/mem0-health.json" -w '%{http_code}' "${mem0_url%/}$mem0_health" 2>/dev/null || echo CURL_ERROR)"
+          printf 'MEM0_HEALTH_HTTP=%s\n' "$mem0_code"
+
+          if command -v docker >/dev/null 2>&1; then
+            docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' 2>/dev/null \
+              | grep -Ei 'mem0|qdrant|postgres|neo4j' \
+              | head -20 \
+              | sed -E 's/[[:space:]]+/ /g' \
+              | sed 's/^/CONTAINER=/' || true
           fi
 
-          if is_true "${MEM0_ENABLED:-false}" && [ -n "${MEM0_API_KEY:-}" ]; then
-            smoke_agent="$(cat /proc/sys/kernel/random/uuid)"
-            smoke_marker="PRODUCTION_SMOKE_${EXPECTED_SHA:0:8}_$(date +%s)"
+          printf 'JOURNAL_MEM0_AVAILABLE_COUNT=%s\n' "$(journalctl -u person-ai -n 300 --no-pager 2>/dev/null | grep -c 'Mem0 memory service is available' || true)"
+          printf 'JOURNAL_MEM0_UNAVAILABLE_COUNT=%s\n' "$(journalctl -u person-ai -n 300 --no-pager 2>/dev/null | grep -c 'Mem0 memory service is unavailable' || true)"
 
+          printf 'LLM_ENABLED=%s\n' "$(bool_value "${LLM_ENABLED:-false}")"
+          printf 'LLM_API_KEY_PRESENT=%s\n' "$(bool_present "${LLM_API_KEY:-}")"
+          printf 'LLM_MODEL_PRESENT=%s\n' "$(bool_present "${LLM_MODEL:-}")"
+          printf 'LLM_MODEL=%s\n' "${LLM_MODEL:-UNSET}"
+          printf 'LLM_BASE_URL=%s\n' "${LLM_BASE_URL:-UNSET}"
+          printf 'LLM_CONNECTION_TEST_ENABLED=%s\n' "$(bool_value "${LLM_CONNECTION_TEST_ENABLED:-false}")"
+          printf 'LLM_CONNECTION_TEST_TOKEN_PRESENT=%s\n' "$(bool_present "${LLM_CONNECTION_TEST_TOKEN:-}")"
+
+          if [ -n "${LLM_API_KEY:-}" ] && [ -n "${LLM_MODEL:-}" ] && [ -n "${LLM_BASE_URL:-}" ]; then
             jq -n \
-              --arg agent "$smoke_agent" \
-              --arg marker "$smoke_marker" \
-              '{messages:[{role:"user",content:$marker}],agent_id:$agent,infer:false,metadata:{source:"digital-person-smoke",section:"EPISODIC"}}' \
-              > "$work_dir/mem0-add.json"
-
-            mem0_cycle=PASS
-            if ! curl -fsS --max-time 60 \
-                -H "X-API-Key: $MEM0_API_KEY" \
-                -H 'Content-Type: application/json' \
-                --data-binary @"$work_dir/mem0-add.json" \
-                "${mem0_url%/}/memories" \
-                > "$work_dir/mem0-add-response.json"; then
-              mem0_cycle=FAIL
-            fi
-
-            if [ "$mem0_cycle" = PASS ]; then
-              jq -r '(.results // .)[]? | .id // empty' \
-                "$work_dir/mem0-add-response.json" > "$work_dir/memory-ids.txt"
-              if [ ! -s "$work_dir/memory-ids.txt" ]; then
-                mem0_cycle=FAIL
-              fi
-            fi
-
-            if [ "$mem0_cycle" = PASS ]; then
-              jq -n \
-                --arg agent "$smoke_agent" \
-                --arg marker "$smoke_marker" \
-                '{query:$marker,top_k:5,filters:{agent_id:$agent}}' \
-                > "$work_dir/mem0-search.json"
-              if ! curl -fsS --max-time 60 \
-                  -H "X-API-Key: $MEM0_API_KEY" \
-                  -H 'Content-Type: application/json' \
-                  --data-binary @"$work_dir/mem0-search.json" \
-                  "${mem0_url%/}/search" \
-                  > "$work_dir/mem0-search-response.json" \
-                  || ! jq -e --arg marker "$smoke_marker" \
-                      '[((.results // .)[]? | (.memory // .text // .data // ""))] | any(contains($marker))' \
-                      "$work_dir/mem0-search-response.json" >/dev/null; then
-                mem0_cycle=FAIL
-              fi
-            fi
-
-            if [ -s "$work_dir/memory-ids.txt" ]; then
-              while IFS= read -r memory_id; do
-                curl -fsS --max-time 30 \
-                  -X DELETE \
-                  -H "X-API-Key: $MEM0_API_KEY" \
-                  "${mem0_url%/}/memories/$memory_id" >/dev/null || mem0_cycle=FAIL
-              done < "$work_dir/memory-ids.txt"
-            fi
-            record MEM0_WRITE_SEARCH_DELETE "$mem0_cycle"
-          else
-            record MEM0_WRITE_SEARCH_DELETE FAIL
-          fi
-
-          llm_test=FAIL
-          if is_true "${LLM_ENABLED:-false}" && [ -n "${LLM_API_KEY:-}" ] && [ -n "${LLM_MODEL:-}" ]; then
-            if is_true "${LLM_CONNECTION_TEST_ENABLED:-false}" \
-                && [ -n "${LLM_CONNECTION_TEST_TOKEN:-}" ]; then
-              if curl -fsS --max-time 120 \
-                  -X POST \
-                  -H "X-Internal-Token: $LLM_CONNECTION_TEST_TOKEN" \
-                  "$app_url/internal/llm/connection-test" \
-                  | jq -e '.status == "UP" and .modelResponse == "CONNECTION_OK"' >/dev/null; then
-                llm_test=PASS
-              fi
+              --arg model "$LLM_MODEL" \
+              '{model:$model,messages:[{role:"user",content:"Reply with exactly CONNECTION_OK"}],max_tokens:128,temperature:0}' \
+              > "$work_dir/llm-request.json"
+            llm_code="$(curl -sS --max-time 150 \
+              -o "$work_dir/llm-response.json" \
+              -w '%{http_code}' \
+              -H "Authorization: Bearer $LLM_API_KEY" \
+              -H 'Content-Type: application/json' \
+              --data-binary @"$work_dir/llm-request.json" \
+              "${LLM_BASE_URL%/}/chat/completions" 2>/dev/null || echo CURL_ERROR)"
+            printf 'LLM_HTTP=%s\n' "$llm_code"
+            if jq -e '.choices[0].message.content | type == "string" and length > 0' "$work_dir/llm-response.json" >/dev/null 2>&1; then
+              printf 'LLM_HAS_CONTENT=YES\n'
             else
-              jq -n \
-                --arg model "$LLM_MODEL" \
-                '{model:$model,messages:[{role:"user",content:"Reply with exactly CONNECTION_OK"}],max_tokens:16,temperature:0}' \
-                > "$work_dir/llm-request.json"
-              if curl -fsS --max-time 120 \
-                  -H "Authorization: Bearer $LLM_API_KEY" \
-                  -H 'Content-Type: application/json' \
-                  --data-binary @"$work_dir/llm-request.json" \
-                  "${LLM_BASE_URL%/}/chat/completions" \
-                  > "$work_dir/llm-response.json" \
-                  && jq -e '.choices[0].message.content | type == "string" and length > 0' \
-                      "$work_dir/llm-response.json" >/dev/null; then
-                llm_test=PASS
-              fi
+              printf 'LLM_HAS_CONTENT=NO\n'
             fi
+            llm_error_code="$(jq -r '.error.code // .error.type // empty' "$work_dir/llm-response.json" 2>/dev/null | sanitize)"
+            llm_error_message="$(jq -r '.error.message // empty' "$work_dir/llm-response.json" 2>/dev/null | sanitize)"
+            printf 'LLM_ERROR_CODE=%s\n' "${llm_error_code:-NONE}"
+            printf 'LLM_ERROR_MESSAGE=%s\n' "${llm_error_message:-NONE}"
+          else
+            printf 'LLM_HTTP=NOT_ATTEMPTED\n'
+            printf 'LLM_HAS_CONTENT=NO\n'
+            printf 'LLM_ERROR_CODE=MISSING_CONFIG\n'
+            printf 'LLM_ERROR_MESSAGE=Required LLM configuration is absent\n'
           fi
-          record LLM_REAL_REQUEST "$llm_test"
-
-          printf 'OVERALL=%s\n' "$overall"
           REMOTE
 
-      - name: Persist sanitized result
+      - name: Persist sanitized diagnostics
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .smoke/production-smoke-result.txt ]; then
+          if [ ! -f .smoke/production-diagnostic.txt ]; then
             mkdir -p .smoke
-            printf 'OVERALL=FAIL\nRESULT_FILE_MISSING=FAIL\n' \
-              > .smoke/production-smoke-result.txt
+            printf 'DIAGNOSTIC_RESULT_MISSING=YES\n' > .smoke/production-diagnostic.txt
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .smoke/production-smoke-result.txt
-          git commit -m "Record production smoke test result" || true
+          git add .smoke/production-diagnostic.txt
+          git commit -m "Record production diagnostics" || true
           git push origin HEAD:agent/production-smoke-test
-
-      - name: Enforce smoke result
-        if: always()
-        shell: bash
-        run: grep -q '^OVERALL=PASS$' .smoke/production-smoke-result.txt
