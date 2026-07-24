@@ -47,6 +47,16 @@ digital-person:
     max-failure-backoff: ${ACTIVITY_SCHEDULER_MAX_FAILURE_BACKOFF:1h}
     batch-size: ${ACTIVITY_SCHEDULER_BATCH_SIZE:10}
     max-in-flight: ${ACTIVITY_SCHEDULER_MAX_IN_FLIGHT:4}
+  memory:
+    mem0:
+      enabled: ${MEM0_ENABLED:false}
+      required: ${MEM0_REQUIRED:false}
+      retrieval-enabled: ${MEM0_RETRIEVAL_ENABLED:false}
+      base-url: ${MEM0_BASE_URL:http://127.0.0.1:8888}
+      api-key: ${MEM0_API_KEY:}
+      connect-timeout: ${MEM0_CONNECT_TIMEOUT:2s}
+      request-timeout: ${MEM0_REQUEST_TIMEOUT:30s}
+      health-path: ${MEM0_HEALTH_PATH:/auth/setup-status}
   diagnostics:
     enabled: ${DIAGNOSTICS_ENABLED:false}
     token: ${DIAGNOSTICS_TOKEN:}

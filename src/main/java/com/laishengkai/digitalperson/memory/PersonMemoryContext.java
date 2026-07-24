@@ -26,4 +26,8 @@ public record PersonMemoryContext(
     public static PersonMemoryContext available(List<MemoryItem> items) {
         return new PersonMemoryContext(MemoryAvailability.AVAILABLE, items);
     }
+
+    public static PersonMemoryContext unavailable() {
+        return new PersonMemoryContext(MemoryAvailability.UNAVAILABLE, List.of());
+    }
 }

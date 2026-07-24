@@ -143,6 +143,13 @@ echo "检出精确提交：$APP_SHA"
 git --git-dir="$SOURCE_REPO" worktree add --detach "$BUILD_DIR" "$APP_SHA"
 
 cd "$BUILD_DIR"
+
+if [ -x ops/ensure-mem0.sh ]; then
+  if ! bash ops/ensure-mem0.sh; then
+    echo "Mem0 自动准备未成功；应用将按 MEM0_REQUIRED 配置决定是否降级" >&2
+  fi
+fi
+
 echo "在服务器本地编译生产 JAR"
 mvn \
   --batch-mode \
