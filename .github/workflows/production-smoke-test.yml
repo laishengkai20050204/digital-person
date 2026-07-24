@@ -1,4 +1,4 @@
-name: Production Diagnostics
+name: Production Environment Visibility Diagnostic
 
 on:
   push:
@@ -14,12 +14,12 @@ jobs:
   diagnose:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    timeout-minutes: 8
     env:
       SERVER_HOST: ${{ secrets.SERVER_HOST }}
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
+      SMOKE_PERSON_ID: 567f1d4e-2aab-427b-a4ca-dd69a00c06df
 
     steps:
       - uses: actions/checkout@v4
@@ -39,7 +39,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Collect sanitized diagnostics
+      - name: Collect environment visibility diagnostics
         shell: bash
         run: |
           set -euo pipefail
@@ -51,119 +51,65 @@ jobs:
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=15 \
             "$SERVER_USER@$SERVER_HOST" \
-            'bash -s' > .smoke/production-diagnostic.txt <<'REMOTE'
+            "SMOKE_PERSON_ID='$SMOKE_PERSON_ID' bash -s" \
+            > .smoke/environment-visibility-diagnostic.txt <<'REMOTE'
           set -uo pipefail
-          work_dir="$(mktemp -d /tmp/person-ai-diagnostic.XXXXXX)"
-          trap 'rm -rf "$work_dir"' EXIT
 
-          bool_present() {
-            if [ -n "${1:-}" ]; then printf 'YES'; else printf 'NO'; fi
-          }
-
-          bool_value() {
-            case "${1:-}" in
-              1|true|TRUE|yes|YES|on|ON) printf 'TRUE' ;;
-              *) printf 'FALSE' ;;
-            esac
-          }
-
-          sanitize() {
-            tr '\r\n' '  ' | sed -E 's/[[:space:]]+/ /g' | cut -c1-240
-          }
-
-          for env_file in /etc/person-ai/person-ai.env /etc/person-ai/mem0.env; do
-            if [ -r "$env_file" ]; then
-              set -a
-              # shellcheck disable=SC1090
-              source "$env_file"
-              set +a
+          file_status() {
+            path="$1"
+            printf '%s_EXISTS=%s\n' "$2" "$([ -e "$path" ] && echo YES || echo NO)"
+            printf '%s_READABLE_BY_DEPLOY=%s\n' "$2" "$([ -r "$path" ] && echo YES || echo NO)"
+            if [ -e "$path" ]; then
+              stat -c "$2_OWNER=%U:%G%n$2_MODE=%a" "$path" 2>/dev/null || true
             fi
-          done
+          }
 
-          printf 'CURRENT_RELEASE=%s\n' "$(basename "$(readlink -f /opt/person-ai/current.jar 2>/dev/null || echo unknown)")"
-          printf 'SYSTEMD_ACTIVE=%s\n' "$(systemctl is-active person-ai 2>/dev/null || true)"
-          printf 'SYSTEMD_SUBSTATE=%s\n' "$(systemctl show person-ai -p SubState --value 2>/dev/null || true)"
+          file_status /etc/person-ai/person-ai.env PERSON_ENV
+          file_status /etc/person-ai/mem0.env MEM0_ENV
 
-          printf 'PERSON_API_ENABLED=%s\n' "$(bool_value "${PERSON_API_ENABLED:-false}")"
-          printf 'PERSON_API_TOKEN_PRESENT=%s\n' "$(bool_present "${PERSON_API_TOKEN:-}")"
+          printf 'SYSTEMD_ENVIRONMENT_FILES=%s\n' "$(systemctl show person-ai -p EnvironmentFiles --value 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
+          systemctl cat person-ai 2>/dev/null \
+            | grep -E '^(User|Group|EnvironmentFile|ExecStart)=' \
+            | sed 's/^/SYSTEMD_UNIT_/' || true
 
-          printf 'MEM0_ENABLED=%s\n' "$(bool_value "${MEM0_ENABLED:-false}")"
-          printf 'MEM0_REQUIRED=%s\n' "$(bool_value "${MEM0_REQUIRED:-false}")"
-          printf 'MEM0_AUTO_INSTALL_ENABLED=%s\n' "$(bool_value "${MEM0_AUTO_INSTALL_ENABLED:-${MEM0_ENABLED:-false}}")"
-          printf 'MEM0_API_KEY_PRESENT=%s\n' "$(bool_present "${MEM0_API_KEY:-}")"
-          printf 'MEM0_LLM_API_KEY_PRESENT=%s\n' "$(bool_present "${MEM0_LLM_API_KEY:-${LLM_API_KEY:-}}")"
-          printf 'MEM0_EMBEDDER_API_KEY_PRESENT=%s\n' "$(bool_present "${MEM0_EMBEDDER_API_KEY:-}")"
+          app_url="http://127.0.0.1:8080"
+          health_code="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$app_url/actuator/health" 2>/dev/null || echo CURL_ERROR)"
+          person_code="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$app_url/api/persons/$SMOKE_PERSON_ID/state" 2>/dev/null || echo CURL_ERROR)"
+          llm_code="$(curl -sS --max-time 10 -X POST -o /dev/null -w '%{http_code}' "$app_url/internal/llm/connection-test" 2>/dev/null || echo CURL_ERROR)"
+          agent_code="$(curl -sS --max-time 10 -X POST -H 'Content-Type: application/json' --data '{}' -o /dev/null -w '%{http_code}' "$app_url/internal/agent/tool-loop-test" 2>/dev/null || echo CURL_ERROR)"
+          printf 'ACTUATOR_HTTP=%s\n' "$health_code"
+          printf 'PERSON_API_UNAUTHENTICATED_HTTP=%s\n' "$person_code"
+          printf 'LLM_CONNECTION_TEST_UNAUTHENTICATED_HTTP=%s\n' "$llm_code"
+          printf 'AGENT_TEST_UNAUTHENTICATED_HTTP=%s\n' "$agent_code"
+
           printf 'MEM0_INSTALL_DIR_EXISTS=%s\n' "$([ -d /opt/person-ai/mem0 ] && echo YES || echo NO)"
-          printf 'MEM0_SOURCE_EXISTS=%s\n' "$([ -d /opt/person-ai/mem0/source/.git ] && echo YES || echo NO)"
-          printf 'MEM0_GENERATED_ADMIN_KEY_EXISTS=%s\n' "$([ -s /opt/person-ai/mem0/generated-admin-api-key ] && echo YES || echo NO)"
-          printf 'DOCKER_PRESENT=%s\n' "$(command -v docker >/dev/null 2>&1 && echo YES || echo NO)"
-          printf 'DOCKER_COMPOSE_PRESENT=%s\n' "$(docker compose version >/dev/null 2>&1 && echo YES || echo NO)"
-
-          mem0_url="${MEM0_BASE_URL:-http://127.0.0.1:8888}"
-          mem0_health="${MEM0_HEALTH_PATH:-/auth/setup-status}"
-          mem0_code="$(curl -sS --max-time 10 -o "$work_dir/mem0-health.json" -w '%{http_code}' "${mem0_url%/}$mem0_health" 2>/dev/null || echo CURL_ERROR)"
-          printf 'MEM0_HEALTH_HTTP=%s\n' "$mem0_code"
-
+          printf 'MEM0_HEALTH_HTTP=%s\n' "$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8888/auth/setup-status 2>/dev/null || echo CURL_ERROR)"
           if command -v docker >/dev/null 2>&1; then
             docker ps -a --format '{{.Names}}|{{.Status}}|{{.Image}}' 2>/dev/null \
               | grep -Ei 'mem0|qdrant|postgres|neo4j' \
               | head -20 \
-              | sed -E 's/[[:space:]]+/ /g' \
               | sed 's/^/CONTAINER=/' || true
           fi
 
-          printf 'JOURNAL_MEM0_AVAILABLE_COUNT=%s\n' "$(journalctl -u person-ai -n 300 --no-pager 2>/dev/null | grep -c 'Mem0 memory service is available' || true)"
-          printf 'JOURNAL_MEM0_UNAVAILABLE_COUNT=%s\n' "$(journalctl -u person-ai -n 300 --no-pager 2>/dev/null | grep -c 'Mem0 memory service is unavailable' || true)"
-
-          printf 'LLM_ENABLED=%s\n' "$(bool_value "${LLM_ENABLED:-false}")"
-          printf 'LLM_API_KEY_PRESENT=%s\n' "$(bool_present "${LLM_API_KEY:-}")"
-          printf 'LLM_MODEL_PRESENT=%s\n' "$(bool_present "${LLM_MODEL:-}")"
-          printf 'LLM_MODEL=%s\n' "${LLM_MODEL:-UNSET}"
-          printf 'LLM_BASE_URL=%s\n' "${LLM_BASE_URL:-UNSET}"
-          printf 'LLM_CONNECTION_TEST_ENABLED=%s\n' "$(bool_value "${LLM_CONNECTION_TEST_ENABLED:-false}")"
-          printf 'LLM_CONNECTION_TEST_TOKEN_PRESENT=%s\n' "$(bool_present "${LLM_CONNECTION_TEST_TOKEN:-}")"
-
-          if [ -n "${LLM_API_KEY:-}" ] && [ -n "${LLM_MODEL:-}" ] && [ -n "${LLM_BASE_URL:-}" ]; then
-            jq -n \
-              --arg model "$LLM_MODEL" \
-              '{model:$model,messages:[{role:"user",content:"Reply with exactly CONNECTION_OK"}],max_tokens:128,temperature:0}' \
-              > "$work_dir/llm-request.json"
-            llm_code="$(curl -sS --max-time 150 \
-              -o "$work_dir/llm-response.json" \
-              -w '%{http_code}' \
-              -H "Authorization: Bearer $LLM_API_KEY" \
-              -H 'Content-Type: application/json' \
-              --data-binary @"$work_dir/llm-request.json" \
-              "${LLM_BASE_URL%/}/chat/completions" 2>/dev/null || echo CURL_ERROR)"
-            printf 'LLM_HTTP=%s\n' "$llm_code"
-            if jq -e '.choices[0].message.content | type == "string" and length > 0' "$work_dir/llm-response.json" >/dev/null 2>&1; then
-              printf 'LLM_HAS_CONTENT=YES\n'
-            else
-              printf 'LLM_HAS_CONTENT=NO\n'
-            fi
-            llm_error_code="$(jq -r '.error.code // .error.type // empty' "$work_dir/llm-response.json" 2>/dev/null | sanitize)"
-            llm_error_message="$(jq -r '.error.message // empty' "$work_dir/llm-response.json" 2>/dev/null | sanitize)"
-            printf 'LLM_ERROR_CODE=%s\n' "${llm_error_code:-NONE}"
-            printf 'LLM_ERROR_MESSAGE=%s\n' "${llm_error_message:-NONE}"
-          else
-            printf 'LLM_HTTP=NOT_ATTEMPTED\n'
-            printf 'LLM_HAS_CONTENT=NO\n'
-            printf 'LLM_ERROR_CODE=MISSING_CONFIG\n'
-            printf 'LLM_ERROR_MESSAGE=Required LLM configuration is absent\n'
-          fi
+          journalctl -u person-ai -n 300 --no-pager 2>/dev/null \
+            | grep -E 'Mem0 memory service|Started DigitalPerson|Tomcat started|required Mem0|memory service is unavailable' \
+            | tail -20 \
+            | sed -E 's/[[:space:]]+/ /g' \
+            | cut -c1-300 \
+            | sed 's/^/JOURNAL=/' || true
           REMOTE
 
-      - name: Persist sanitized diagnostics
+      - name: Persist sanitized result
         if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .smoke/production-diagnostic.txt ]; then
+          if [ ! -f .smoke/environment-visibility-diagnostic.txt ]; then
             mkdir -p .smoke
-            printf 'DIAGNOSTIC_RESULT_MISSING=YES\n' > .smoke/production-diagnostic.txt
+            printf 'RESULT_MISSING=YES\n' > .smoke/environment-visibility-diagnostic.txt
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .smoke/production-diagnostic.txt
-          git commit -m "Record production diagnostics" || true
+          git add .smoke/environment-visibility-diagnostic.txt
+          git commit -m "Record environment visibility diagnostic" || true
           git push origin HEAD:agent/production-smoke-test
