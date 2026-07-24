@@ -1,0 +1,59 @@
+--- a/src/main/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutor.java
++++ b/src/main/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutor.java
+@@ -24,6 +24,7 @@
+ import java.util.concurrent.CompletionException;
+ import java.util.concurrent.CompletionStage;
+ import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.function.Supplier;
+ 
+ /** Default application-owned implementation of the bounded model/tool loop. */
+@@ -458,6 +459,7 @@
+         Duration safeTimeout = requirePositive(timeout, "timeout");
+         CompletableFuture<T> source = safeStage.toCompletableFuture();
+         CompletableFuture<T> guarded = new CompletableFuture<>();
++        AtomicBoolean settled = new AtomicBoolean(false);
+         CompletableFuture.delayedExecutor(
+                 safeTimeout.toNanos(),
+                 TimeUnit.NANOSECONDS
+@@ -466,11 +468,15 @@
+                     timeoutException.get(),
+                     "timeoutException cannot return null"
+             );
+-            if (guarded.completeExceptionally(failure)) {
++            if (settled.compareAndSet(false, true)) {
+                 source.cancel(true);
++                guarded.completeExceptionally(failure);
+             }
+         });
+         source.whenComplete((value, error) -> {
++            if (!settled.compareAndSet(false, true)) {
++                return;
++            }
+             if (error == null) {
+                 guarded.complete(value);
+             } else {
+--- a/src/main/java/com/laishengkai/digitalperson/infrastructure/spring/PersonApplicationConfiguration.java
++++ b/src/main/java/com/laishengkai/digitalperson/infrastructure/spring/PersonApplicationConfiguration.java
+@@ -3,6 +3,7 @@
+ import com.laishengkai.digitalperson.application.PersonDirectoryService;
+ import com.laishengkai.digitalperson.application.PersonEventCommandService;
+ import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
++import com.laishengkai.digitalperson.infrastructure.context.StateEvaluationContextConfiguration;
+ import com.laishengkai.digitalperson.person.PersonCreationRepository;
+ import com.laishengkai.digitalperson.person.PersonRepository;
+ import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
+@@ -12,11 +13,13 @@
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+ import org.springframework.context.annotation.Bean;
+ import org.springframework.context.annotation.Configuration;
++import org.springframework.context.annotation.Import;
+ 
+ import java.time.Clock;
+ 
+ /** Spring wiring for provider-neutral person application services. */
+ @Configuration(proxyBeanMethods = false)
++@Import(StateEvaluationContextConfiguration.class)
+ public class PersonApplicationConfiguration {
+ 
+     @Bean
