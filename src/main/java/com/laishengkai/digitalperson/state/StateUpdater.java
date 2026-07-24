@@ -409,7 +409,7 @@ public final class StateUpdater {
         if (sleeping) {
             energyTarget = clampRange(0.90 - sleepDebtHours * 0.035, 0.68, 0.90);
             energyRate = 0.20;
-            fatigueTarget = clampRange(0.05 + sleepDebtHours * 0.03, 0.05, 0.25);
+            fatigueTarget = clampRange(0.05 + sleepDebtHours * 0.0125, 0.05, 0.15);
             fatigueRate = 0.22;
         } else if (primary == ActivityType.EXERCISE) {
             energyTarget = 0.30;

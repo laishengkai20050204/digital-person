@@ -297,8 +297,7 @@ public final class LanguageModelPersonActivityDecisionModel
                 否则应优先结束或中断当前活动并安排合理休息。上述时长是现实性判断基准，不是机械硬上限；
                 但若继续超长活动，必须能从当前上下文指出具体依据，不能仅凭惯性提交空 commands。
 
-                必须结合 temporal、currentState、activeEffects、recentEvents、physiology 和 ROUTINE 记忆判断用餐
-                与睡眠。physiology 中包含过去24小时睡眠分钟数、睡眠债、连续清醒分钟数、距上次进食分钟数，
+                必须结合 temporal、currentState、activeEffects、recentEvents、physiology 和 ROUTINE 记忆判断用餐与睡眠。physiology 中包含过去24小时睡眠分钟数、睡眠债、连续清醒分钟数、距上次进食分钟数，
                 以及当前 PRIMARY 活动时长等级。临近通常用餐时间且饥饿或距上次进食时间支持时，应考虑结束
                 当前 PRIMARY 活动并进食；进入深夜且没有明确熬夜依据时，应逐渐结束学习、工作或娱乐，转向
                 休息、洗漱或睡眠。判断是否结束 SLEEP 时，必须同时考虑本次睡眠 elapsedMinutes、过去24小时

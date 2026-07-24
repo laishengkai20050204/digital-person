@@ -46,12 +46,12 @@ class StateUpdateConsistencyRegressionTest {
 
     @Test
     void completedEventEffectMustStopAtTheEventEndBoundary() {
-        Person person = new Person(PERSONALITY, stateWithHunger(0.7));
+        Person person = new Person(PERSONALITY, stateWithValence(0.7));
         PersonEvent eating = event(ActivityType.EAT, "吃饭", START);
 
         InMemoryRepository repository = new InMemoryRepository(person);
         EventStateImpactEvaluator evaluator = context -> CompletableFuture.completedFuture(
-                eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
+                eventBoundImpact(new StateTransition(StateDimension.VALENCE, -1.0))
         );
         PersonEventCommandService service = new PersonEventCommandService(
                 repository,
@@ -73,7 +73,7 @@ class StateUpdateConsistencyRegressionTest {
         Person stored = repository.current(person.getId());
         assertEquals(
                 expectedAfterTenMinutes,
-                stored.getState().getPhysicalState().getHunger(),
+                stored.getStateSnapshot().valence(),
                 EPSILON,
                 "an event-bound effect must not continue after the event has ended"
         );
@@ -165,6 +165,15 @@ class StateUpdateConsistencyRegressionTest {
                 title,
                 "",
                 TimeRange.openEnded(startTime)
+        );
+    }
+
+    private static PersonState stateWithValence(double valence) {
+        return new PersonState(
+                new AffectState(valence, 0.5, 0.0),
+                CognitiveState.baseline(),
+                PhysicalState.baseline(),
+                SocialState.baseline()
         );
     }
 

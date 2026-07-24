@@ -47,16 +47,16 @@ class PersonEventCommandServiceTest {
 
     @Test
     void replacementSettlesOldEffectAndInstallsNewEffectAtomically() {
-        Person person = new Person(PERSONALITY, stateWithHunger(0.7));
+        Person person = new Person(PERSONALITY, stateWithValence(0.7));
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
                 context -> switch (context.newEvent().activityType()) {
                     case "EAT" -> CompletableFuture.completedFuture(
-                            eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
+                            eventBoundImpact(new StateTransition(StateDimension.VALENCE, -1.0))
                     );
                     case "REST" -> CompletableFuture.completedFuture(
-                            eventBoundImpact(new StateTransition(StateDimension.ENERGY, 1.0))
+                            eventBoundImpact(new StateTransition(StateDimension.TENSION, 1.0))
                     );
                     default -> CompletableFuture.failedFuture(
                             new IllegalArgumentException("unexpected activity")
@@ -75,8 +75,8 @@ class PersonEventCommandServiceTest {
                 replacementTime
         ).toCompletableFuture().join();
 
-        double expectedHunger = 0.7 * Math.exp(-1.0 / 6.0);
-        assertEquals(expectedHunger, result.state().hunger(), EPSILON);
+        double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);
+        assertEquals(expectedValence, result.state().valence(), EPSILON);
         assertEquals(1, result.stateEvolutionContext().effects().size());
         assertTrue(result.stateEvolutionContext().effects().values().stream()
                 .allMatch(effect -> effect.sourceEventId().equals(resting.getId())));
@@ -92,12 +92,12 @@ class PersonEventCommandServiceTest {
 
     @Test
     void finishSettlesThroughEndTimeThenRemovesEventBoundEffect() {
-        Person person = new Person(PERSONALITY, stateWithHunger(0.7));
+        Person person = new Person(PERSONALITY, stateWithValence(0.7));
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
                 context -> CompletableFuture.completedFuture(
-                        eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))
+                        eventBoundImpact(new StateTransition(StateDimension.VALENCE, -1.0))
                 )
         );
         PersonEvent eating = openEvent(ActivityType.EAT, "吃饭", START);
@@ -111,8 +111,8 @@ class PersonEventCommandServiceTest {
                 finishTime
         ).toCompletableFuture().join();
 
-        double expectedHunger = 0.7 * Math.exp(-1.0 / 6.0);
-        assertEquals(expectedHunger, result.state().hunger(), EPSILON);
+        double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);
+        assertEquals(expectedValence, result.state().valence(), EPSILON);
         assertTrue(result.stateEvolutionContext().effects().isEmpty());
         assertTrue(result.stateEvolutionContext().evaluatedEventIds().isEmpty());
         assertEquals(EventEndReason.COMPLETED, result.event().getEndReason().orElseThrow());
@@ -295,6 +295,15 @@ class PersonEventCommandServiceTest {
             Instant startTime
     ) {
         return new PersonEvent(type, title, "", TimeRange.openEnded(startTime));
+    }
+
+    private static PersonState stateWithValence(double valence) {
+        return new PersonState(
+                new AffectState(valence, 0.5, 0.0),
+                CognitiveState.baseline(),
+                PhysicalState.baseline(),
+                SocialState.baseline()
+        );
     }
 
     private static PersonState stateWithHunger(double hunger) {

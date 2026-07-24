@@ -97,12 +97,12 @@ public record PersonEventSnapshot(
                 endTime == null
                         ? 0L
                         : nonNegativeMinutes(startTime, endTime),
-                ActivityDurationStatus.classify(
-                        ActivityType.valueOf(activityType),
-                        endTime == null
-                                ? 0L
-                                : nonNegativeMinutes(startTime, endTime)
-                ),
+                compatibilityDurationStatus(
+                activityType,
+                endTime == null
+                        ? 0L
+                        : nonNegativeMinutes(startTime, endTime)
+        ),
                 endTime == null ? null : 0L
         );
     }
@@ -147,6 +147,20 @@ public record PersonEventSnapshot(
                 ),
                 active ? null : nonNegativeMinutes(endTime, max(now, endTime))
         );
+    }
+
+    private static ActivityDurationStatus compatibilityDurationStatus(
+            String activityType,
+            long elapsedMinutes
+    ) {
+        try {
+            return ActivityDurationStatus.classify(
+                    ActivityType.valueOf(activityType),
+                    elapsedMinutes
+            );
+        } catch (IllegalArgumentException ignored) {
+            return ActivityDurationStatus.NORMAL;
+        }
     }
 
     private static Instant max(Instant left, Instant right) {
