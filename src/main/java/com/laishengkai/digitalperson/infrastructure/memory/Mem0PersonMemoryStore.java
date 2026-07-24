@@ -1,9 +1,9 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.laishengkai.digitalperson.memory.MemoryMutation;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
 import com.laishengkai.digitalperson.memory.PersonMemoryWriteRequest;
+import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -54,6 +54,6 @@ public final class Mem0PersonMemoryStore implements PersonMemoryStore {
 
     private static String text(JsonNode node, String fieldName) {
         JsonNode value = node.get(fieldName);
-        return value != null && value.isTextual() ? value.asText().strip() : "";
+        return value != null && value.isTextual() ? value.asString().strip() : "";
     }
 }

@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laishengkai.digitalperson.memory.MemoryAvailability;
 import com.laishengkai.digitalperson.memory.MemoryMessage;
 import com.laishengkai.digitalperson.memory.MemoryMessageRole;
@@ -15,6 +14,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -164,7 +164,6 @@ class Mem0AdaptersTest {
         assertThat(context.items()).isEmpty();
     }
 
-
     @Test
     void providerErrorBodiesAreNotExposedThroughExceptions() {
         server.removeContext("/memories");
@@ -200,7 +199,6 @@ class Mem0AdaptersTest {
         assertThat(client(false).probe().toCompletableFuture().join()).isTrue();
     }
 
-
     private static Throwable unwrap(Throwable error) {
         Throwable current = error;
         while (current instanceof CompletionException && current.getCause() != null) {
@@ -223,7 +221,7 @@ class Mem0AdaptersTest {
                 Duration.ofSeconds(3),
                 "/auth/setup-status"
         );
-        return new Mem0HttpClient(properties, new ObjectMapper());
+        return new Mem0HttpClient(properties, JsonMapper.builder().build());
     }
 
     private static String readBody(HttpExchange exchange) throws IOException {

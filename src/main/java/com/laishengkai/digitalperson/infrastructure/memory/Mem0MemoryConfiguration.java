@@ -1,14 +1,15 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Spring wiring for the optional self-hosted Mem0 adapter. */
 @Configuration(proxyBeanMethods = false)
@@ -23,9 +24,12 @@ public class Mem0MemoryConfiguration {
     )
     Mem0HttpClient mem0HttpClient(
             Mem0Properties properties,
-            ObjectMapper objectMapper
+            ObjectProvider<JsonMapper> jsonMapperProvider
     ) {
-        return new Mem0HttpClient(properties, objectMapper);
+        JsonMapper jsonMapper = jsonMapperProvider.getIfAvailable(
+                () -> JsonMapper.builder().build()
+        );
+        return new Mem0HttpClient(properties, jsonMapper);
     }
 
     @Bean

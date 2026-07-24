@@ -1,12 +1,12 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.laishengkai.digitalperson.memory.MemoryMessage;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import com.laishengkai.digitalperson.memory.PersonMemoryWriteRequest;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -20,12 +20,12 @@ import java.util.concurrent.CompletionStage;
 /** Minimal asynchronous client for the self-hosted Mem0 OSS REST API. */
 final class Mem0HttpClient {
     private final Mem0Properties properties;
-    private final ObjectMapper objectMapper;
+    private final JsonMapper jsonMapper;
     private final HttpClient httpClient;
 
-    Mem0HttpClient(Mem0Properties properties, ObjectMapper objectMapper) {
+    Mem0HttpClient(Mem0Properties properties, JsonMapper jsonMapper) {
         this.properties = Objects.requireNonNull(properties, "properties cannot be null");
-        this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper cannot be null");
+        this.jsonMapper = Objects.requireNonNull(jsonMapper, "jsonMapper cannot be null");
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
                 .followRedirects(HttpClient.Redirect.NORMAL)
@@ -44,7 +44,7 @@ final class Mem0HttpClient {
 
     CompletionStage<JsonNode> search(PersonMemoryQuery query) {
         Objects.requireNonNull(query, "query cannot be null");
-        ObjectNode payload = objectMapper.createObjectNode();
+        ObjectNode payload = jsonMapper.createObjectNode();
         payload.put(
                 "query",
                 query.relevanceQuery().isBlank()
@@ -59,7 +59,7 @@ final class Mem0HttpClient {
 
     CompletionStage<JsonNode> add(PersonMemoryWriteRequest request) {
         Objects.requireNonNull(request, "request cannot be null");
-        ObjectNode payload = objectMapper.createObjectNode();
+        ObjectNode payload = jsonMapper.createObjectNode();
         var messages = payload.putArray("messages");
         for (MemoryMessage message : request.messages()) {
             messages.addObject()
@@ -93,8 +93,8 @@ final class Mem0HttpClient {
     ) {
         String body;
         try {
-            body = objectMapper.writeValueAsString(payload);
-        } catch (JsonProcessingException exception) {
+            body = jsonMapper.writeValueAsString(payload);
+        } catch (JacksonException exception) {
             return CompletableFuture.failedFuture(new Mem0ClientException(
                     "failed to serialize Mem0 request",
                     exception
@@ -128,11 +128,11 @@ final class Mem0HttpClient {
     private JsonNode parseResponse(int status, String body) {
         requireSuccess(status);
         if (body == null || body.isBlank()) {
-            return objectMapper.getNodeFactory().nullNode();
+            return jsonMapper.getNodeFactory().nullNode();
         }
         try {
-            return objectMapper.readTree(body);
-        } catch (JsonProcessingException exception) {
+            return jsonMapper.readTree(body);
+        } catch (JacksonException exception) {
             throw new CompletionException(new Mem0ClientException(
                     "Mem0 returned invalid JSON",
                     exception
