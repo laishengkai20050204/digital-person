@@ -7,6 +7,7 @@ import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
+import com.laishengkai.digitalperson.memory.PersonMemoryWriteRequest;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.junit.jupiter.api.Test;
 
@@ -28,9 +29,7 @@ class MemoryTestControllerTest {
         AtomicReference<String> deletedMemoryId = new AtomicReference<>();
         PersonMemoryStore store = new PersonMemoryStore() {
             @Override
-            public CompletableFuture<List<MemoryMutation>> add(
-                    com.laishengkai.digitalperson.memory.PersonMemoryWriteRequest request
-            ) {
+            public CompletableFuture<List<MemoryMutation>> add(PersonMemoryWriteRequest request) {
                 assertThat(request.messages()).hasSize(2);
                 assertThat(request.metadata()).containsEntry("section", "PREFERENCE");
                 assertThat(request.infer()).isTrue();
@@ -112,7 +111,7 @@ class MemoryTestControllerTest {
     @Test
     void rejectsMissingOrIncorrectTokens() {
         MemoryTestController controller = new MemoryTestController(
-                request -> CompletableFuture.completedFuture(List.of()),
+                emptyStore(),
                 query -> CompletableFuture.completedFuture(PersonMemoryContext.available(List.of())),
                 new MemoryTestApiProperties(true, TOKEN)
         );
@@ -150,5 +149,19 @@ class MemoryTestControllerTest {
                 new MemoryTestController.SearchRequest("test", Set.of(), 5)
         )).isInstanceOf(MemoryTestUnavailableException.class)
                 .hasMessageContaining("retrieval");
+    }
+
+    private static PersonMemoryStore emptyStore() {
+        return new PersonMemoryStore() {
+            @Override
+            public CompletableFuture<List<MemoryMutation>> add(PersonMemoryWriteRequest request) {
+                return CompletableFuture.completedFuture(List.of());
+            }
+
+            @Override
+            public CompletableFuture<Void> delete(String memoryId) {
+                return CompletableFuture.completedFuture(null);
+            }
+        };
     }
 }
