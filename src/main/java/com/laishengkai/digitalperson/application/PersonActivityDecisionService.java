@@ -32,6 +32,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -448,6 +449,7 @@ public final class PersonActivityDecisionService {
         }
 
         CompletableFuture<T> guarded = new CompletableFuture<>();
+        AtomicBoolean settled = new AtomicBoolean();
         long delayNanos;
         try {
             delayNanos = Math.max(1L, remaining.toNanos());
@@ -461,11 +463,15 @@ public final class PersonActivityDecisionService {
                                     deadline,
                                     phase
                             );
-                    if (guarded.completeExceptionally(timeout)) {
+                    if (settled.compareAndSet(false, true)) {
                         source.cancel(true);
+                        guarded.completeExceptionally(timeout);
                     }
                 });
         source.whenComplete((value, error) -> {
+            if (!settled.compareAndSet(false, true)) {
+                return;
+            }
             if (error != null) {
                 guarded.completeExceptionally(unwrapCompletionFailure(error));
                 return;
@@ -478,7 +484,7 @@ public final class PersonActivityDecisionService {
             }
         });
         guarded.whenComplete((ignored, error) -> {
-            if (guarded.isCancelled()) {
+            if (guarded.isCancelled() && settled.compareAndSet(false, true)) {
                 source.cancel(true);
             }
         });
