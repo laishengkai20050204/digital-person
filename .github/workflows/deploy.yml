@@ -33,8 +33,10 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Validate deployment script
-        run: bash -n ops/deploy-from-git.sh
+      - name: Validate deployment scripts
+        run: |
+          bash -n ops/deploy-from-git.sh
+          bash -n ops/ensure-mem0.sh
 
       - name: Build and test
         run: mvn --batch-mode --no-transfer-progress clean verify
