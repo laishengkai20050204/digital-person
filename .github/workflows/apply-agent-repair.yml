@@ -7,6 +7,13 @@ on:
     paths:
       - ".agent-fix/**"
       - ".github/workflows/apply-agent-repair.yml"
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: write
@@ -16,10 +23,12 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out branch
+      - name: Check out source branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Reconstruct and verify patch
         shell: bash
@@ -33,6 +42,8 @@ jobs:
 
       - name: Apply and commit repairs
         shell: bash
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
           set -Eeuo pipefail
           git apply /tmp/fixes.patch
@@ -42,4 +53,4 @@ jobs:
           git add -A
           git diff --cached --check
           git commit -m 'Fix state evolution and agent reliability'
-          git push origin HEAD:agent/fix-state-agent-reliability
+          git push origin HEAD:"$TARGET_BRANCH"
