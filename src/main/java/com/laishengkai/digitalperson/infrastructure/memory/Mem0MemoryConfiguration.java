@@ -60,8 +60,11 @@ public class Mem0MemoryConfiguration {
             name = {"enabled", "retrieval-enabled"},
             havingValue = "true"
     )
-    PersonMemoryGateway mem0PersonMemoryGateway(Mem0HttpClient client) {
-        return new Mem0PersonMemoryGateway(client);
+    PersonMemoryGateway mem0PersonMemoryGateway(
+            Mem0HttpClient client,
+            Mem0Properties properties
+    ) {
+        return new Mem0PersonMemoryGateway(client, properties.minimumRelevance());
     }
 
     @Bean

@@ -52,6 +52,8 @@ digital-person:
       enabled: ${MEM0_ENABLED:false}
       required: ${MEM0_REQUIRED:false}
       retrieval-enabled: ${MEM0_RETRIEVAL_ENABLED:false}
+      minimum-relevance: ${MEM0_MINIMUM_RELEVANCE:0.30}
+      extraction-instructions: "${MEM0_EXTRACTION_INSTRUCTIONS:将提取出的长期记忆始终写成简体中文。只保存对未来交互有持续价值的明确事实、偏好、关系、目标、计划、承诺、习惯和重要经历；使用第三人称，表达简洁，一条记忆只包含一个主要事实；不要使用 Agent learned that 等英文模板，不要翻译人名、产品名等专有名词。}"
       base-url: ${MEM0_BASE_URL:http://127.0.0.1:8888}
       api-key: ${MEM0_API_KEY:}
       connect-timeout: ${MEM0_CONNECT_TIMEOUT:2s}

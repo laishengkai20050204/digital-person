@@ -52,6 +52,7 @@ final class Mem0HttpClient {
                         : query.relevanceQuery()
         );
         payload.put("top_k", query.maxItems());
+        payload.put("threshold", properties.minimumRelevance());
         payload.putObject("filters")
                 .put("agent_id", query.personId().toString());
         return sendJson("/search", "POST", payload);
@@ -68,6 +69,9 @@ final class Mem0HttpClient {
         }
         payload.put("agent_id", request.personId().toString());
         payload.put("infer", request.infer());
+        if (request.infer()) {
+            payload.put("prompt", properties.extractionInstructions());
+        }
         ObjectNode metadata = payload.putObject("metadata");
         metadata.put("source", "digital-person");
         request.metadata().forEach(metadata::put);

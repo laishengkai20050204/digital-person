@@ -31,9 +31,10 @@ final class Mem0StartupProbe implements ApplicationRunner {
                     );
             if (available) {
                 LOGGER.info(
-                        "Mem0 memory service is available: baseUrl={}, retrievalEnabled={}",
+                        "Mem0 memory service is available: baseUrl={}, retrievalEnabled={}, minimumRelevance={}",
                         properties.baseUrl(),
-                        properties.retrievalEnabled()
+                        properties.retrievalEnabled(),
+                        properties.minimumRelevance()
                 );
                 return;
             }

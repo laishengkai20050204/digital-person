@@ -12,18 +12,27 @@ public record Mem0Properties(
         boolean enabled,
         boolean required,
         boolean retrievalEnabled,
+        Double minimumRelevance,
+        String extractionInstructions,
         URI baseUrl,
         String apiKey,
         Duration connectTimeout,
         Duration requestTimeout,
         String healthPath
 ) {
+    static final double DEFAULT_MINIMUM_RELEVANCE = 0.30;
+    static final String DEFAULT_EXTRACTION_INSTRUCTIONS = """
+            将提取出的长期记忆始终写成简体中文。只保存对未来交互有持续价值的明确事实、偏好、关系、目标、计划、承诺、习惯和重要经历；使用第三人称，表达简洁，一条记忆只包含一个主要事实；不要使用“Agent learned that”等英文模板，不要翻译人名、产品名等专有名词。
+            """.strip();
+
     private static final URI DEFAULT_BASE_URL = URI.create("http://127.0.0.1:8888");
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
     private static final String DEFAULT_HEALTH_PATH = "/auth/setup-status";
 
     public Mem0Properties {
+        minimumRelevance = probability(minimumRelevance, "minimumRelevance");
+        extractionInstructions = normalizeInstructions(extractionInstructions);
         baseUrl = validateBaseUrl(baseUrl == null ? DEFAULT_BASE_URL : baseUrl);
         apiKey = normalize(apiKey);
         connectTimeout = positive(
@@ -61,7 +70,9 @@ public record Mem0Properties(
                 + required
                 + ", retrievalEnabled="
                 + retrievalEnabled
-                + ", baseUrl="
+                + ", minimumRelevance="
+                + minimumRelevance
+                + ", extractionInstructions=<configured>, baseUrl="
                 + baseUrl
                 + ", apiKey=<redacted>, connectTimeout="
                 + connectTimeout
@@ -90,6 +101,19 @@ public record Mem0Properties(
             throw new IllegalArgumentException(fieldName + " must be positive");
         }
         return duration;
+    }
+
+    private static double probability(Double value, String fieldName) {
+        double normalized = value == null ? DEFAULT_MINIMUM_RELEVANCE : value;
+        if (!Double.isFinite(normalized) || normalized < 0.0 || normalized > 1.0) {
+            throw new IllegalArgumentException(fieldName + " must be between 0.0 and 1.0");
+        }
+        return normalized;
+    }
+
+    private static String normalizeInstructions(String value) {
+        String normalized = normalize(value);
+        return normalized.isEmpty() ? DEFAULT_EXTRACTION_INSTRUCTIONS : normalized;
     }
 
     private static String normalize(String value) {
