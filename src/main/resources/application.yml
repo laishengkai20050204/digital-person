@@ -31,6 +31,11 @@ digital-person:
   person-api:
     enabled: ${PERSON_API_ENABLED:false}
     token: ${PERSON_API_TOKEN:}
+  dialogue:
+    max-memory-items: ${DIALOGUE_MAX_MEMORY_ITEMS:8}
+    max-conversation-turns: ${DIALOGUE_MAX_CONVERSATION_TURNS:12}
+    max-output-tokens: ${DIALOGUE_MAX_OUTPUT_TOKENS:1200}
+    temperature: ${DIALOGUE_TEMPERATURE:0.7}
   activity-scheduler:
     enabled: ${ACTIVITY_SCHEDULER_ENABLED:false}
     poll-interval: ${ACTIVITY_SCHEDULER_POLL_INTERVAL:10s}

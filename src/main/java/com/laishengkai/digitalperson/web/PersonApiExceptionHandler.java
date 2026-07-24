@@ -6,6 +6,7 @@ import com.laishengkai.digitalperson.application.PersonNotFoundException;
 import com.laishengkai.digitalperson.application.PersonVersionConflictException;
 import com.laishengkai.digitalperson.application.UnsettledPersonEventException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
+import com.laishengkai.digitalperson.dialogue.PersonDialogueException;
 import com.laishengkai.digitalperson.infrastructure.activity.PersonActivityDecisionException;
 import com.laishengkai.digitalperson.infrastructure.state.StateTransitionEvaluationException;
 import org.springframework.http.HttpStatus;
@@ -21,6 +22,7 @@ import java.util.concurrent.CompletionException;
         PersonController.class,
         PersonEventController.class,
         PersonActivityDecisionController.class,
+        PersonDialogueController.class,
         MemoryTestController.class
 })
 public final class PersonApiExceptionHandler {
@@ -60,6 +62,15 @@ public final class PersonApiExceptionHandler {
             UnsettledPersonEventException error
     ) {
         return response(HttpStatus.CONFLICT, "PERSON_EVENT_STATE_UNSETTLED", error.getMessage());
+    }
+
+    @ExceptionHandler(PersonDialogueException.class)
+    public ResponseEntity<PersonController.ErrorResponse> dialogueFailure() {
+        return response(
+                HttpStatus.BAD_GATEWAY,
+                "DIALOGUE_GENERATION_FAILED",
+                "The configured language model could not generate a dialogue reply"
+        );
     }
 
     @ExceptionHandler({
@@ -142,6 +153,9 @@ public final class PersonApiExceptionHandler {
         }
         if (cause instanceof UnsettledPersonEventException unsettled) {
             return unsettledEvent(unsettled);
+        }
+        if (cause instanceof PersonDialogueException) {
+            return dialogueFailure();
         }
         if (cause instanceof LanguageModelException modelFailure) {
             return stateEvaluationFailure(modelFailure);
