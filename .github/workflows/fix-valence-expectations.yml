@@ -22,18 +22,26 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          old = 'double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);'
-          new = 'double expectedValence = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);'
-          expected = {
-              'src/test/java/com/laishengkai/digitalperson/application/PersonEventCommandServiceTest.java': 2,
-              'src/test/java/com/laishengkai/digitalperson/application/StateUpdateConsistencyRegressionTest.java': 1,
+          replacements = {
+              'src/test/java/com/laishengkai/digitalperson/application/PersonEventCommandServiceTest.java': (
+                  'double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);',
+                  'double expectedValence = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);',
+                  2,
+              ),
+              'src/test/java/com/laishengkai/digitalperson/application/StateUpdateConsistencyRegressionTest.java': (
+                  'double expectedAfterTenMinutes = 0.7 * Math.exp(-1.0 / 6.0);',
+                  'double expectedAfterTenMinutes = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);',
+                  1,
+              ),
           }
-          for name, count in expected.items():
+          for name, (old, new, expected_count) in replacements.items():
               path = Path(name)
               text = path.read_text()
               actual = text.count(old)
-              if actual != count:
-                  raise SystemExit(f'{name}: expected {count} formula matches, found {actual}')
+              if actual != expected_count:
+                  raise SystemExit(
+                      f'{name}: expected {expected_count} formula matches, found {actual}'
+                  )
               path.write_text(text.replace(old, new))
           PY
           rm -f .github/workflows/fix-valence-expectations.yml
