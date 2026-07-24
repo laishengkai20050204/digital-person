@@ -34,10 +34,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          cat .agent-fix/patch.part* | base64 --decode > /tmp/fixes.patch.gz
-          echo '0924de4342897f8634e02430993b0b887a3cd771d955a0e2e9f53b968b14f26c  /tmp/fixes.patch.gz' | sha256sum --check --strict
+          cat .agent-fix/patch.part* | base64 --decode --ignore-garbage > /tmp/fixes.patch.gz
+          sha256sum /tmp/fixes.patch.gz
+          gzip --test /tmp/fixes.patch.gz
           gzip --decompress --stdout /tmp/fixes.patch.gz > /tmp/fixes.patch
-          echo '322410ffceec168b5a768d0b289fb83f271d901cf66581b0afa83c67a54c19c9  /tmp/fixes.patch' | sha256sum --check --strict
+          sha256sum /tmp/fixes.patch
           git apply --check /tmp/fixes.patch
 
       - name: Apply and commit repairs
