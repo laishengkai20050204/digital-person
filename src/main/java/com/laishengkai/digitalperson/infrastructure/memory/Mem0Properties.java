@@ -12,7 +12,7 @@ public record Mem0Properties(
         boolean enabled,
         boolean required,
         boolean retrievalEnabled,
-        double minimumRelevance,
+        Double minimumRelevance,
         String extractionInstructions,
         URI baseUrl,
         String apiKey,
@@ -103,8 +103,8 @@ public record Mem0Properties(
         return duration;
     }
 
-    private static double probability(double value, String fieldName) {
-        double normalized = value == 0.0 ? DEFAULT_MINIMUM_RELEVANCE : value;
+    private static double probability(Double value, String fieldName) {
+        double normalized = value == null ? DEFAULT_MINIMUM_RELEVANCE : value;
         if (!Double.isFinite(normalized) || normalized < 0.0 || normalized > 1.0) {
             throw new IllegalArgumentException(fieldName + " must be between 0.0 and 1.0");
         }
