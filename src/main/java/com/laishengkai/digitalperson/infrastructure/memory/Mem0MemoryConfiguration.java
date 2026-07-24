@@ -9,6 +9,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Spring wiring for the optional self-hosted Mem0 adapter. */
@@ -53,6 +54,7 @@ public class Mem0MemoryConfiguration {
     }
 
     @Bean
+    @Primary
     @ConditionalOnProperty(
             prefix = "digital-person.memory.mem0",
             name = {"enabled", "retrieval-enabled"},
