@@ -1,4 +1,4 @@
-name: Application-Level Production Smoke Test
+name: Running-Process Production Smoke Test
 
 on:
   push:
@@ -39,7 +39,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Run real application smoke tests
+      - name: Run real application tests
         shell: bash
         run: |
           set -euo pipefail
@@ -54,9 +54,9 @@ jobs:
             -o ServerAliveCountMax=3 \
             "$SERVER_USER@$SERVER_HOST" \
             "SMOKE_PERSON_ID='$SMOKE_PERSON_ID' bash -s" \
-            > .smoke/application-smoke-result.txt <<'REMOTE'
+            > .smoke/process-environment-smoke-result.txt <<'REMOTE'
           set -uo pipefail
-          work_dir="$(mktemp -d /tmp/person-ai-app-smoke.XXXXXX)"
+          work_dir="$(mktemp -d /tmp/person-ai-process-smoke.XXXXXX)"
           trap 'rm -rf "$work_dir"' EXIT
           overall=PASS
 
@@ -65,26 +65,41 @@ jobs:
             if [ "$2" != PASS ] && [ "$2" != SKIP ]; then overall=FAIL; fi
           }
 
-          systemctl show person-ai -p Environment --value \
-            | python3 -c '
+          main_pid="$(systemctl show person-ai -p MainPID --value 2>/dev/null || true)"
+          printf 'MAIN_PID_PRESENT=%s\n' "$([ -n "$main_pid" ] && [ "$main_pid" != 0 ] && echo YES || echo NO)"
+          if [ -z "$main_pid" ] || [ "$main_pid" = 0 ] || [ ! -r "/proc/$main_pid/environ" ]; then
+            printf 'PROCESS_ENVIRONMENT_READABLE=NO\n'
+            printf 'OVERALL=FAIL\n'
+            exit 0
+          fi
+          printf 'PROCESS_ENVIRONMENT_READABLE=YES\n'
+
+          python3 -c '
           import shlex, sys
-          for item in shlex.split(sys.stdin.read()):
-              if "=" not in item:
+          data = open(f"/proc/{sys.argv[1]}/environ", "rb").read().split(b"\0")
+          for raw in data:
+              if not raw or b"=" not in raw:
                   continue
-              name, value = item.split("=", 1)
+              name_b, value_b = raw.split(b"=", 1)
+              name = name_b.decode("utf-8", "strict")
+              value = value_b.decode("utf-8", "strict")
               if not name.replace("_", "").isalnum():
                   continue
               print("export " + name + "=" + shlex.quote(value))
-          ' > "$work_dir/service-environment.sh"
-          chmod 600 "$work_dir/service-environment.sh"
+          ' "$main_pid" > "$work_dir/process-environment.sh"
+          chmod 600 "$work_dir/process-environment.sh"
           # shellcheck disable=SC1090
-          source "$work_dir/service-environment.sh"
+          source "$work_dir/process-environment.sh"
 
           printf 'CURRENT_RELEASE=%s\n' "$(basename "$(readlink -f /opt/person-ai/current.jar 2>/dev/null || echo unknown)")"
+          printf 'PERSON_API_ENABLED=%s\n' "${PERSON_API_ENABLED:-UNSET}"
           printf 'PERSON_API_TOKEN_PRESENT=%s\n' "$([ -n "${PERSON_API_TOKEN:-}" ] && echo YES || echo NO)"
-          printf 'LLM_CONNECTION_TEST_TOKEN_PRESENT=%s\n' "$([ -n "${LLM_CONNECTION_TEST_TOKEN:-}" ] && echo YES || echo NO)"
+          printf 'LLM_ENABLED=%s\n' "${LLM_ENABLED:-UNSET}"
           printf 'LLM_MODEL=%s\n' "${LLM_MODEL:-UNSET}"
+          printf 'LLM_CONNECTION_TEST_ENABLED=%s\n' "${LLM_CONNECTION_TEST_ENABLED:-UNSET}"
+          printf 'LLM_CONNECTION_TEST_TOKEN_PRESENT=%s\n' "$([ -n "${LLM_CONNECTION_TEST_TOKEN:-}" ] && echo YES || echo NO)"
           printf 'MEM0_ENABLED=%s\n' "${MEM0_ENABLED:-UNSET}"
+          printf 'MEM0_REQUIRED=%s\n' "${MEM0_REQUIRED:-UNSET}"
           printf 'MEM0_API_KEY_PRESENT=%s\n' "$([ -n "${MEM0_API_KEY:-}" ] && echo YES || echo NO)"
           printf 'MEM0_EMBEDDER_API_KEY_PRESENT=%s\n' "$([ -n "${MEM0_EMBEDDER_API_KEY:-}" ] && echo YES || echo NO)"
 
@@ -96,23 +111,24 @@ jobs:
           fi
 
           person_result=FAIL
+          person_http=NOT_ATTEMPTED
           if [ -n "${PERSON_API_TOKEN:-}" ]; then
             person_http="$(curl -sS --max-time 20 \
               -o "$work_dir/person.json" \
               -w '%{http_code}' \
               -H "X-Internal-Token: $PERSON_API_TOKEN" \
               "$app_url/api/persons/$SMOKE_PERSON_ID/state" 2>/dev/null || echo CURL_ERROR)"
-            printf 'PERSON_READ_HTTP=%s\n' "$person_http"
             if [ "$person_http" = 200 ] \
                 && jq -e --arg id "$SMOKE_PERSON_ID" '.personId == $id and (.state | type == "object")' "$work_dir/person.json" >/dev/null 2>&1; then
               person_result=PASS
             fi
-          else
-            printf 'PERSON_READ_HTTP=NOT_ATTEMPTED\n'
           fi
+          printf 'PERSON_READ_HTTP=%s\n' "$person_http"
           record PERSON_DATABASE_READ "$person_result"
 
           llm_result=FAIL
+          llm_http=NOT_ATTEMPTED
+          llm_status=NOT_ATTEMPTED
           if [ -n "${LLM_CONNECTION_TEST_TOKEN:-}" ]; then
             llm_http="$(curl -sS --max-time 150 \
               -X POST \
@@ -120,19 +136,19 @@ jobs:
               -w '%{http_code}' \
               -H "X-Internal-Token: $LLM_CONNECTION_TEST_TOKEN" \
               "$app_url/internal/llm/connection-test" 2>/dev/null || echo CURL_ERROR)"
-            printf 'LLM_CONNECTION_HTTP=%s\n' "$llm_http"
-            printf 'LLM_CONNECTION_STATUS=%s\n' "$(jq -r '.status // "NO_STATUS"' "$work_dir/llm.json" 2>/dev/null || echo INVALID_JSON)"
+            llm_status="$(jq -r '.status // "NO_STATUS"' "$work_dir/llm.json" 2>/dev/null || echo INVALID_JSON)"
             if [ "$llm_http" = 200 ] \
                 && jq -e '.status == "UP" and .modelResponse == "CONNECTION_OK"' "$work_dir/llm.json" >/dev/null 2>&1; then
               llm_result=PASS
             fi
-          else
-            printf 'LLM_CONNECTION_HTTP=NOT_ATTEMPTED\n'
-            printf 'LLM_CONNECTION_STATUS=MISSING_TOKEN\n'
           fi
+          printf 'LLM_CONNECTION_HTTP=%s\n' "$llm_http"
+          printf 'LLM_CONNECTION_STATUS=%s\n' "$llm_status"
           record LLM_APPLICATION_REQUEST "$llm_result"
 
           agent_result=FAIL
+          agent_http=NOT_ATTEMPTED
+          agent_status=NOT_ATTEMPTED
           if [ -n "${LLM_CONNECTION_TEST_TOKEN:-}" ]; then
             agent_http="$(curl -sS --max-time 180 \
               -X POST \
@@ -140,19 +156,23 @@ jobs:
               -w '%{http_code}' \
               -H "X-Internal-Token: $LLM_CONNECTION_TEST_TOKEN" \
               "$app_url/internal/agent/tool-loop-test" 2>/dev/null || echo CURL_ERROR)"
-            printf 'AGENT_TOOL_LOOP_HTTP=%s\n' "$agent_http"
-            printf 'AGENT_TOOL_LOOP_STATUS=%s\n' "$(jq -r '.status // "NO_STATUS"' "$work_dir/agent.json" 2>/dev/null || echo INVALID_JSON)"
+            agent_status="$(jq -r '.status // "NO_STATUS"' "$work_dir/agent.json" 2>/dev/null || echo INVALID_JSON)"
             printf 'AGENT_MODEL_INVOCATIONS=%s\n' "$(jq -r '.modelInvocationCount // "UNKNOWN"' "$work_dir/agent.json" 2>/dev/null || echo INVALID_JSON)"
             printf 'AGENT_TOOL_EXECUTIONS=%s\n' "$(jq -r '.toolExecutionCount // "UNKNOWN"' "$work_dir/agent.json" 2>/dev/null || echo INVALID_JSON)"
             if [ "$agent_http" = 200 ] \
                 && jq -e '.status == "UP" and .modelResponse == "AGENT_TOOL_OK" and .toolExecutionCount == 1' "$work_dir/agent.json" >/dev/null 2>&1; then
               agent_result=PASS
             fi
-          else
-            printf 'AGENT_TOOL_LOOP_HTTP=NOT_ATTEMPTED\n'
-            printf 'AGENT_TOOL_LOOP_STATUS=MISSING_TOKEN\n'
           fi
+          printf 'AGENT_TOOL_LOOP_HTTP=%s\n' "$agent_http"
+          printf 'AGENT_TOOL_LOOP_STATUS=%s\n' "$agent_status"
           record AGENT_REAL_TOOL_LOOP "$agent_result"
+
+          mem0_url="${MEM0_BASE_URL:-http://127.0.0.1:8888}"
+          mem0_health="${MEM0_HEALTH_PATH:-/auth/setup-status}"
+          mem0_http="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' "${mem0_url%/}$mem0_health" 2>/dev/null || echo CURL_ERROR)"
+          printf 'MEM0_HEALTH_HTTP=%s\n' "$mem0_http"
+          if [ "$mem0_http" = 200 ]; then record MEM0_HEALTH PASS; else record MEM0_HEALTH FAIL; fi
 
           printf 'OVERALL=%s\n' "$overall"
           REMOTE
@@ -162,17 +182,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .smoke/application-smoke-result.txt ]; then
+          if [ ! -f .smoke/process-environment-smoke-result.txt ]; then
             mkdir -p .smoke
-            printf 'OVERALL=FAIL\nRESULT_MISSING=YES\n' > .smoke/application-smoke-result.txt
+            printf 'OVERALL=FAIL\nRESULT_MISSING=YES\n' > .smoke/process-environment-smoke-result.txt
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .smoke/application-smoke-result.txt
-          git commit -m "Record application-level smoke test result" || true
+          git add .smoke/process-environment-smoke-result.txt
+          git commit -m "Record running-process smoke test result" || true
           git push origin HEAD:agent/production-smoke-test
 
       - name: Enforce result
         if: always()
         shell: bash
-        run: grep -q '^OVERALL=PASS$' .smoke/application-smoke-result.txt
+        run: grep -q '^OVERALL=PASS$' .smoke/process-environment-smoke-result.txt
