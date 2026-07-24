@@ -15,7 +15,6 @@ import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEvaluationContext;
-import com.laishengkai.digitalperson.state.StateTransition;
 
 import java.util.Arrays;
 import java.util.List;
@@ -63,14 +62,19 @@ public final class LanguageModelStateTransitionEvaluator
             StateEvaluationContext context
     ) {
         try {
-            LanguageModelRequest request = createRequest(context);
+            StateEvaluationContext safeContext = Objects.requireNonNull(
+                    context,
+                    "context cannot be null"
+            );
+            LanguageModelRequest request = createRequest(safeContext);
             CompletionStage<LanguageModelResponse> responseStage = Objects.requireNonNull(
                     languageModelGateway.invoke(request),
                     "languageModelGateway stage cannot be null"
             );
-            return responseStage.thenApply(
-                    LanguageModelStateTransitionEvaluator::parseResponse
-            );
+            return responseStage.thenApply(response -> parseResponse(
+                    response,
+                    safeContext
+            ));
         } catch (RuntimeException error) {
             return CompletableFuture.failedFuture(error);
         }
@@ -93,6 +97,19 @@ public final class LanguageModelStateTransitionEvaluator
 
     static EventStateImpact parseResponse(LanguageModelResponse response) {
         return StateEffectProtocol.parseResponse(response);
+    }
+
+    static EventStateImpact parseResponse(
+            LanguageModelResponse response,
+            StateEvaluationContext context
+    ) {
+        StateEvaluationContext safeContext = Objects.requireNonNull(
+                context,
+                "context cannot be null"
+        );
+        String seed = safeContext.personId()
+                + "|" + safeContext.newEvent().eventId();
+        return StateEffectProtocol.parseResponse(response, seed);
     }
 
     private static String serializeInput(StateEvaluationContext context) {
@@ -136,11 +153,22 @@ public final class LanguageModelStateTransitionEvaluator
                 durationMinutes 必须为正数，最多 43200 分钟。情绪、认知余波等通常应使用
                 FIXED_TIME，不能仅因为诱因发生在 CHAT 中就错误绑定 COMMUNICATION 生命周期。
 
-                每个 transition 的 shape 是每小时带符号的指数变化速率，不是直接加减量或目标值。
-                正值向维度最大值移动，负值向最小值移动，绝对值不得超过 %s。只提交直接、显著且
-                短期可观察的变化；证据不足就省略。没有显著效果时提交 {"effects":[]}。
+                transition 不再直接提交数值 shape。direction 选择 INCREASE 或 DECREASE；intensity 选择：
+                LOW=轻微且可持续数小时，Java 映射约 0.08-0.12/h；MEDIUM=正常明显变化，约 0.20-0.30/h；
+                HIGH=强烈变化，约 0.40-0.60/h；EXTREME=极强且短暂，约 0.80-1.20/h；
+                INSTANT=几分钟内接近高点或低点，约 24-36/h。数值是每小时向边界指数逼近的速率，
+                不是直接加减量。Java 会在档位范围内按人物、事件和维度生成可复现的小幅随机差异。
+
+                EVENT_END 因持续时间未知，只允许 LOW 或 MEDIUM。HIGH 固定效果最长 180 分钟；
+                EXTREME 最长 60 分钟；INSTANT 只能使用 FIXED_TIME 且最长 10 分钟。长时间学习、工作、
+                睡眠、休息等活动通常只能选择 LOW 或 MEDIUM。普通睡眠恢复、自然疲劳、困倦、饥饿、
+                进食降低饥饿和认知基线回归由 Java 自然调节层负责，不得重复提交；只有上下文中存在
+                明确异常或特殊诱因时，才为这些维度提交额外短期效果。
+
+                只提交直接、显著且短期可观察的变化；证据不足就省略。没有显著效果时提交
+                {"effects":[]}。
 
                 维度范围：%s
-                """.formatted(StateTransition.MAX_ABSOLUTE_SHAPE, ranges).strip();
+                """.formatted(ranges).strip();
     }
 }

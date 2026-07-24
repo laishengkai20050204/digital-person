@@ -56,8 +56,8 @@ class StateEvaluationDiagnosticControllerTest {
                     "type":"EMOTIONAL",
                     "cause":"恋人的安抚消息带来安全感",
                     "transitions":[
-                      {"dimension":"VALENCE","shape":0.6},
-                      {"dimension":"TENSION","shape":-0.5}
+                      {"dimension":"VALENCE","direction":"INCREASE","intensity":"HIGH"},
+                      {"dimension":"TENSION","direction":"DECREASE","intensity":"HIGH"}
                     ],
                     "endPolicy":"FIXED_TIME",
                     "durationMinutes":180
@@ -66,8 +66,8 @@ class StateEvaluationDiagnosticControllerTest {
                     "type":"SOCIAL",
                     "cause":"亲密关系得到确认",
                     "transitions":[
-                      {"dimension":"LONELINESS","shape":-0.7},
-                      {"dimension":"SOCIAL_NEED","shape":-0.5}
+                      {"dimension":"LONELINESS","direction":"DECREASE","intensity":"HIGH"},
+                      {"dimension":"SOCIAL_NEED","direction":"DECREASE","intensity":"HIGH"}
                     ],
                     "endPolicy":"FIXED_TIME",
                     "durationMinutes":180
@@ -118,7 +118,7 @@ class StateEvaluationDiagnosticControllerTest {
                         {"effects":[{
                           "type":"EMOTIONAL",
                           "cause":"考试结果引发负面反应",
-                          "transitions":[{"dimension":"VALENCE","shape":-0.2}],
+                          "transitions":[{"dimension":"VALENCE","direction":"DECREASE","intensity":"MEDIUM"}],
                           "endPolicy":"FIXED_TIME",
                           "durationMinutes":60
                         }]}
@@ -138,7 +138,8 @@ class StateEvaluationDiagnosticControllerTest {
         assertEquals("EXPECTATION_MISMATCH", body.status());
         assertFalse(body.expectation().passed());
         assertEquals(1, body.parsedTransitions().size());
-        assertEquals(-0.2, body.parsedTransitions().getFirst().shape());
+        double shape = body.parsedTransitions().getFirst().shape();
+        assertTrue(shape <= -0.20 && shape >= -0.30);
     }
 
     @Test

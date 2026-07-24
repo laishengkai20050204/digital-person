@@ -12,8 +12,10 @@ import com.laishengkai.digitalperson.dialogue.ModelToolSpecification;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.state.EventStateImpact;
 import com.laishengkai.digitalperson.state.StateDimension;
+import com.laishengkai.digitalperson.state.StateEffectDirection;
 import com.laishengkai.digitalperson.state.StateEffectDraft;
 import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
+import com.laishengkai.digitalperson.state.StateEffectIntensity;
 import com.laishengkai.digitalperson.state.StateEffectType;
 import com.laishengkai.digitalperson.state.StateTransition;
 
@@ -35,6 +37,9 @@ final class StateEffectProtocol {
     static final int MAX_CAUSE_LENGTH = 500;
 
     private static final int MAX_CORRECTION_REASON_LENGTH = 300;
+    private static final int MAX_INSTANT_DURATION_MINUTES = 10;
+    private static final int MAX_EXTREME_DURATION_MINUTES = 60;
+    private static final int MAX_HIGH_DURATION_MINUTES = 180;
     private static final List<StateEffectType> MODEL_EFFECT_TYPES = List.of(
             StateEffectType.EMOTIONAL,
             StateEffectType.COGNITIVE,
@@ -62,10 +67,18 @@ final class StateEffectProtocol {
     }
 
     static EventStateImpact parseResponse(LanguageModelResponse response) {
+        return parseResponse(response, "protocol-validation");
+    }
+
+    static EventStateImpact parseResponse(
+            LanguageModelResponse response,
+            String stableSeed
+    ) {
         LanguageModelResponse safeResponse = Objects.requireNonNull(
                 response,
                 "languageModelGateway response cannot be null"
         );
+        String seed = requireText(stableSeed, "stableSeed");
         List<ModelToolCall> toolCalls = safeResponse.toolCalls();
         if (toolCalls.size() != 1) {
             throw new StateTransitionEvaluationException(
@@ -80,7 +93,7 @@ final class StateEffectProtocol {
                             + toolCall.name()
             );
         }
-        return parseSubmission(toolCall.argumentsJson());
+        return parseSubmission(toolCall.argumentsJson(), seed);
     }
 
     static LanguageModelRequest correctionRequest(
@@ -94,7 +107,8 @@ final class StateEffectProtocol {
         String correction = "\n\n上一条 submit_state_effects 工具参数未通过 Java 语义校验："
                 + safeReason(invalidSubmission)
                 + "。请重新提交一次完整工具调用。必须严格遵守当前工具 Schema；"
-                + "尤其不得把某一类型不支持的维度放进该 effect，跨类型影响必须拆成多个 effect。";
+                + "尤其不得把某一类型不支持的维度放进该 effect，跨类型影响必须拆成多个 effect，"
+                + "并正确选择 direction 与 intensity。";
         if (!messages.isEmpty() && messages.getFirst() instanceof SystemModelMessage system) {
             messages.set(0, new SystemModelMessage(system.text() + correction));
         } else {
@@ -103,7 +117,10 @@ final class StateEffectProtocol {
         return new LanguageModelRequest(messages, request.options(), request.tools());
     }
 
-    private static EventStateImpact parseSubmission(String argumentsJson) {
+    private static EventStateImpact parseSubmission(
+            String argumentsJson,
+            String stableSeed
+    ) {
         final EffectSubmission submission;
         try {
             submission = OBJECT_MAPPER.readValue(
@@ -126,14 +143,23 @@ final class StateEffectProtocol {
                     "state-effect submission exceeds maximum effect count " + MAX_EFFECTS
             );
         }
-        return new EventStateImpact(
-                submission.effects().stream()
-                        .map(StateEffectProtocol::toEffectDraft)
-                        .toList()
-        );
+
+        List<StateEffectDraft> drafts = new ArrayList<>();
+        for (int index = 0; index < submission.effects().size(); index++) {
+            drafts.add(toEffectDraft(
+                    submission.effects().get(index),
+                    stableSeed,
+                    index
+            ));
+        }
+        return new EventStateImpact(drafts);
     }
 
-    private static StateEffectDraft toEffectDraft(EffectItem item) {
+    private static StateEffectDraft toEffectDraft(
+            EffectItem item,
+            String stableSeed,
+            int effectIndex
+    ) {
         if (item == null) {
             throw new StateTransitionEvaluationException("effects cannot contain null items");
         }
@@ -172,7 +198,11 @@ final class StateEffectProtocol {
         }
         List<StateTransition> transitions = parseTransitions(
                 type,
-                item.transitions()
+                endPolicy,
+                durationMinutes,
+                item.transitions(),
+                stableSeed,
+                effectIndex
         );
         try {
             return new StateEffectDraft(
@@ -192,18 +222,38 @@ final class StateEffectProtocol {
 
     private static List<StateTransition> parseTransitions(
             StateEffectType type,
-            List<TransitionItem> items
+            StateEffectEndPolicy endPolicy,
+            int durationMinutes,
+            List<TransitionItem> items,
+            String stableSeed,
+            int effectIndex
     ) {
         Set<StateDimension> seenDimensions = EnumSet.noneOf(StateDimension.class);
-        return items.stream()
-                .map(item -> toTransition(type, item, seenDimensions))
-                .toList();
+        List<StateTransition> transitions = new ArrayList<>();
+        for (int index = 0; index < items.size(); index++) {
+            transitions.add(toTransition(
+                    type,
+                    endPolicy,
+                    durationMinutes,
+                    items.get(index),
+                    seenDimensions,
+                    stableSeed,
+                    effectIndex,
+                    index
+            ));
+        }
+        return List.copyOf(transitions);
     }
 
     private static StateTransition toTransition(
             StateEffectType type,
+            StateEffectEndPolicy endPolicy,
+            int durationMinutes,
             TransitionItem item,
-            Set<StateDimension> seenDimensions
+            Set<StateDimension> seenDimensions,
+            String stableSeed,
+            int effectIndex,
+            int transitionIndex
     ) {
         if (item == null) {
             throw new StateTransitionEvaluationException(
@@ -230,17 +280,66 @@ final class StateEffectProtocol {
                     "effect type " + type + " does not support " + dimension
             );
         }
-        if (item.shape() == null) {
-            throw new StateTransitionEvaluationException(
-                    "shape is required for dimension: " + dimension
-            );
-        }
+
+        StateEffectDirection direction = parseDirection(item.direction());
+        StateEffectIntensity intensity = parseIntensity(item.intensity());
+        validateIntensity(intensity, endPolicy, durationMinutes);
+        String transitionSeed = stableSeed
+                + '|' + effectIndex
+                + '|' + transitionIndex
+                + '|' + dimension.name()
+                + '|' + direction.name()
+                + '|' + intensity.name();
         try {
-            return new StateTransition(dimension, item.shape());
+            return new StateTransition(
+                    dimension,
+                    intensity.resolve(direction, transitionSeed)
+            );
         } catch (IllegalArgumentException error) {
             throw new StateTransitionEvaluationException(
-                    "invalid shape for dimension: " + dimension,
+                    "invalid intensity for dimension: " + dimension,
                     error
+            );
+        }
+    }
+
+    private static void validateIntensity(
+            StateEffectIntensity intensity,
+            StateEffectEndPolicy endPolicy,
+            int durationMinutes
+    ) {
+        if (endPolicy == StateEffectEndPolicy.EVENT_END
+                && intensity.ordinal() > StateEffectIntensity.MEDIUM.ordinal()) {
+            throw new StateTransitionEvaluationException(
+                    "EVENT_END effects only allow LOW or MEDIUM intensity"
+            );
+        }
+        if (intensity == StateEffectIntensity.INSTANT) {
+            if (endPolicy != StateEffectEndPolicy.FIXED_TIME) {
+                throw new StateTransitionEvaluationException(
+                        "INSTANT intensity requires FIXED_TIME"
+                );
+            }
+            if (durationMinutes > MAX_INSTANT_DURATION_MINUTES) {
+                throw new StateTransitionEvaluationException(
+                        "INSTANT intensity durationMinutes cannot exceed "
+                                + MAX_INSTANT_DURATION_MINUTES
+                );
+            }
+        }
+        if (intensity == StateEffectIntensity.EXTREME
+                && durationMinutes > MAX_EXTREME_DURATION_MINUTES) {
+            throw new StateTransitionEvaluationException(
+                    "EXTREME intensity durationMinutes cannot exceed "
+                            + MAX_EXTREME_DURATION_MINUTES
+            );
+        }
+        if (intensity == StateEffectIntensity.HIGH
+                && endPolicy != StateEffectEndPolicy.EVENT_END
+                && durationMinutes > MAX_HIGH_DURATION_MINUTES) {
+            throw new StateTransitionEvaluationException(
+                    "HIGH intensity durationMinutes cannot exceed "
+                            + MAX_HIGH_DURATION_MINUTES
             );
         }
     }
@@ -268,6 +367,30 @@ final class StateEffectProtocol {
         } catch (IllegalArgumentException error) {
             throw new StateTransitionEvaluationException(
                     "unknown effect end policy: " + value,
+                    error
+            );
+        }
+    }
+
+    private static StateEffectDirection parseDirection(String value) {
+        String normalized = requireText(value, "direction").toUpperCase(Locale.ROOT);
+        try {
+            return StateEffectDirection.valueOf(normalized);
+        } catch (IllegalArgumentException error) {
+            throw new StateTransitionEvaluationException(
+                    "unknown effect direction: " + value,
+                    error
+            );
+        }
+    }
+
+    private static StateEffectIntensity parseIntensity(String value) {
+        String normalized = requireText(value, "intensity").toUpperCase(Locale.ROOT);
+        try {
+            return StateEffectIntensity.valueOf(normalized);
+        } catch (IllegalArgumentException error) {
+            throw new StateTransitionEvaluationException(
+                    "unknown effect intensity: " + value,
                     error
             );
         }
@@ -309,6 +432,9 @@ final class StateEffectProtocol {
                 .sorted()
                 .map(StateEffectProtocol::quoted)
                 .collect(Collectors.joining(","));
+        String intensities = java.util.Arrays.stream(StateEffectIntensity.values())
+                .map(value -> "\"" + value.name() + "\"")
+                .collect(Collectors.joining(","));
         return """
                 {
                   "type":"object",
@@ -323,9 +449,10 @@ final class StateEffectProtocol {
                         "type":"object",
                         "properties":{
                           "dimension":{"type":"string","enum":[%s]},
-                          "shape":{"type":"number","minimum":%s,"maximum":%s,"description":"每小时带符号的有限非零指数变化速率；不得为 0"}
+                          "direction":{"type":"string","enum":["INCREASE","DECREASE"]},
+                          "intensity":{"type":"string","enum":[%s]}
                         },
-                        "required":["dimension","shape"],
+                        "required":["dimension","direction","intensity"],
                         "additionalProperties":false
                       }
                     },
@@ -340,8 +467,7 @@ final class StateEffectProtocol {
                 MAX_CAUSE_LENGTH,
                 type.supportedDimensions().size(),
                 dimensions,
-                -StateTransition.MAX_ABSOLUTE_SHAPE,
-                StateTransition.MAX_ABSOLUTE_SHAPE,
+                intensities,
                 MAX_EFFECT_DURATION_MINUTES
         ).strip();
     }
@@ -372,6 +498,10 @@ final class StateEffectProtocol {
     ) {
     }
 
-    private record TransitionItem(String dimension, Double shape) {
+    private record TransitionItem(
+            String dimension,
+            String direction,
+            String intensity
+    ) {
     }
 }

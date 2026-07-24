@@ -17,11 +17,11 @@ public record StateTransition(
     /**
      * Maximum supported hourly exponential rate in either direction.
      *
-     * <p>A magnitude of {@code 3.0} already moves a value roughly 95% of the
-     * remaining distance toward its bound in one hour. Larger values add little
-     * useful expressiveness while making model errors disproportionately severe.</p>
+     * <p>Continuous model effects normally stay at or below {@code 1.2}. The higher
+     * hard bound exists only for the explicitly short-lived {@code INSTANT} intensity,
+     * which can approach a bound within several minutes.</p>
      */
-    public static final double MAX_ABSOLUTE_SHAPE = 3.0;
+    public static final double MAX_ABSOLUTE_SHAPE = 36.0;
 
     public StateTransition {
         Objects.requireNonNull(dimension, "dimension cannot be null");

@@ -24,6 +24,7 @@ public record PersonActivityDecisionContext(
         List<ActiveStateEffectSnapshot> activeEffects,
         List<PersonEventSnapshot> activeEvents,
         List<PersonEventSnapshot> recentEvents,
+        ActivityPhysiologySnapshot physiology,
         PersonMemoryContext memory,
         List<ConversationTurnSnapshot> recentConversation,
         String observation,
@@ -38,6 +39,7 @@ public record PersonActivityDecisionContext(
         activeEffects = immutable(activeEffects, "activeEffects");
         activeEvents = immutable(activeEvents, "activeEvents");
         recentEvents = immutable(recentEvents, "recentEvents");
+        physiology = Objects.requireNonNull(physiology, "physiology cannot be null");
         memory = Objects.requireNonNull(memory, "memory cannot be null");
         recentConversation = immutable(recentConversation, "recentConversation");
         observation = Objects.requireNonNullElse(observation, "").strip();
@@ -56,6 +58,38 @@ public record PersonActivityDecisionContext(
                     "temporal.timeZone must equal identity.timeZone"
             );
         }
+    }
+
+    /** Compatibility constructor for callers that have not yet supplied physiology. */
+    public PersonActivityDecisionContext(
+            PersonId personId,
+            PersonIdentitySnapshot identity,
+            PersonalitySnapshot personality,
+            PersonStateSnapshot currentState,
+            List<ActiveStateEffectSnapshot> activeEffects,
+            List<PersonEventSnapshot> activeEvents,
+            List<PersonEventSnapshot> recentEvents,
+            PersonMemoryContext memory,
+            List<ConversationTurnSnapshot> recentConversation,
+            String observation,
+            TemporalContextSnapshot temporal,
+            Instant evaluationTime
+    ) {
+        this(
+                personId,
+                identity,
+                personality,
+                currentState,
+                activeEffects,
+                activeEvents,
+                recentEvents,
+                ActivityPhysiologySnapshot.empty(),
+                memory,
+                recentConversation,
+                observation,
+                temporal,
+                evaluationTime
+        );
     }
 
     /** Compatibility constructor for callers that have not yet supplied temporal data. */
@@ -80,6 +114,7 @@ public record PersonActivityDecisionContext(
                 activeEffects,
                 activeEvents,
                 recentEvents,
+                ActivityPhysiologySnapshot.empty(),
                 memory,
                 recentConversation,
                 observation,

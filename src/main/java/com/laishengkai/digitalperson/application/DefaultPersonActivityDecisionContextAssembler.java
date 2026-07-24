@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.activity.ActivityPhysiologySnapshot;
 import com.laishengkai.digitalperson.activity.PersonActivityDecisionContext;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
@@ -109,6 +110,10 @@ public final class DefaultPersonActivityDecisionContextAssembler
                 memoryLimit,
                 conversationLimit
         );
+        ActivityPhysiologySnapshot physiology = ActivityPhysiologySnapshot.from(
+                person.getPersonTimeline().getAll(),
+                now
+        );
         return commonAssembler.assemble(
                 person,
                 currentState,
@@ -117,6 +122,7 @@ public final class DefaultPersonActivityDecisionContextAssembler
                 now
         ).thenApply(common -> toActivityContext(
                 common,
+                physiology,
                 normalizedObservation,
                 now
         ));
@@ -124,6 +130,7 @@ public final class DefaultPersonActivityDecisionContextAssembler
 
     private static PersonActivityDecisionContext toActivityContext(
             PersonModelContextSnapshot common,
+            ActivityPhysiologySnapshot physiology,
             String observation,
             Instant evaluationTime
     ) {
@@ -135,6 +142,7 @@ public final class DefaultPersonActivityDecisionContextAssembler
                 common.activeEffects(),
                 common.activeEvents(),
                 common.recentEvents(),
+                physiology,
                 common.memory(),
                 common.recentConversation(),
                 observation,

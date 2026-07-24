@@ -14,10 +14,10 @@ class StateTransitionMergerTest {
     @Test
     void capsCombinedShapeAtSupportedDomainLimit() {
         StateEffect first = () -> List.of(
-                new StateTransition(StateDimension.ENERGY, 2.0)
+                new StateTransition(StateDimension.ENERGY, 30.0)
         );
         StateEffect second = () -> List.of(
-                new StateTransition(StateDimension.ENERGY, 2.5)
+                new StateTransition(StateDimension.ENERGY, 20.0)
         );
 
         assertEquals(

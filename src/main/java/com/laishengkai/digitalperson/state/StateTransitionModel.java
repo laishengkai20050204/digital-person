@@ -6,7 +6,7 @@ import java.util.EnumSet;
 import java.util.Objects;
 import java.util.Set;
 
-/** Applies signed normalized exponential transitions to short-term state. */
+/** Applies normalized exponential transitions to short-term state. */
 public final class StateTransitionModel {
     public double calculate(
             StateDimension dimension,
@@ -18,39 +18,54 @@ public final class StateTransitionModel {
                 dimension,
                 "dimension cannot be null"
         );
-        if (!requestedDimension.contains(current)) {
-            throw new IllegalArgumentException(
-                    "current must be between "
-                            + requestedDimension.getMinimum()
-                            + " and "
-                            + requestedDimension.getMaximum()
-            );
-        }
         if (!StateTransition.isValidShape(shape)) {
             throw new IllegalArgumentException(
                     "shape must be finite, non-zero and within supported bounds"
             );
+        }
+        double target = shape > 0.0
+                ? requestedDimension.getMaximum()
+                : requestedDimension.getMinimum();
+        return calculate(
+                requestedDimension,
+                current,
+                target,
+                Math.abs(shape),
+                elapsed
+        );
+    }
+
+    /**
+     * Moves {@code current} toward an arbitrary in-range target using the same hourly
+     * exponential model used by signed event effects.
+     */
+    public double calculate(
+            StateDimension dimension,
+            double current,
+            double target,
+            double hourlyRate,
+            Duration elapsed
+    ) {
+        StateDimension requestedDimension = Objects.requireNonNull(
+                dimension,
+                "dimension cannot be null"
+        );
+        requireInRange(requestedDimension, current, "current");
+        requireInRange(requestedDimension, target, "target");
+        if (!Double.isFinite(hourlyRate) || hourlyRate <= 0.0) {
+            throw new IllegalArgumentException("hourlyRate must be finite and positive");
         }
 
         Duration elapsedTime = Objects.requireNonNull(elapsed, "elapsed cannot be null");
         if (elapsedTime.isNegative()) {
             throw new IllegalArgumentException("elapsed cannot be negative");
         }
-        if (elapsedTime.isZero()) {
+        if (elapsedTime.isZero() || current == target) {
             return current;
         }
 
-        double minimum = requestedDimension.getMinimum();
-        double maximum = requestedDimension.getMaximum();
-        double normalized = (current - minimum) / (maximum - minimum);
-        double decay = Math.exp(-Math.abs(shape) * toHours(elapsedTime));
-        double nextNormalized = shape > 0.0
-                ? 1.0 - (1.0 - normalized) * decay
-                : normalized * decay;
-
-        return requestedDimension.clamp(
-                minimum + (maximum - minimum) * nextNormalized
-        );
+        double decay = Math.exp(-hourlyRate * toHours(elapsedTime));
+        return requestedDimension.clamp(target + (current - target) * decay);
     }
 
     void apply(PersonState state, StateTransition transition, Duration elapsed) {
@@ -67,6 +82,28 @@ public final class StateTransitionModel {
                 elapsed
         );
         dimension.write(currentState, nextValue);
+    }
+
+    void applyTarget(
+            PersonState state,
+            StateDimension dimension,
+            double target,
+            double hourlyRate,
+            Duration elapsed
+    ) {
+        PersonState currentState = Objects.requireNonNull(state, "state cannot be null");
+        StateDimension requestedDimension = Objects.requireNonNull(
+                dimension,
+                "dimension cannot be null"
+        );
+        double nextValue = calculate(
+                requestedDimension,
+                requestedDimension.read(currentState),
+                target,
+                hourlyRate,
+                elapsed
+        );
+        requestedDimension.write(currentState, nextValue);
     }
 
     void applyAll(
@@ -96,6 +133,19 @@ public final class StateTransitionModel {
 
         for (StateTransition transition : requestedTransitions) {
             apply(state, transition, elapsed);
+        }
+    }
+
+    private static void requireInRange(
+            StateDimension dimension,
+            double value,
+            String name
+    ) {
+        if (!dimension.contains(value)) {
+            throw new IllegalArgumentException(
+                    name + " must be between " + dimension.getMinimum()
+                            + " and " + dimension.getMaximum()
+            );
         }
     }
 
