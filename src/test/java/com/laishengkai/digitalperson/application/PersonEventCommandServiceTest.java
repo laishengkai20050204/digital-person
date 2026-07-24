@@ -75,7 +75,7 @@ class PersonEventCommandServiceTest {
                 replacementTime
         ).toCompletableFuture().join();
 
-        double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);
+        double expectedValence = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);
         assertEquals(expectedValence, result.state().valence(), EPSILON);
         assertEquals(1, result.stateEvolutionContext().effects().size());
         assertTrue(result.stateEvolutionContext().effects().values().stream()
@@ -111,7 +111,7 @@ class PersonEventCommandServiceTest {
                 finishTime
         ).toCompletableFuture().join();
 
-        double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);
+        double expectedValence = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);
         assertEquals(expectedValence, result.state().valence(), EPSILON);
         assertTrue(result.stateEvolutionContext().effects().isEmpty());
         assertTrue(result.stateEvolutionContext().evaluatedEventIds().isEmpty());

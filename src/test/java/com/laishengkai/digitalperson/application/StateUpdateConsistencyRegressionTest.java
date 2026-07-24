@@ -69,7 +69,7 @@ class StateUpdateConsistencyRegressionTest {
                 eventEnd
         ).toCompletableFuture().join();
 
-        double expectedAfterTenMinutes = 0.7 * Math.exp(-1.0 / 6.0);
+        double expectedAfterTenMinutes = -1.0 + 1.7 * Math.exp(-1.0 / 6.0);
         Person stored = repository.current(person.getId());
         assertEquals(
                 expectedAfterTenMinutes,
