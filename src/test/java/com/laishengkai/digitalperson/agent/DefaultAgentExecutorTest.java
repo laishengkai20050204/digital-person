@@ -14,6 +14,7 @@ import com.laishengkai.digitalperson.dialogue.ToolResultModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -22,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -161,6 +163,153 @@ class DefaultAgentExecutorTest {
         assertEquals("call-a", firstResult.toolCallId());
         assertEquals("call-b", secondResult.toolCallId());
         assertEquals(2, result.toolExecutionCount());
+    }
+
+
+    @Test
+    void shouldSerializeToolsByDefault() {
+        RecordingGateway gateway = new RecordingGateway(List.of(
+                response(
+                        AssistantModelMessage.toolCalls(List.of(
+                                new ModelToolCall("call-a", "first", "{}"),
+                                new ModelToolCall("call-b", "second", "{}")
+                        )),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unknown()
+                ),
+                LanguageModelResponse.text("complete")
+        ));
+        CompletableFuture<String> firstResult = new CompletableFuture<>();
+        AtomicBoolean secondStarted = new AtomicBoolean(false);
+        AgentTool first = tool("first", ignored -> firstResult);
+        AgentTool second = tool("second", ignored -> {
+            secondStarted.set(true);
+            return CompletableFuture.completedFuture("B");
+        });
+
+        CompletableFuture<AgentResult> execution = new DefaultAgentExecutor(gateway)
+                .execute(new AgentRequest(
+                        List.of(new UserModelMessage("run both")),
+                        ModelInvocationOptions.defaults(),
+                        List.of(first, second),
+                        4
+                )).toCompletableFuture();
+
+        assertFalse(secondStarted.get());
+        firstResult.complete("A");
+        execution.join();
+        assertTrue(secondStarted.get());
+    }
+
+    @Test
+    void shouldCancelAToolThatExceedsItsTimeout() {
+        RecordingGateway gateway = new RecordingGateway(List.of(
+                response(
+                        AssistantModelMessage.toolCalls(List.of(
+                                new ModelToolCall("call-1", "slow", "{}")
+                        )),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unknown()
+                )
+        ));
+        CompletableFuture<String> hangingResult = new CompletableFuture<>();
+        DefaultAgentExecutor executor = new DefaultAgentExecutor(
+                gateway,
+                Duration.ofSeconds(1),
+                Duration.ofMillis(50),
+                Duration.ofSeconds(2),
+                1_000
+        );
+
+        Throwable error = failureOf(executor.execute(new AgentRequest(
+                List.of(new UserModelMessage("run")),
+                ModelInvocationOptions.defaults(),
+                List.of(tool("slow", ignored -> hangingResult)),
+                3
+        )));
+
+        AgentExecutionException agentError = assertInstanceOf(
+                AgentExecutionException.class,
+                error
+        );
+        assertTrue(agentError.getMessage().contains("timed out"));
+        assertTrue(hangingResult.isCancelled());
+    }
+
+    @Test
+    void shouldRejectOversizedToolResults() {
+        RecordingGateway gateway = new RecordingGateway(List.of(
+                response(
+                        AssistantModelMessage.toolCalls(List.of(
+                                new ModelToolCall("call-1", "large", "{}")
+                        )),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unknown()
+                )
+        ));
+        DefaultAgentExecutor executor = new DefaultAgentExecutor(
+                gateway,
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(2),
+                8
+        );
+
+        Throwable error = failureOf(executor.execute(new AgentRequest(
+                List.of(new UserModelMessage("run")),
+                ModelInvocationOptions.defaults(),
+                List.of(tool(
+                        "large",
+                        ignored -> CompletableFuture.completedFuture("123456789")
+                )),
+                3
+        )));
+
+        AgentExecutionException agentError = assertInstanceOf(
+                AgentExecutionException.class,
+                error
+        );
+        assertTrue(agentError.getMessage().contains("maxToolResultCharacters"));
+    }
+
+    @Test
+    void shouldRejectReusedToolCallIdsAcrossModelInvocations() {
+        RecordingGateway gateway = new RecordingGateway(List.of(
+                response(
+                        AssistantModelMessage.toolCalls(List.of(
+                                new ModelToolCall("call-1", "lookup", "{}")
+                        )),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unknown()
+                ),
+                response(
+                        AssistantModelMessage.toolCalls(List.of(
+                                new ModelToolCall("call-1", "lookup", "{}")
+                        )),
+                        ModelFinishReason.TOOL_CALLS,
+                        ModelUsage.unknown()
+                )
+        ));
+        AtomicInteger executions = new AtomicInteger();
+
+        Throwable error = failureOf(new DefaultAgentExecutor(gateway).execute(
+                new AgentRequest(
+                        List.of(new UserModelMessage("run")),
+                        ModelInvocationOptions.defaults(),
+                        List.of(tool("lookup", ignored -> {
+                            executions.incrementAndGet();
+                            return CompletableFuture.completedFuture("ok");
+                        })),
+                        4
+                )
+        ));
+
+        AgentExecutionException agentError = assertInstanceOf(
+                AgentExecutionException.class,
+                error
+        );
+        assertTrue(agentError.getMessage().contains("reused a tool call id"));
+        assertEquals(1, executions.get());
     }
 
     @Test

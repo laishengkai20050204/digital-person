@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -163,9 +164,49 @@ class Mem0AdaptersTest {
         assertThat(context.items()).isEmpty();
     }
 
+
+    @Test
+    void providerErrorBodiesAreNotExposedThroughExceptions() {
+        server.removeContext("/memories");
+        server.createContext("/memories", exchange -> respond(
+                exchange,
+                500,
+                "{\"detail\":\"private-memory-content-DO-NOT-LOG\"}"
+        ));
+        Mem0PersonMemoryStore store = new Mem0PersonMemoryStore(client(false));
+
+        Throwable failure;
+        try {
+            store.add(new PersonMemoryWriteRequest(
+                    PersonId.random(),
+                    List.of(new MemoryMessage(
+                            MemoryMessageRole.USER,
+                            "private user message"
+                    )),
+                    Map.of(),
+                    true
+            )).toCompletableFuture().join();
+            throw new AssertionError("expected Mem0 write to fail");
+        } catch (CompletionException error) {
+            failure = unwrap(error);
+        }
+
+        assertThat(failure.getMessage()).contains("status 500");
+        assertThat(failure.getMessage()).doesNotContain("private-memory-content");
+    }
+
     @Test
     void probesTheOpenSetupStatusEndpoint() {
         assertThat(client(false).probe().toCompletableFuture().join()).isTrue();
+    }
+
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private Mem0HttpClient client(boolean retrievalEnabled) {

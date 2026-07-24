@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.infrastructure.spring;
 
-import com.laishengkai.digitalperson.application.DefaultStateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.application.PersonDirectoryService;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
@@ -32,21 +31,16 @@ public class PersonApplicationConfiguration {
         return new StateUpdater();
     }
 
-    @Bean
-    @ConditionalOnMissingBean(StateEvaluationContextAssembler.class)
-    StateEvaluationContextAssembler stateEvaluationContextAssembler() {
-        return DefaultStateEvaluationContextAssembler.withoutExternalSources();
-    }
-
     /** Directory capability exists only when both read and create persistence ports exist. */
     @Bean
     @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
     @ConditionalOnMissingBean(PersonDirectoryService.class)
     PersonDirectoryService personDirectoryService(
             PersonRepository personRepository,
-            PersonCreationRepository creationRepository
+            PersonCreationRepository creationRepository,
+            Clock clock
     ) {
-        return new PersonDirectoryService(personRepository, creationRepository);
+        return new PersonDirectoryService(personRepository, creationRepository, clock);
     }
 
     /**

@@ -9,8 +9,11 @@ import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import org.junit.jupiter.api.Test;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -70,6 +73,34 @@ class PersonDirectoryServiceTest {
         assertEquals(person.getId(), state.personId());
         assertEquals(details.state(), state.state());
         assertEquals(details.activeEffects(), state.activeEffects());
+    }
+
+    @Test
+    void computesAgeFromTheInjectedClock() {
+        InMemoryRepository repository = new InMemoryRepository();
+        Clock beforeBirthday = Clock.fixed(
+                Instant.parse("2026-04-17T15:59:59Z"),
+                ZoneOffset.UTC
+        );
+        PersonDirectoryService service = new PersonDirectoryService(
+                repository,
+                repository,
+                beforeBirthday
+        );
+        PersonIdentity identity = new PersonIdentity(
+                "沈知夏",
+                LocalDate.parse("2006-04-18"),
+                "女性",
+                "上海",
+                ZoneId.of("Asia/Shanghai"),
+                Locale.SIMPLIFIED_CHINESE,
+                List.of("大学生"),
+                "视觉传达专业大三学生"
+        );
+
+        PersonDetails created = service.create(identity, PERSONALITY);
+
+        assertEquals(19, created.identity().age());
     }
 
     @Test

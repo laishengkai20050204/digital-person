@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.infrastructure.context.StateEvaluationContextConfiguration;
 import com.laishengkai.digitalperson.infrastructure.memory.NoOpPersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
@@ -27,6 +28,7 @@ class Mem0MemoryConfigurationTest {
                 )
                 .run(context -> {
                     assertThat(context).hasSingleBean(PersonMemoryStore.class);
+                    assertThat(context).hasSingleBean(DialogueMemoryRecorder.class);
                     assertThat(context).hasSingleBean(PersonMemoryGateway.class);
                     assertThat(context.getBean(PersonMemoryGateway.class))
                             .isInstanceOf(NoOpPersonMemoryGateway.class);
@@ -42,6 +44,7 @@ class Mem0MemoryConfigurationTest {
                 )
                 .run(context -> {
                     assertThat(context).hasSingleBean(PersonMemoryStore.class);
+                    assertThat(context).hasSingleBean(DialogueMemoryRecorder.class);
                     assertThat(context).hasSingleBean(PersonMemoryGateway.class);
                     assertThat(context.getBean(PersonMemoryGateway.class))
                             .isInstanceOf(Mem0PersonMemoryGateway.class);

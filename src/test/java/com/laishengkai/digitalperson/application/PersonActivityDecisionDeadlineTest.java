@@ -13,6 +13,7 @@ import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
@@ -82,6 +84,57 @@ class PersonActivityDecisionDeadlineTest {
                 PersonActivityDecisionDeadlineExceededException.class,
                 unwrap(failure)
         );
+        verify(repository, never()).save(any(), anyLong());
+    }
+
+
+    @Test
+    void aModelThatNeverReturnsIsCancelledAtTheDeadline() {
+        PersonRepository repository = mock(PersonRepository.class);
+        PersonActivityDecisionModel model = mock(PersonActivityDecisionModel.class);
+        PersonActivityDecisionContextAssembler activityAssembler = mock(
+                PersonActivityDecisionContextAssembler.class
+        );
+        EventStateImpactEvaluator effectEvaluator = mock(EventStateImpactEvaluator.class);
+        StateEvaluationContextAssembler effectAssembler = mock(
+                StateEvaluationContextAssembler.class
+        );
+        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        PersonId personId = person.getId();
+        CompletableFuture<PersonActivityDecisionPlan> modelResult = new CompletableFuture<>();
+        Instant decisionTime = Instant.now();
+        Instant deadline = decisionTime.plus(Duration.ofMillis(250));
+
+        when(repository.findById(personId)).thenReturn(Optional.of(
+                new VersionedPerson(person, 0)
+        ));
+        when(activityAssembler.assemble(any(), any(), any(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(
+                        mock(PersonActivityDecisionContext.class)
+                ));
+        when(model.decide(any())).thenReturn(modelResult);
+
+        PersonActivityDecisionService service = new PersonActivityDecisionService(
+                repository,
+                new StateUpdater(),
+                model,
+                activityAssembler,
+                effectEvaluator,
+                effectAssembler,
+                Clock.systemUTC()
+        );
+
+        CompletionException failure = assertThrows(
+                CompletionException.class,
+                () -> service.decide(personId, decisionTime, deadline)
+                        .toCompletableFuture()
+                        .join()
+        );
+        assertInstanceOf(
+                PersonActivityDecisionDeadlineExceededException.class,
+                unwrap(failure)
+        );
+        assertTrue(modelResult.isCancelled());
         verify(repository, never()).save(any(), anyLong());
     }
 

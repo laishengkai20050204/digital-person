@@ -29,6 +29,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -208,12 +209,16 @@ public final class PersonActivityDecisionService {
                     requiredDeadline
             );
 
-            return stateEvolution.completePending(
-                    person,
-                    decisionState,
-                    preparation,
-                    now,
-                    checkpoint
+            return withDeadline(
+                    stateEvolution.completePending(
+                            person,
+                            decisionState,
+                            preparation,
+                            now,
+                            checkpoint
+                    ),
+                    requiredDeadline,
+                    "pending event evaluation"
             ).thenCompose(settledContext -> {
                 checkpoint.accept("activity context assembly");
                 return assembleDecisionContext(
@@ -222,10 +227,15 @@ public final class PersonActivityDecisionService {
                         settledContext,
                         normalizedObservation,
                         now,
+                        requiredDeadline,
                         checkpoint
                 ).thenCompose(context -> {
                     checkpoint.accept("activity model invocation");
-                    return decidePlan(context, checkpoint)
+                    return decidePlan(
+                            context,
+                            requiredDeadline,
+                            checkpoint
+                    )
                             .thenCompose(plan -> {
                                 checkpoint.accept("activity plan application");
                                 return applyAndEvaluate(
@@ -234,6 +244,7 @@ public final class PersonActivityDecisionService {
                                         settledContext,
                                         plan,
                                         now,
+                                        requiredDeadline,
                                         checkpoint
                                 );
                             });
@@ -284,10 +295,11 @@ public final class PersonActivityDecisionService {
             StateEvolutionContext evolution,
             String observation,
             Instant now,
+            Instant deadline,
             Consumer<String> checkpoint
     ) {
         checkpoint.accept("activity context source loading");
-        return Objects.requireNonNull(
+        CompletionStage<PersonActivityDecisionContext> stage = Objects.requireNonNull(
                 activityContextAssembler.assemble(
                         person,
                         state,
@@ -296,7 +308,9 @@ public final class PersonActivityDecisionService {
                         now
                 ),
                 "activityContextAssembler stage cannot be null"
-        ).thenApply(context -> {
+        );
+        return withDeadline(stage, deadline, "activity context source loading")
+                .thenApply(context -> {
             checkpoint.accept("activity context completion");
             return Objects.requireNonNull(
                     context,
@@ -307,13 +321,16 @@ public final class PersonActivityDecisionService {
 
     private CompletionStage<PersonActivityDecisionPlan> decidePlan(
             PersonActivityDecisionContext context,
+            Instant deadline,
             Consumer<String> checkpoint
     ) {
         checkpoint.accept("activity model invocation");
-        return Objects.requireNonNull(
+        CompletionStage<PersonActivityDecisionPlan> stage = Objects.requireNonNull(
                 activityDecisionModel.decide(context),
                 "activityDecisionModel stage cannot be null"
-        ).thenApply(plan -> {
+        );
+        return withDeadline(stage, deadline, "activity model invocation")
+                .thenApply(plan -> {
             checkpoint.accept("activity model response");
             return Objects.requireNonNull(
                     plan,
@@ -328,6 +345,7 @@ public final class PersonActivityDecisionService {
             StateEvolutionContext settledContext,
             PersonActivityDecisionPlan plan,
             Instant now,
+            Instant deadline,
             Consumer<String> checkpoint
     ) {
         checkpoint.accept("activity plan validation");
@@ -382,19 +400,97 @@ public final class PersonActivityDecisionService {
                 now,
                 checkpoint
         );
-        return stateEvolution.evaluateStartedEvents(
-                person,
-                evaluationState,
-                baseContext,
-                startedEvents,
-                now,
-                checkpoint
+        CompletionStage<StateEvolutionContext> evaluationStage =
+                stateEvolution.evaluateStartedEvents(
+                        person,
+                        evaluationState,
+                        baseContext,
+                        startedEvents,
+                        now,
+                        checkpoint
+                );
+        return withDeadline(
+                evaluationStage,
+                deadline,
+                "new event effect evaluation"
         ).thenApply(completedContext -> new AppliedPlan(
                 plan,
                 startedEvents,
                 List.copyOf(finishedEvents.values()),
                 completedContext
         ));
+    }
+
+    private <T> CompletionStage<T> withDeadline(
+            CompletionStage<T> stage,
+            Instant deadline,
+            String phase
+    ) {
+        CompletionStage<T> safeStage = Objects.requireNonNull(
+                stage,
+                "stage cannot be null"
+        );
+        ensureBeforeDeadline(deadline, phase);
+        CompletableFuture<T> source = safeStage.toCompletableFuture();
+        if (Instant.MAX.equals(deadline)) {
+            return source.thenApply(value -> {
+                ensureBeforeDeadline(deadline, phase);
+                return value;
+            });
+        }
+
+        Duration remaining = Duration.between(clock.instant(), deadline);
+        if (remaining.isNegative() || remaining.isZero()) {
+            source.cancel(true);
+            return CompletableFuture.failedFuture(
+                    new PersonActivityDecisionDeadlineExceededException(deadline, phase)
+            );
+        }
+
+        CompletableFuture<T> guarded = new CompletableFuture<>();
+        long delayNanos;
+        try {
+            delayNanos = Math.max(1L, remaining.toNanos());
+        } catch (ArithmeticException overflow) {
+            delayNanos = Long.MAX_VALUE;
+        }
+        CompletableFuture.delayedExecutor(delayNanos, TimeUnit.NANOSECONDS)
+                .execute(() -> {
+                    PersonActivityDecisionDeadlineExceededException timeout =
+                            new PersonActivityDecisionDeadlineExceededException(
+                                    deadline,
+                                    phase
+                            );
+                    if (guarded.completeExceptionally(timeout)) {
+                        source.cancel(true);
+                    }
+                });
+        source.whenComplete((value, error) -> {
+            if (error != null) {
+                guarded.completeExceptionally(unwrapCompletionFailure(error));
+                return;
+            }
+            try {
+                ensureBeforeDeadline(deadline, phase);
+                guarded.complete(value);
+            } catch (RuntimeException timeout) {
+                guarded.completeExceptionally(timeout);
+            }
+        });
+        guarded.whenComplete((ignored, error) -> {
+            if (guarded.isCancelled()) {
+                source.cancel(true);
+            }
+        });
+        return guarded;
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable error) {
+        Throwable current = Objects.requireNonNull(error, "error cannot be null");
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private static void validateFinishCommands(

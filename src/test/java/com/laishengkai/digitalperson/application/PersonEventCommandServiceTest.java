@@ -249,7 +249,7 @@ class PersonEventCommandServiceTest {
     }
 
     @Test
-    void finishContinuesWhenPendingEventEvaluationFails() {
+    void finishFailsClosedWhenPendingEventEvaluationFails() {
         Person person = new Person(PERSONALITY);
         PersonEvent untracked = openEvent(ActivityType.EAT, "绕过服务的事件", START);
         person.startPersonEvent(untracked, START);
@@ -263,19 +263,31 @@ class PersonEventCommandServiceTest {
         });
         Instant finishTime = START.plusSeconds(60);
 
-        PersonEventCommandResult result = service.finish(
-                person.getId(),
-                untracked.getId(),
-                EventEndReason.COMPLETED,
-                finishTime
-        ).toCompletableFuture().join();
+        CompletionException failure = assertThrows(
+                CompletionException.class,
+                () -> service.finish(
+                        person.getId(),
+                        untracked.getId(),
+                        EventEndReason.COMPLETED,
+                        finishTime
+                ).toCompletableFuture().join()
+        );
 
+        assertInstanceOf(UnsettledPersonEventException.class, unwrap(failure));
         assertEquals(1, evaluationCount.get());
-        assertEquals(EventEndReason.COMPLETED, result.event().getEndReason().orElseThrow());
-        assertEquals(finishTime, result.event().getEndTime().orElseThrow());
-        assertTrue(result.stateEvolutionContext().evaluatedEventIds().isEmpty());
-        assertTrue(result.stateEvolutionContext().effects().isEmpty());
-        assertEquals(1L, repository.current(person.getId()).version());
+        VersionedPerson stored = repository.current(person.getId());
+        assertEquals(0L, stored.version());
+        assertTrue(stored.person().getPersonEventById(untracked.getId())
+                .orElseThrow()
+                .isOpen());
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private static PersonEventCommandService service(

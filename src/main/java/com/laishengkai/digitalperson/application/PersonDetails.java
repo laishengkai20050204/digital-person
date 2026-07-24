@@ -9,6 +9,7 @@ import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
@@ -44,10 +45,18 @@ public record PersonDetails(
     }
 
     public static PersonDetails from(VersionedPerson versionedPerson) {
+        return from(versionedPerson, Clock.systemUTC());
+    }
+
+    public static PersonDetails from(
+            VersionedPerson versionedPerson,
+            Clock clock
+    ) {
         VersionedPerson source = Objects.requireNonNull(
                 versionedPerson,
                 "versionedPerson cannot be null"
         );
+        Clock effectiveClock = Objects.requireNonNull(clock, "clock cannot be null");
         Person person = source.person();
         StateEvolutionContext evolutionContext = person.getStateEvolutionContext();
         List<RegisteredStateEffect> effects = evolutionContext.effects().values().stream()
@@ -58,7 +67,7 @@ public record PersonDetails(
                 source.version(),
                 PersonIdentitySnapshot.from(
                         person.getIdentity(),
-                        Instant.now()
+                        effectiveClock.instant()
                 ),
                 PersonalitySnapshot.from(person.getPersonality()),
                 person.getStateSnapshot(),
