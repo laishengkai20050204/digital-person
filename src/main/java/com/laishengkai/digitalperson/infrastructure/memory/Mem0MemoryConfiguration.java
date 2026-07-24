@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.infrastructure.memory;
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.health.contributor.HealthIndicator;
@@ -23,8 +24,11 @@ public class Mem0MemoryConfiguration {
     )
     Mem0HttpClient mem0HttpClient(
             Mem0Properties properties,
-            JsonMapper jsonMapper
+            ObjectProvider<JsonMapper> jsonMapperProvider
     ) {
+        JsonMapper jsonMapper = jsonMapperProvider.getIfAvailable(
+                () -> JsonMapper.builder().build()
+        );
         return new Mem0HttpClient(properties, jsonMapper);
     }
 
