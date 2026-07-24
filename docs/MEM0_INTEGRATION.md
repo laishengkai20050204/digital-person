@@ -42,7 +42,17 @@ MEM0_REQUEST_TIMEOUT=30s
 ```bash
 MEM0_AUTO_INSTALL_ENABLED=true
 MEM0_VERSION=v2.0.4
-MEM0_OPENAI_API_KEY=<供应商密钥>
+
+# 记忆提取模型，可直接复用当前 OpenRouter 配置
+MEM0_LLM_API_KEY=<OpenRouter 或其他 OpenAI 兼容接口密钥>
+MEM0_LLM_BASE_URL=https://openrouter.ai/api/v1
+MEM0_LLM_MODEL=<OpenRouter 模型 ID>
+
+# 向量嵌入必须单独配置；OpenRouter 不提供 embeddings API
+MEM0_EMBEDDER_API_KEY=<embedding 服务密钥>
+MEM0_EMBEDDER_BASE_URL=<OpenAI 兼容 embedding 接口>
+MEM0_EMBEDDER_MODEL=<embedding 模型 ID>
+
 MEM0_API_KEY=<与应用配置相同的值>
 MEM0_JWT_SECRET=<长随机值>
 ```
@@ -61,6 +71,17 @@ sudo chmod 640 /etc/person-ai/mem0.env
 ```
 
 生成后仍需把相同值配置进应用的 `MEM0_API_KEY`，否则受保护的记忆接口会返回 `401`。
+
+## 模型与向量服务
+
+Mem0 的记忆提取 LLM 和向量嵌入是两套独立依赖。部署脚本会在服务启动后通过受保护的 `/configure` 接口写入两套配置：
+
+- LLM 可复用数字人现有的 OpenRouter `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`；
+- embedding 必须配置 `MEM0_EMBEDDER_*`；
+- 不能把 OpenRouter 当作 embedding 接口；
+- 如果 LLM 和 embedding 都使用官方 OpenAI，`MEM0_EMBEDDER_API_KEY` 可省略并复用 LLM Key。
+
+配置会由 Mem0 持久化到自身数据库；数据库和环境文件都必须按敏感凭据保护。即使 Mem0 已经运行，后续部署也会重新调用 `/configure`，使模型或 embedding 配置变更生效。
 
 ## 首次准备
 
@@ -119,7 +140,7 @@ MEM0_RETRIEVAL_ENABLED=false
 ## Mem0 REST 映射
 
 ```text
-PersonMemoryQuery        -> POST /search
+PersonMemoryQuery        -> POST /search（数量字段为 `top_k`）
 PersonMemoryWriteRequest -> POST /memories
 PersonMemoryStore.delete -> DELETE /memories/{memory_id}
 ```
