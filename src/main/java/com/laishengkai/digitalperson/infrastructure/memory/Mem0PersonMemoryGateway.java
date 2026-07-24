@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.laishengkai.digitalperson.memory.MemoryItem;
 import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
@@ -8,6 +7,7 @@ import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
@@ -94,8 +94,8 @@ public final class Mem0PersonMemoryGateway implements PersonMemoryGateway {
     private static String firstText(JsonNode node, String... names) {
         for (String name : names) {
             JsonNode value = node.get(name);
-            if (value != null && value.isTextual() && !value.asText().isBlank()) {
-                return value.asText().strip();
+            if (value != null && value.isTextual() && !value.asString().isBlank()) {
+                return value.asString().strip();
             }
         }
         return "";
@@ -104,7 +104,7 @@ public final class Mem0PersonMemoryGateway implements PersonMemoryGateway {
     private static MemorySection section(JsonNode node) {
         if (node != null && node.isTextual()) {
             try {
-                return MemorySection.valueOf(node.asText().strip().toUpperCase(Locale.ROOT));
+                return MemorySection.valueOf(node.asString().strip().toUpperCase(Locale.ROOT));
             } catch (IllegalArgumentException ignored) {
                 // Unknown provider metadata falls back to a stable generic section.
             }
