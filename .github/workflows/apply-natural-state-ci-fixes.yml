@@ -21,34 +21,38 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
-          def replace(path, old, new, count=1):
+          def rewrite(path, transform):
               file = Path(path)
-              text = file.read_text()
-              found = text.count(old)
-              if found < count:
-                  raise SystemExit(f"{path}: expected at least {count} matches, found {found}")
-              file.write_text(text.replace(old, new, count))
+              before = file.read_text()
+              after = transform(before)
+              if after == before:
+                  raise SystemExit(f"{path}: transformation made no change")
+              file.write_text(after)
+              print(f"updated {path}")
 
-          replace(
-              'src/main/java/com/laishengkai/digitalperson/experience/PersonEventSnapshot.java',
-              '''                ActivityDurationStatus.classify(
-                                  ActivityType.valueOf(activityType),
-                                  endTime == null
-                                          ? 0L
-                                          : nonNegativeMinutes(startTime, endTime)
-                          ),''',
-              '''                compatibilityDurationStatus(
-                                  activityType,
-                                  endTime == null
-                                          ? 0L
-                                          : nonNegativeMinutes(startTime, endTime)
-                          ),'''
-          )
-          replace(
-              'src/main/java/com/laishengkai/digitalperson/experience/PersonEventSnapshot.java',
-              '''    private static Instant max(Instant left, Instant right) {''',
-              '''    private static ActivityDurationStatus compatibilityDurationStatus(
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f"missing {label}")
+              return text.replace(old, new, 1)
+
+          def snapshot(text):
+              text, count = re.subn(
+                  r'ActivityDurationStatus\.classify\(\s*ActivityType\.valueOf\(activityType\),\s*endTime == null\s*\? 0L\s*: nonNegativeMinutes\(startTime, endTime\)\s*\)',
+                  '''compatibilityDurationStatus(
+                          activityType,
+                          endTime == null
+                                  ? 0L
+                                  : nonNegativeMinutes(startTime, endTime)
+                  )''',
+                  text,
+                  count=1
+              )
+              if count != 1:
+                  raise SystemExit(f"PersonEventSnapshot classification matches={count}")
+              anchor = '    private static Instant max(Instant left, Instant right) {'
+              helper = '''    private static ActivityDurationStatus compatibilityDurationStatus(
                       String activityType,
                       long elapsedMinutes
               ) {
@@ -62,62 +66,96 @@ jobs:
                   }
               }
 
-              private static Instant max(Instant left, Instant right) {'''
+          '''
+              return replace_once(text, anchor, helper + anchor, 'snapshot helper anchor')
+
+          rewrite(
+              'src/main/java/com/laishengkai/digitalperson/experience/PersonEventSnapshot.java',
+              snapshot
           )
-          replace(
+
+          def prompt(text):
+              text, count = re.subn(
+                  r'记忆判断用餐\s+与睡眠。',
+                  '记忆判断用餐与睡眠。',
+                  text,
+                  count=1
+              )
+              if count != 1:
+                  raise SystemExit(f"activity prompt matches={count}")
+              return text
+
+          rewrite(
               'src/main/java/com/laishengkai/digitalperson/infrastructure/activity/LanguageModelPersonActivityDecisionModel.java',
-              '''必须结合 temporal、currentState、activeEffects、recentEvents、physiology 和 ROUTINE 记忆判断用餐
-                              与睡眠。''',
-              '''必须结合 temporal、currentState、activeEffects、recentEvents、physiology 和 ROUTINE 记忆判断用餐与睡眠。'''
+              prompt
           )
-          replace(
+
+          rewrite(
               'src/main/java/com/laishengkai/digitalperson/state/StateUpdater.java',
-              '''            fatigueTarget = clampRange(0.05 + sleepDebtHours * 0.03, 0.05, 0.25);''',
-              '''            fatigueTarget = clampRange(0.05 + sleepDebtHours * 0.0125, 0.05, 0.15);'''
-          )
-          replace(
-              'src/test/java/com/laishengkai/digitalperson/state/StateTransitionMergerTest.java',
-              '''new StateTransition(StateDimension.ENERGY, 2.0)''',
-              '''new StateTransition(StateDimension.ENERGY, 30.0)'''
-          )
-          replace(
-              'src/test/java/com/laishengkai/digitalperson/state/StateTransitionMergerTest.java',
-              '''new StateTransition(StateDimension.ENERGY, 2.5)''',
-              '''new StateTransition(StateDimension.ENERGY, 20.0)'''
+              lambda text: replace_once(
+                  text,
+                  'fatigueTarget = clampRange(0.05 + sleepDebtHours * 0.03, 0.05, 0.25);',
+                  'fatigueTarget = clampRange(0.05 + sleepDebtHours * 0.0125, 0.05, 0.15);',
+                  'sleep fatigue target'
+              )
           )
 
-          path = Path('src/test/java/com/laishengkai/digitalperson/application/PersonEventCommandServiceTest.java')
-          text = path.read_text()
-          old_init = 'Person person = new Person(PERSONALITY, stateWithHunger(0.7));'
-          if text.count(old_init) < 3:
-              raise SystemExit('PersonEventCommandServiceTest: missing initial states')
-          text = text.replace(old_init, 'Person person = new Person(PERSONALITY, stateWithValence(0.7));', 2)
-          text = text.replace(
-              'new StateTransition(StateDimension.HUNGER, -1.0)',
-              'new StateTransition(StateDimension.VALENCE, -1.0)',
-              1
+          def merger_test(text):
+              text = replace_once(
+                  text,
+                  'new StateTransition(StateDimension.ENERGY, 2.0)',
+                  'new StateTransition(StateDimension.ENERGY, 30.0)',
+                  'first merger shape'
+              )
+              return replace_once(
+                  text,
+                  'new StateTransition(StateDimension.ENERGY, 2.5)',
+                  'new StateTransition(StateDimension.ENERGY, 20.0)',
+                  'second merger shape'
+              )
+
+          rewrite(
+              'src/test/java/com/laishengkai/digitalperson/state/StateTransitionMergerTest.java',
+              merger_test
           )
-          text = text.replace(
-              'new StateTransition(StateDimension.ENERGY, 1.0)',
-              'new StateTransition(StateDimension.TENSION, 1.0)',
-              1
-          )
-          text = text.replace(
-              'new StateTransition(StateDimension.HUNGER, -1.0)',
-              'new StateTransition(StateDimension.VALENCE, -1.0)',
-              1
-          )
-          old_expected = '''double expectedHunger = 0.7 * Math.exp(-1.0 / 6.0);
-                  assertEquals(expectedHunger, result.state().hunger(), EPSILON);'''
-          if text.count(old_expected) != 2:
-              raise SystemExit('PersonEventCommandServiceTest: expected assertions changed')
-          text = text.replace(
-              old_expected,
-              '''double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);
-                  assertEquals(expectedValence, result.state().valence(), EPSILON);'''
-          )
-          helper_anchor = '''    private static PersonState stateWithHunger(double hunger) {'''
-          helper = '''    private static PersonState stateWithValence(double valence) {
+
+          def event_service_test(text):
+              init = 'Person person = new Person(PERSONALITY, stateWithHunger(0.7));'
+              if text.count(init) < 3:
+                  raise SystemExit('event service initial state count changed')
+              text = text.replace(
+                  init,
+                  'Person person = new Person(PERSONALITY, stateWithValence(0.7));',
+                  2
+              )
+              text = replace_once(
+                  text,
+                  'new StateTransition(StateDimension.HUNGER, -1.0)',
+                  'new StateTransition(StateDimension.VALENCE, -1.0)',
+                  'first valence transition'
+              )
+              text = replace_once(
+                  text,
+                  'new StateTransition(StateDimension.ENERGY, 1.0)',
+                  'new StateTransition(StateDimension.TENSION, 1.0)',
+                  'replacement transition'
+              )
+              text = replace_once(
+                  text,
+                  'new StateTransition(StateDimension.HUNGER, -1.0)',
+                  'new StateTransition(StateDimension.VALENCE, -1.0)',
+                  'second valence transition'
+              )
+              text, count = re.subn(
+                  r'double expectedHunger = 0\.7 \* Math\.exp\(-1\.0 / 6\.0\);\s*assertEquals\(expectedHunger, result\.state\(\)\.hunger\(\), EPSILON\);',
+                  '''double expectedValence = 0.7 * Math.exp(-1.0 / 6.0);
+                  assertEquals(expectedValence, result.state().valence(), EPSILON);''',
+                  text
+              )
+              if count != 2:
+                  raise SystemExit(f"event service expectation matches={count}")
+              anchor = '    private static PersonState stateWithHunger(double hunger) {'
+              helper = '''    private static PersonState stateWithValence(double valence) {
                   return new PersonState(
                           new AffectState(valence, 0.5, 0.0),
                           CognitiveState.baseline(),
@@ -127,28 +165,34 @@ jobs:
               }
 
           '''
-          if helper_anchor not in text:
-              raise SystemExit('PersonEventCommandServiceTest: helper anchor missing')
-          path.write_text(text.replace(helper_anchor, helper + helper_anchor, 1))
+              return replace_once(text, anchor, helper + anchor, 'event service helper')
 
-          path = Path('src/test/java/com/laishengkai/digitalperson/application/StateUpdateConsistencyRegressionTest.java')
-          text = path.read_text()
-          text = text.replace(
-              'Person person = new Person(PERSONALITY, stateWithHunger(0.7));',
-              'Person person = new Person(PERSONALITY, stateWithValence(0.7));',
-              1
+          rewrite(
+              'src/test/java/com/laishengkai/digitalperson/application/PersonEventCommandServiceTest.java',
+              event_service_test
           )
-          text = text.replace(
-              'eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))',
-              'eventBoundImpact(new StateTransition(StateDimension.VALENCE, -1.0))',
-              1
-          )
-          text = text.replace(
-              'stored.getState().getPhysicalState().getHunger()',
-              'stored.getStateSnapshot().valence()',
-              1
-          )
-          helper = '''    private static PersonState stateWithValence(double valence) {
+
+          def consistency_test(text):
+              text = replace_once(
+                  text,
+                  'Person person = new Person(PERSONALITY, stateWithHunger(0.7));',
+                  'Person person = new Person(PERSONALITY, stateWithValence(0.7));',
+                  'consistency initial state'
+              )
+              text = replace_once(
+                  text,
+                  'eventBoundImpact(new StateTransition(StateDimension.HUNGER, -1.0))',
+                  'eventBoundImpact(new StateTransition(StateDimension.VALENCE, -1.0))',
+                  'consistency transition'
+              )
+              text = replace_once(
+                  text,
+                  'stored.getState().getPhysicalState().getHunger()',
+                  'stored.getStateSnapshot().valence()',
+                  'consistency state assertion'
+              )
+              anchor = '    private static PersonState stateWithHunger(double hunger) {'
+              helper = '''    private static PersonState stateWithValence(double valence) {
                   return new PersonState(
                           new AffectState(valence, 0.5, 0.0),
                           CognitiveState.baseline(),
@@ -158,9 +202,12 @@ jobs:
               }
 
           '''
-          if helper_anchor not in text:
-              raise SystemExit('StateUpdateConsistencyRegressionTest: helper anchor missing')
-          path.write_text(text.replace(helper_anchor, helper + helper_anchor, 1))
+              return replace_once(text, anchor, helper + anchor, 'consistency helper')
+
+          rewrite(
+              'src/test/java/com/laishengkai/digitalperson/application/StateUpdateConsistencyRegressionTest.java',
+              consistency_test
+          )
           PY
           rm -f .github/workflows/apply-natural-state-ci-fixes.yml
           git config user.name "github-actions[bot]"
