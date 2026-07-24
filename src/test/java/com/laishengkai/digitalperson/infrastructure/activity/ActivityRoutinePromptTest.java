@@ -16,6 +16,10 @@ class ActivityRoutinePromptTest {
         String prompt = (String) builder.invoke(null);
 
         assertTrue(prompt.contains("elapsedMinutes"));
+        assertTrue(prompt.contains("durationStatus"));
+        assertTrue(prompt.contains("physiology"));
+        assertTrue(prompt.contains("sleepDebtMinutes"));
+        assertTrue(prompt.contains("短睡眠"));
         assertTrue(prompt.contains("observation 为空"));
         assertTrue(prompt.contains("60 到 120 分钟"));
         assertTrue(prompt.contains("超过 180 分钟"));

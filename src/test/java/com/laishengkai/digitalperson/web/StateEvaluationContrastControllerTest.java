@@ -57,8 +57,8 @@ class StateEvaluationContrastControllerTest {
                       "type":"EMOTIONAL",
                       "cause":"亲密朋友的严厉指责引发受伤和紧张",
                       "transitions":[
-                        {"dimension":"TENSION","shape":0.50},
-                        {"dimension":"VALENCE","shape":-0.45}
+                        {"dimension":"TENSION","direction":"INCREASE","intensity":"MEDIUM"},
+                        {"dimension":"VALENCE","direction":"DECREASE","intensity":"MEDIUM"}
                       ],
                       "endPolicy":"FIXED_TIME",
                       "durationMinutes":240

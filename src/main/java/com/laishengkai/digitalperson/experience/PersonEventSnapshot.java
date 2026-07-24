@@ -20,6 +20,7 @@ public record PersonEventSnapshot(
         String endReason,
         boolean active,
         long elapsedMinutes,
+        ActivityDurationStatus durationStatus,
         Long minutesSinceEnd
 ) {
     public PersonEventSnapshot {
@@ -42,6 +43,10 @@ public record PersonEventSnapshot(
         if (elapsedMinutes < 0) {
             throw new IllegalArgumentException("elapsedMinutes cannot be negative");
         }
+        durationStatus = Objects.requireNonNull(
+                durationStatus,
+                "durationStatus cannot be null"
+        );
         if (active) {
             if (endTime != null || endReason != null || minutesSinceEnd != null) {
                 throw new IllegalArgumentException(
@@ -92,6 +97,12 @@ public record PersonEventSnapshot(
                 endTime == null
                         ? 0L
                         : nonNegativeMinutes(startTime, endTime),
+                ActivityDurationStatus.classify(
+                        ActivityType.valueOf(activityType),
+                        endTime == null
+                                ? 0L
+                                : nonNegativeMinutes(startTime, endTime)
+                ),
                 endTime == null ? null : 0L
         );
     }
@@ -115,6 +126,7 @@ public record PersonEventSnapshot(
         Instant endTime = source.getEndTime().orElse(null);
         boolean active = endTime == null;
         Instant elapsedEnd = active ? max(now, source.getStartTime()) : endTime;
+        long elapsedMinutes = nonNegativeMinutes(source.getStartTime(), elapsedEnd);
         return new PersonEventSnapshot(
                 owner,
                 source.getId().toString(),
@@ -128,7 +140,11 @@ public record PersonEventSnapshot(
                 source.getNotes(),
                 source.getEndReason().map(Enum::name).orElse(null),
                 active,
-                nonNegativeMinutes(source.getStartTime(), elapsedEnd),
+                elapsedMinutes,
+                ActivityDurationStatus.classify(
+                        source.getActivityType(),
+                        elapsedMinutes
+                ),
                 active ? null : nonNegativeMinutes(endTime, max(now, endTime))
         );
     }

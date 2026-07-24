@@ -13,7 +13,7 @@ MySQL 中的 nextReviewAt 到期
         ↓
 读取 Person + 持久化版本
         ↓
-按经过时间结算已有状态效果
+按经过时间结算自然状态与已有事件效果
         ↓
 组装活动决策上下文
         ↓
@@ -78,22 +78,16 @@ curl -X POST \
 
 ### 3.2 自动结算已有状态效果
 
-`StateUpdater.prepare(...)` 根据以下数据结算到当前决策时间：
+生产路径通过 `StateUpdater.prepareWithNaturalEvolution(...)` 结算到当前决策时间。
 
-- `lastUpdatedAt`；
-- 当前仍有效的状态效果；
-- 效果的指数变化速率 `shape`；
-- 事件的真实结束时间；
-- 当前仍在进行的事件。
+第一层是 Java 永久自然调节：
 
-例如休息事件具有：
+- 根据最后进食和当前进食活动更新 `HUNGER`；
+- 根据当地昼夜时间、持续清醒和最近 24 小时睡眠债更新 `SLEEPINESS`；
+- 根据睡眠、学习、工作、运动和休息更新 `ENERGY`、`FATIGUE`；
+- 在非学习/工作阶段让认知维度向基础水平回归。
 
-```text
-ENERGY shape = +0.5
-FATIGUE shape = -1.0
-```
-
-下一轮即使命令为空，系统仍会根据实际经过时间更新能量与疲劳。这是确定性的 Java 计算，不会重新询问模型旧效果如何变化。
+第二层才结算当前仍有效的事件效果。模型提交 `direction + intensity`，Java 将其稳定映射为持久化数值 `shape`。两层都使用指数模型，因此下一轮即使命令为空，状态仍会按真实经过时间继续演化。
 
 ### 3.3 补齐未评估事件
 
@@ -113,6 +107,7 @@ currentState
 activeEffects
 activeEvents
 recentEvents
+physiology
 memory
 recentConversation
 observation
@@ -135,8 +130,11 @@ evaluationTime
 owner
 active
 elapsedMinutes
+durationStatus
 minutesSinceEnd
 ```
+
+`physiology` 另外提供最近 24 小时睡眠量、睡眠债、持续清醒时间、距离上次进食时间，以及当前 PRIMARY 活动的持续时长等级。
 
 所以没有 observation 时，模型仍能根据活动持续时间、状态、当地时间、记忆和对话自主判断。
 
@@ -201,12 +199,14 @@ AUDIO         LISTEN_MUSIC
 
 只有实际创建新事件时，应用才调用状态效果模型。
 
-例如启动 `REST` 后，模型可能提交：
+模型不再直接提交任意 `shape`，而是选择方向和强度档位。例如特殊事件可能提交：
 
 ```text
-EMOTIONAL: ENERGY +0.5
-PHYSICAL:  FATIGUE -1.0
+TENSION: direction=INCREASE, intensity=HIGH
+VALENCE: direction=DECREASE, intensity=MEDIUM
 ```
+
+普通睡眠恢复、饥饿和进食效果由 Java 自然层负责，不应由模型重复生成。
 
 允许维度严格映射：
 

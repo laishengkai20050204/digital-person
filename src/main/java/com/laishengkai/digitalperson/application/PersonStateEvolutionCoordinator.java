@@ -91,9 +91,12 @@ public final class PersonStateEvolutionCoordinator {
         );
         Consumer<String> guard = requireCheckpoint(checkpoint);
         guard.accept("state preparation");
-        return stateUpdater.prepare(
+        return stateUpdater.prepareWithNaturalEvolution(
+                safePerson.getId(),
+                safePerson.getIdentity().timeZone(),
                 safeState,
                 safePerson.getCurrentPersonEvents(now),
+                safePerson.getPersonTimeline().getAll(),
                 now,
                 safePerson.getStateEvolutionContext(),
                 eventEndTimes(safePerson)

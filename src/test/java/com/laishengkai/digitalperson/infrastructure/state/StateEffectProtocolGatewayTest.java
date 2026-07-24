@@ -108,7 +108,7 @@ class StateEffectProtocolGatewayTest {
                 {"effects":[{
                   "type":"PHYSICAL",
                   "cause":"运动后身体消耗",
-                  "transitions":[{"dimension":"ENERGY","shape":-0.4}],
+                  "transitions":[{"dimension":"ENERGY","direction":"DECREASE","intensity":"HIGH"}],
                   "endPolicy":"FIXED_TIME",
                   "durationMinutes":60
                 }]}
@@ -120,7 +120,7 @@ class StateEffectProtocolGatewayTest {
                 {"effects":[{
                   "type":"PHYSICAL",
                   "cause":"运动后身体疲劳",
-                  "transitions":[{"dimension":"FATIGUE","shape":-0.4}],
+                  "transitions":[{"dimension":"FATIGUE","direction":"INCREASE","intensity":"HIGH"}],
                   "endPolicy":"FIXED_TIME",
                   "durationMinutes":60
                 }]}

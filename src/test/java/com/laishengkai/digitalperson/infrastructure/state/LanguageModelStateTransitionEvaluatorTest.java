@@ -54,7 +54,7 @@ class LanguageModelStateTransitionEvaluatorTest {
                       "type": "EMOTIONAL",
                       "cause": "考试准备带来积极期待",
                       "transitions": [
-                        {"dimension": "VALENCE", "shape": 0.35}
+                        {"dimension": "VALENCE", "direction": "INCREASE", "intensity": "HIGH"}
                       ],
                       "endPolicy": "FIXED_TIME",
                       "durationMinutes": 180
@@ -63,7 +63,7 @@ class LanguageModelStateTransitionEvaluatorTest {
                       "type": "SOCIAL",
                       "cause": "当前交流暂时缓解孤独感",
                       "transitions": [
-                        {"dimension": "LONELINESS", "shape": -0.25}
+                        {"dimension": "LONELINESS", "direction": "DECREASE", "intensity": "MEDIUM"}
                       ],
                       "endPolicy": "EVENT_END",
                       "durationMinutes": 0
@@ -81,9 +81,9 @@ class LanguageModelStateTransitionEvaluatorTest {
         assertEquals(2, impact.effects().size());
         assertEquals(StateEffectType.EMOTIONAL, impact.effects().getFirst().type());
         assertEquals("考试准备带来积极期待", impact.effects().getFirst().cause());
-        assertEquals(List.of(
-                new StateTransition(StateDimension.VALENCE, 0.35)
-        ), impact.effects().getFirst().transitions());
+        StateTransition valence = impact.effects().getFirst().transitions().getFirst();
+        assertEquals(StateDimension.VALENCE, valence.dimension());
+        assertTrue(valence.shape() >= 0.40 && valence.shape() <= 0.60);
         assertEquals(
                 StateEffectEndPolicy.FIXED_TIME,
                 impact.effects().getFirst().endPolicy()
@@ -107,8 +107,9 @@ class LanguageModelStateTransitionEvaluatorTest {
         assertTrue(schema.contains("cause"));
         assertTrue(schema.contains("endPolicy"));
         assertTrue(schema.contains("durationMinutes"));
-        assertTrue(schema.contains("\"minimum\":-3.0"));
-        assertTrue(schema.contains("\"maximum\":3.0"));
+        assertTrue(schema.contains("\"direction\""));
+        assertTrue(schema.contains("\"intensity\""));
+        assertTrue(schema.contains("\"INSTANT\""));
         UserModelMessage userMessage = assertInstanceOf(
                 UserModelMessage.class,
                 request.messages().get(1)
@@ -192,8 +193,8 @@ class LanguageModelStateTransitionEvaluatorTest {
                   "type":"EMOTIONAL",
                   "cause":"重复维度",
                   "transitions":[
-                    {"dimension":"ENERGY","shape":0.2},
-                    {"dimension":"ENERGY","shape":-0.1}
+                    {"dimension":"ENERGY","direction":"INCREASE","intensity":"LOW"},
+                    {"dimension":"ENERGY","direction":"DECREASE","intensity":"LOW"}
                   ],
                   "endPolicy":"EVENT_END",
                   "durationMinutes":0
@@ -203,28 +204,28 @@ class LanguageModelStateTransitionEvaluatorTest {
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
                 {"effects":[{
                   "type":"EMOTIONAL",
-                  "cause":"无效速率",
-                  "transitions":[{"dimension":"ENERGY","shape":0.0}],
+                  "cause":"未知方向",
+                  "transitions":[{"dimension":"ENERGY","direction":"SIDEWAYS","intensity":"LOW"}],
                   "endPolicy":"EVENT_END",
                   "durationMinutes":0
                 }]}
-                """))).getMessage().contains("invalid shape"));
+                """))).getMessage().contains("unknown effect direction"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
                 {"effects":[{
                   "type":"EMOTIONAL",
-                  "cause":"超出速率上限",
-                  "transitions":[{"dimension":"VALENCE","shape":3.01}],
+                  "cause":"瞬时效果持续过久",
+                  "transitions":[{"dimension":"VALENCE","direction":"INCREASE","intensity":"INSTANT"}],
                   "endPolicy":"FIXED_TIME",
                   "durationMinutes":60
                 }]}
-                """))).getMessage().contains("invalid shape"));
+                """))).getMessage().contains("INSTANT"));
 
         assertTrue(failureOf(evaluatorReturning(toolResponse("""
                 {"effects":[{
                   "type":"EMOTIONAL",
                   "cause":"未知维度",
-                  "transitions":[{"dimension":"MOOD","shape":0.2}],
+                  "transitions":[{"dimension":"MOOD","direction":"INCREASE","intensity":"LOW"}],
                   "endPolicy":"EVENT_END",
                   "durationMinutes":0
                 }]}
@@ -234,7 +235,7 @@ class LanguageModelStateTransitionEvaluatorTest {
                 {"effects":[{
                   "type":"EMOTIONAL",
                   "cause":"类型与维度不匹配",
-                  "transitions":[{"dimension":"LONELINESS","shape":0.8}],
+                  "transitions":[{"dimension":"LONELINESS","direction":"INCREASE","intensity":"EXTREME"}],
                   "endPolicy":"FIXED_TIME",
                   "durationMinutes":60
                 }]}
@@ -244,7 +245,7 @@ class LanguageModelStateTransitionEvaluatorTest {
                 {"effects":[{
                   "type":"EMOTIONAL",
                   "cause":"固定时间缺少持续时间",
-                  "transitions":[{"dimension":"VALENCE","shape":-0.8}],
+                  "transitions":[{"dimension":"VALENCE","direction":"DECREASE","intensity":"EXTREME"}],
                   "endPolicy":"FIXED_TIME",
                   "durationMinutes":0
                 }]}
@@ -254,7 +255,7 @@ class LanguageModelStateTransitionEvaluatorTest {
                 {"effects":[{
                   "type":"EMOTIONAL",
                   "cause":"事件绑定却设置持续时间",
-                  "transitions":[{"dimension":"VALENCE","shape":-0.8}],
+                  "transitions":[{"dimension":"VALENCE","direction":"DECREASE","intensity":"EXTREME"}],
                   "endPolicy":"EVENT_END",
                   "durationMinutes":60
                 }]}

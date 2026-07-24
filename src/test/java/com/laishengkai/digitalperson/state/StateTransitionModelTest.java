@@ -42,6 +42,70 @@ class StateTransitionModelTest {
     }
 
     @Test
+    void movesTowardAnArbitraryTargetUsingTheSameExponentialModel() {
+        double next = model.calculate(
+                StateDimension.HUNGER,
+                0.2,
+                0.8,
+                0.5,
+                Duration.ofHours(2)
+        );
+
+        assertEquals(0.8 + (0.2 - 0.8) * Math.exp(-1.0), next, EPSILON);
+    }
+
+    @Test
+    void targetTransitionsRemainPollingFrequencyIndependent() {
+        double oneStep = model.calculate(
+                StateDimension.ENERGY,
+                0.3,
+                0.8,
+                0.4,
+                Duration.ofHours(2)
+        );
+        double halfway = model.calculate(
+                StateDimension.ENERGY,
+                0.3,
+                0.8,
+                0.4,
+                Duration.ofHours(1)
+        );
+        double twoSteps = model.calculate(
+                StateDimension.ENERGY,
+                halfway,
+                0.8,
+                0.4,
+                Duration.ofHours(1)
+        );
+
+        assertEquals(oneStep, twoSteps, EPSILON);
+    }
+
+    @Test
+    void rejectsInvalidTargetTransitionParameters() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> model.calculate(
+                        StateDimension.HUNGER,
+                        0.5,
+                        1.1,
+                        0.2,
+                        Duration.ofHours(1)
+                )
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> model.calculate(
+                        StateDimension.HUNGER,
+                        0.5,
+                        0.8,
+                        0.0,
+                        Duration.ofHours(1)
+                )
+        );
+    }
+
+    @Test
     void pollingFrequencyDoesNotChangeTheResult() {
         PersonState oneUpdate = stateWithHunger(0.7);
         PersonState twoUpdates = stateWithHunger(0.7);

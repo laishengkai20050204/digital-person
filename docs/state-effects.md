@@ -3,14 +3,15 @@
 The state system separates facts from their consequences:
 
 - an `Event` records what happened and participates in activity-channel concurrency;
-- a `StateEffect` records how one cause is currently changing the person;
-- `PersonState` is settled from every effect active during each exact time interval.
+- a model-produced `StateEffect` records a short-term consequence of one event;
+- Java-owned natural evolution continuously models physiology and baseline recovery;
+- `PersonState` is settled to each command boundary from both layers.
 
 Activity channels never own or overwrite state effects.
 
-## Effect shape
+## Persisted effect shape
 
-Each persisted effect contains:
+Each persisted event effect contains:
 
 ```text
 effectId
@@ -23,35 +24,42 @@ fixedEndsAt (when required)
 transitions
 ```
 
-`cause` is a concise factual description of the direct reason or trigger for the effect. It is not chain-of-thought, advice, or generated dialogue.
+The persisted transition still contains a resolved numeric `shape`. A positive value moves toward the dimension maximum, a negative value moves toward the minimum, and the absolute value is an hourly exponential rate rather than a direct delta.
 
-Each transition `shape` is an hourly signed exponential rate. Its absolute
-value is limited to `3.0`; this already moves a value about 95% of the remaining
-distance toward its bound in one hour. When several active effects target the
-same dimension, their signed rates are summed and the merged rate is saturated
-to `[-3.0, 3.0]` before settlement. Older persisted values outside this range
-are bounded while loading and are normalized on the next save.
+The hard domain bound is `36.0` so the explicit `INSTANT` tier can approach a bound within several minutes. Ordinary model effects are constrained by semantic tiers and never receive an unrestricted numeric input.
 
-Example:
+## Model-facing intensity protocol
+
+The model submits direction and intensity instead of raw shape:
 
 ```json
 {
-  "type": "EMOTIONAL",
-  "cause": "恋人明确提出分手，引发关系丧失感",
-  "transitions": [
-    {"dimension": "VALENCE", "shape": -0.8},
-    {"dimension": "TENSION", "shape": 0.7}
-  ],
-  "endPolicy": "FIXED_TIME",
-  "durationMinutes": 360
+  "dimension": "TENSION",
+  "direction": "INCREASE",
+  "intensity": "HIGH"
 }
 ```
 
-There are no title or keyword rules for breakup, conflict, study, sleep, or other events. The model selects effects from the supplied event, structured identity, current state, existing active effects, HEXACO personality, relationship memory, and recent conversation.
+Java resolves these deterministic ranges:
+
+```text
+LOW      0.08-0.12 / hour
+MEDIUM   0.20-0.30 / hour
+HIGH     0.40-0.60 / hour
+EXTREME  0.80-1.20 / hour
+INSTANT  24.0-36.0 / hour
+```
+
+The seed includes the person, source event, transition position, dimension, direction and tier. Retries and restarts therefore reproduce the same resolved rate while separate events retain small variation.
+
+Lifecycle validation is strict:
+
+- `EVENT_END` permits only `LOW` or `MEDIUM` because its duration is unknown;
+- fixed `HIGH` effects may last at most 180 minutes;
+- `EXTREME` may last at most 60 minutes;
+- `INSTANT` requires `FIXED_TIME` and may last at most 10 minutes.
 
 ## Effect types
-
-Effects are split when they affect different semantic groups:
 
 ```text
 EMOTIONAL  -> VALENCE, ENERGY, TENSION
@@ -60,31 +68,25 @@ PHYSICAL   -> FATIGUE, SLEEPINESS, HUNGER
 SOCIAL     -> LONELINESS, SOCIAL_NEED
 ```
 
-This permits one event to register several effects with different causes and lifecycles.
+One event may register several effects with independent causes and lifecycles.
 
 ## End policies
 
 ### `EVENT_END`
 
-Requires a source event. The effect stops exactly when that event ends or is replaced.
-
-Examples: attention occupied by an ongoing conversation, hunger falling while eating, relaxation while music is playing.
+Stops exactly when the bound source event ends or is replaced. Because the duration is unknown, only low or medium model intensity is accepted.
 
 ### `FIXED_TIME`
 
-Stops at `fixedEndsAt` and does not end merely because its source event finished. A source event is optional at the domain level.
-
-Examples: emotional distress after an argument, post-exercise fatigue, caffeine stimulation, accumulated sleep deprivation.
+Stops at `fixedEndsAt` and does not end merely because its source event finished.
 
 ### `EVENT_END_OR_FIXED_TIME`
 
-Requires a source event and a fixed deadline. The earlier boundary wins.
-
-Examples: an environmental or conversational effect that lasts only while the event continues, with a bounded safety limit.
+Stops at the earlier of source-event completion and the fixed deadline.
 
 ## Event evaluation protocol
 
-Production model evaluation must call `submit_state_effects` exactly once:
+Production evaluation must call `submit_state_effects` exactly once:
 
 ```json
 {
@@ -93,7 +95,11 @@ Production model evaluation must call `submit_state_effects` exactly once:
       "type": "COGNITIVE",
       "cause": "激烈沟通持续占用注意力",
       "transitions": [
-        {"dimension": "MENTAL_LOAD", "shape": 0.5}
+        {
+          "dimension": "MENTAL_LOAD",
+          "direction": "INCREASE",
+          "intensity": "MEDIUM"
+        }
       ],
       "endPolicy": "EVENT_END",
       "durationMinutes": 0
@@ -102,10 +108,14 @@ Production model evaluation must call `submit_state_effects` exactly once:
       "type": "EMOTIONAL",
       "cause": "关系破裂消息引发持续低落",
       "transitions": [
-        {"dimension": "VALENCE", "shape": -0.9}
+        {
+          "dimension": "VALENCE",
+          "direction": "DECREASE",
+          "intensity": "EXTREME"
+        }
       ],
       "endPolicy": "FIXED_TIME",
-      "durationMinutes": 360
+      "durationMinutes": 60
     }
   ]
 }
@@ -117,34 +127,38 @@ A valid no-effect evaluation returns:
 {"effects": []}
 ```
 
-An evaluated-event marker is stored separately, so a valid empty result is not mistaken for an event that was never evaluated.
+An evaluated-event marker is stored separately, so an empty result is not mistaken for an event that was never evaluated.
 
-## Settlement
+## Java-owned natural evolution
+
+Natural evolution is logically permanent but is not stored as an ordinary `RegisteredStateEffect`. Its targets depend on time and context:
+
+- eating moves hunger toward a low target;
+- time since the last meal moves hunger toward a progressively higher target;
+- local circadian time, awake duration and recent sleep debt determine sleepiness;
+- sleep, exercise, study, work and rest use different energy and fatigue targets;
+- sleep and non-work periods return cognitive dimensions toward baselines.
+
+Natural transitions use the same exponential model with an arbitrary target:
+
+```text
+next = target + (current - target) * exp(-hourlyRate * elapsedHours)
+```
+
+Targets and rates receive small deterministic daily variation per person and dimension. Settlement is split into 15-minute intervals so event and circadian boundaries are respected without frequent database writes.
+
+Ordinary sleep recovery, hunger accumulation, eating-related hunger reduction and cognitive baseline regression must not be duplicated by the LLM. The model may still add short-term effects when a specific abnormal or contextual cause exists.
+
+## Settlement order
 
 At each command boundary, the updater:
 
-1. identifies every effect lifecycle boundary between the previous update and the current time;
-2. merges all effects active in each interval by state dimension;
-3. applies the existing exponential transition model for that interval;
-4. removes expired effects;
-5. retains unrelated effects regardless of activity-channel changes.
-
-A chat can therefore end while its fixed-time emotional effect continues during music, study, sleep, another chat, and other concurrent effects.
+1. settles Java-owned natural evolution from the previous update time;
+2. identifies every registered effect lifecycle boundary in the same interval;
+3. merges active registered effects by state dimension;
+4. applies event effects;
+5. removes expired effects and retains unrelated effects.
 
 ## Persistence and API
 
-Aggregate JSON schema version 4 persists structured identity together with unified effects and evaluated-event markers. Schema version 3 remains readable with an explicit unspecified identity; schema versions 1 and 2 additionally migrate legacy effects into the unified model.
-
-Person, state, and event-command responses expose:
-
-```text
-activeEffectCount
-activeEffects[].effectId
-activeEffects[].sourceEventId
-activeEffects[].type
-activeEffects[].cause
-activeEffects[].startsAt
-activeEffects[].endPolicy
-activeEffects[].fixedEndsAt
-activeEffects[].transitions
-```
+No persistence schema migration is required. Aggregate JSON continues to store the resolved numeric transitions and evaluated-event markers. APIs continue to expose numeric `activeEffects[].transitions`, which represent the Java-resolved rates actually being applied.
