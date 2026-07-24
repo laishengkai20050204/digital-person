@@ -30,49 +30,36 @@ jobs:
           ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
-      - name: Reconstruct, diagnose, and apply patch
+      - name: Reconstruct and verify patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat \
+            .agent-fix/patch.part00.00 \
+            .agent-fix/patch.part00.01 \
+            .agent-fix/patch.part00.02 \
+            .agent-fix/patch.part00.03 \
+            .agent-fix/patch.part00.04 \
+            .agent-fix/patch.part00.05 \
+            .agent-fix/patch.part00.06 \
+            .agent-fix/patch.part00.07 \
+            .agent-fix/patch.part01 \
+            .agent-fix/patch.part02 \
+            .agent-fix/patch.part03 \
+            .agent-fix/patch.part04 \
+            | base64 --decode > /tmp/fixes.patch.gz
+          echo '0924de4342897f8634e02430993b0b887a3cd771d955a0e2e9f53b968b14f26c  /tmp/fixes.patch.gz' | sha256sum --check --strict
+          gzip --test /tmp/fixes.patch.gz
+          gzip --decompress --stdout /tmp/fixes.patch.gz > /tmp/fixes.patch
+          echo '322410ffceec168b5a768d0b289fb83f271d901cf66581b0afa83c67a54c19c9  /tmp/fixes.patch' | sha256sum --check --strict
+          git apply --check /tmp/fixes.patch
+
+      - name: Apply and commit repairs
         shell: bash
         env:
           TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
         run: |
-          set -uo pipefail
-          {
-            echo 'part sizes and hashes:'
-            wc -c .agent-fix/patch.part*
-            sha256sum .agent-fix/patch.part*
-            echo 'base64 decode:'
-          } > /tmp/diagnostic.txt
-
-          cat .agent-fix/patch.part* | base64 --decode --ignore-garbage > /tmp/fixes.patch.gz 2>> /tmp/diagnostic.txt
-          decode_status=$?
-          echo "decode_status=$decode_status" >> /tmp/diagnostic.txt
-          sha256sum /tmp/fixes.patch.gz >> /tmp/diagnostic.txt
-
-          gzip --test /tmp/fixes.patch.gz 2>> /tmp/diagnostic.txt
-          gzip_status=$?
-          echo "gzip_status=$gzip_status" >> /tmp/diagnostic.txt
-
-          if [ "$decode_status" -eq 0 ] && [ "$gzip_status" -eq 0 ]; then
-            gzip --decompress --stdout /tmp/fixes.patch.gz > /tmp/fixes.patch
-            sha256sum /tmp/fixes.patch >> /tmp/diagnostic.txt
-            git apply --check /tmp/fixes.patch 2>> /tmp/diagnostic.txt
-            apply_status=$?
-          else
-            apply_status=99
-          fi
-          echo "apply_status=$apply_status" >> /tmp/diagnostic.txt
-
-          if [ "$decode_status" -ne 0 ] || [ "$gzip_status" -ne 0 ] || [ "$apply_status" -ne 0 ]; then
-            cp /tmp/diagnostic.txt .agent-fix/diagnostic.txt
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add .agent-fix/diagnostic.txt
-            git commit -m 'Record repair patch diagnostics'
-            git push origin HEAD:"$TARGET_BRANCH"
-            cat /tmp/diagnostic.txt
-            exit 1
-          fi
-
+          set -Eeuo pipefail
           git apply /tmp/fixes.patch
           rm -rf .agent-fix
           git config user.name 'github-actions[bot]'
