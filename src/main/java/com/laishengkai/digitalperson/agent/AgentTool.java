@@ -11,6 +11,14 @@ public interface AgentTool {
     ModelToolSpecification specification();
 
     /**
+     * Declares whether sibling calls may execute concurrently. Tools are serialized by
+     * default so adding a state-changing tool cannot accidentally introduce races.
+     */
+    default AgentToolExecutionPolicy executionPolicy() {
+        return AgentToolExecutionPolicy.SERIAL;
+    }
+
+    /**
      * Executes one model-issued JSON argument object.
      *
      * @param argumentsJson raw JSON arguments emitted by the model

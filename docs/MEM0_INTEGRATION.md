@@ -8,6 +8,7 @@
 - `Mem0StartupProbe`：Spring Boot 启动时检查服务；
 - `Mem0PersonMemoryGateway`：实现长期记忆搜索；
 - `Mem0PersonMemoryStore`：实现对话写入和单条删除；
+- `DialogueMemoryRecorder`：把一轮用户消息与人物回复转换为受限的记忆提取请求；
 - Mem0 不可用时，默认以无记忆模式继续运行；
 - `MEM0_RETRIEVAL_ENABLED=false` 时仍使用 `NoOpPersonMemoryGateway`。
 
@@ -159,10 +160,10 @@ PersonMemoryStore.delete -> DELETE /memories/{memory_id}
 
 ## 下一批
 
-下一批再实现：
+当前读写适配均已具备，模型上下文还会分别限制检索查询、记忆和最近对话的字符预算，避免只依赖条数限制导致 Prompt 失控。后续仍需：
 
-1. 对话完成后的异步记忆写入；
-2. 写入失败补偿队列；
-3. 影子检索日志和质量评估；
-4. 检索结果 token 限制；
-5. 验证后打开聊天 Prompt 注入。
+1. 在正式对话编排成功后调用 `DialogueMemoryRecorder`；
+2. 增加写入失败补偿队列；
+3. 增加影子检索日志和质量评估；
+4. 持久化最近原始对话并替换 `NoOpRecentConversationGateway`；
+5. 验证后默认打开聊天 Prompt 注入。

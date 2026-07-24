@@ -71,6 +71,26 @@ class AgentRequestTest {
         assertTrue(error.getMessage().contains("positive"));
     }
 
+    @Test
+    void shouldRejectTooManyAdvertisedTools() {
+        List<AgentTool> tools = java.util.stream.IntStream
+                .rangeClosed(0, AgentRequest.MAX_TOOLS)
+                .mapToObj(index -> tool("tool-" + index))
+                .toList();
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> new AgentRequest(
+                        List.of(new UserModelMessage("hello")),
+                        ModelInvocationOptions.defaults(),
+                        tools,
+                        4
+                )
+        );
+
+        assertTrue(error.getMessage().contains("tools cannot exceed"));
+    }
+
     private static AgentTool tool(String name) {
         ModelToolSpecification specification = new ModelToolSpecification(
                 name,

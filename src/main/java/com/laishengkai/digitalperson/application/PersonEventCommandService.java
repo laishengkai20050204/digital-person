@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.EventEndReason;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
@@ -19,7 +20,9 @@ import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 
@@ -230,14 +233,29 @@ public final class PersonEventCommandService {
             );
             PersonStateSnapshot evaluationState = workingState.snapshot();
 
-            return stateEvolution.completePending(
+            Set<ActivityChannel> pendingChannels = Set.copyOf(
+                    preparation.pendingEvents().keySet()
+            );
+            CompletionStage<StateEvolutionContext> settlement = stateEvolution.completePending(
                     person,
                     evaluationState,
                     preparation,
-                    now,
-                    PersonStateEvolutionCoordinator.PendingEvaluationPolicy
-                            .CONTINUE_WITH_SETTLED_CONTEXT
-            ).thenApply(settledContext -> {
+                    now
+            );
+            if (!pendingChannels.isEmpty()) {
+                settlement = settlement.handle((settledContext, error) -> {
+                    if (error != null) {
+                        throw new CompletionException(new UnsettledPersonEventException(
+                                requestedPersonId,
+                                pendingChannels,
+                                unwrapCompletionFailure(error)
+                        ));
+                    }
+                    return settledContext;
+                });
+            }
+
+            return settlement.thenApply(settledContext -> {
                 person.finishPersonEvent(requestedEventId, now, requestedReason, now);
                 StateEvolutionContext completedContext = stateEvolution.afterTimelineChange(
                         person,
@@ -338,6 +356,14 @@ public final class PersonEventCommandService {
             );
             return CompletableFuture.failedFuture(error);
         }
+    }
+
+    private static Throwable unwrapCompletionFailure(Throwable error) {
+        Throwable current = Objects.requireNonNull(error, "error cannot be null");
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
     }
 
     private VersionedPerson load(PersonId personId) {

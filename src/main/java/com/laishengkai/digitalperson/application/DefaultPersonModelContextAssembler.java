@@ -6,6 +6,7 @@ import com.laishengkai.digitalperson.conversation.RecentConversationQuery;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.PersonEventSnapshot;
+import com.laishengkai.digitalperson.memory.MemoryItem;
 import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
@@ -38,22 +39,53 @@ import java.util.concurrent.CompletionStage;
 public final class DefaultPersonModelContextAssembler
         implements PersonModelContextAssembler {
     public static final Duration DEFAULT_RECENT_EVENT_WINDOW = Duration.ofHours(24);
+    public static final int DEFAULT_MAX_MEMORY_CHARACTERS = 12_000;
+    public static final int DEFAULT_MAX_CONVERSATION_CHARACTERS = 12_000;
+    public static final int DEFAULT_MAX_RELEVANCE_QUERY_CHARACTERS = 4_000;
 
     private final PersonMemoryGateway memoryGateway;
     private final RecentConversationGateway conversationGateway;
     private final Duration recentEventWindow;
+    private final int maxMemoryCharacters;
+    private final int maxConversationCharacters;
+    private final int maxRelevanceQueryCharacters;
 
     public DefaultPersonModelContextAssembler(
             PersonMemoryGateway memoryGateway,
             RecentConversationGateway conversationGateway
     ) {
-        this(memoryGateway, conversationGateway, DEFAULT_RECENT_EVENT_WINDOW);
+        this(
+                memoryGateway,
+                conversationGateway,
+                DEFAULT_RECENT_EVENT_WINDOW,
+                DEFAULT_MAX_MEMORY_CHARACTERS,
+                DEFAULT_MAX_CONVERSATION_CHARACTERS,
+                DEFAULT_MAX_RELEVANCE_QUERY_CHARACTERS
+        );
     }
 
     public DefaultPersonModelContextAssembler(
             PersonMemoryGateway memoryGateway,
             RecentConversationGateway conversationGateway,
             Duration recentEventWindow
+    ) {
+        this(
+                memoryGateway,
+                conversationGateway,
+                recentEventWindow,
+                DEFAULT_MAX_MEMORY_CHARACTERS,
+                DEFAULT_MAX_CONVERSATION_CHARACTERS,
+                DEFAULT_MAX_RELEVANCE_QUERY_CHARACTERS
+        );
+    }
+
+    public DefaultPersonModelContextAssembler(
+            PersonMemoryGateway memoryGateway,
+            RecentConversationGateway conversationGateway,
+            Duration recentEventWindow,
+            int maxMemoryCharacters,
+            int maxConversationCharacters,
+            int maxRelevanceQueryCharacters
     ) {
         this.memoryGateway = Objects.requireNonNull(
                 memoryGateway,
@@ -70,6 +102,18 @@ public final class DefaultPersonModelContextAssembler
         if (recentEventWindow.isNegative() || recentEventWindow.isZero()) {
             throw new IllegalArgumentException("recentEventWindow must be positive");
         }
+        this.maxMemoryCharacters = requirePositive(
+                maxMemoryCharacters,
+                "maxMemoryCharacters"
+        );
+        this.maxConversationCharacters = requirePositive(
+                maxConversationCharacters,
+                "maxConversationCharacters"
+        );
+        this.maxRelevanceQueryCharacters = requirePositive(
+                maxRelevanceQueryCharacters,
+                "maxRelevanceQueryCharacters"
+        );
     }
 
     public static DefaultPersonModelContextAssembler withoutExternalSources() {
@@ -129,11 +173,14 @@ public final class DefaultPersonModelContextAssembler
                         .thenComparing(RegisteredStateEffect::cause))
                 .map(effect -> ActiveStateEffectSnapshot.from(effect, eventEndTimes))
                 .toList();
-        String relevanceQuery = relevanceQuery(
-                options.relevanceSeed(),
-                options.includeEventContextInRelevanceQuery(),
-                activeEvents,
-                recentEvents
+        String relevanceQuery = truncate(
+                relevanceQuery(
+                        options.relevanceSeed(),
+                        options.includeEventContextInRelevanceQuery(),
+                        activeEvents,
+                        recentEvents
+                ),
+                maxRelevanceQueryCharacters
         );
 
         CompletionStage<PersonMemoryContext> memoryStage = Objects.requireNonNull(
@@ -164,14 +211,84 @@ public final class DefaultPersonModelContextAssembler
                         activeEffects,
                         activeEvents,
                         recentEvents,
-                        Objects.requireNonNull(memory, "memory result cannot be null"),
-                        List.copyOf(Objects.requireNonNull(
+                        boundedMemory(Objects.requireNonNull(
+                                memory,
+                                "memory result cannot be null"
+                        )),
+                        boundedConversation(Objects.requireNonNull(
                                 conversation,
                                 "conversation result cannot be null"
                         )),
                         TemporalContextSnapshot.from(source.getIdentity(), now)
                 )
         );
+    }
+
+    private PersonMemoryContext boundedMemory(PersonMemoryContext memory) {
+        if (memory.items().isEmpty()) {
+            return memory;
+        }
+        List<MemoryItem> selected = new ArrayList<>();
+        int remaining = maxMemoryCharacters;
+        for (MemoryItem item : memory.items()) {
+            if (remaining <= 0) {
+                break;
+            }
+            String content = truncate(item.content(), remaining);
+            selected.add(new MemoryItem(
+                    item.id(),
+                    item.section(),
+                    content,
+                    item.relevance(),
+                    item.createdAt(),
+                    item.updatedAt()
+            ));
+            remaining -= content.length();
+        }
+        return new PersonMemoryContext(memory.availability(), selected);
+    }
+
+    private List<ConversationTurnSnapshot> boundedConversation(
+            List<ConversationTurnSnapshot> conversation
+    ) {
+        if (conversation.isEmpty()) {
+            return List.of();
+        }
+        List<ConversationTurnSnapshot> selected = new ArrayList<>();
+        int remaining = maxConversationCharacters;
+        for (int index = conversation.size() - 1; index >= 0 && remaining > 0; index--) {
+            ConversationTurnSnapshot turn = Objects.requireNonNull(
+                    conversation.get(index),
+                    "conversation cannot contain null"
+            );
+            String text = truncate(turn.text(), remaining);
+            selected.add(new ConversationTurnSnapshot(
+                    turn.role(),
+                    text,
+                    turn.occurredAt()
+            ));
+            remaining -= text.length();
+        }
+        java.util.Collections.reverse(selected);
+        return List.copyOf(selected);
+    }
+
+    private static String truncate(String value, int maxCharacters) {
+        String normalized = Objects.requireNonNull(value, "value cannot be null");
+        if (normalized.length() <= maxCharacters) {
+            return normalized;
+        }
+        if (maxCharacters == 1) {
+            return "…";
+        }
+        return normalized.substring(0, maxCharacters - 1).stripTrailing() + "…";
+    }
+
+    private static int requirePositive(int value, String fieldName) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(fieldName + " must be positive");
+        }
+        return value;
     }
 
     private static List<PersonEventSnapshot> activeEvents(

@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 
-/** Mem0-backed write adapter. It is intentionally not wired into dialogue yet. */
+/** Mem0-backed write adapter used by dialogue orchestration and maintenance flows. */
 public final class Mem0PersonMemoryStore implements PersonMemoryStore {
     private final Mem0HttpClient client;
 

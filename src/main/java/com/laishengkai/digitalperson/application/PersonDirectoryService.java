@@ -8,16 +8,26 @@ import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 
+import java.time.Clock;
 import java.util.Objects;
 
 /** Creates and reads persisted digital-person aggregates. */
 public final class PersonDirectoryService {
     private final PersonRepository personRepository;
     private final PersonCreationRepository creationRepository;
+    private final Clock clock;
 
     public PersonDirectoryService(
             PersonRepository personRepository,
             PersonCreationRepository creationRepository
+    ) {
+        this(personRepository, creationRepository, Clock.systemUTC());
+    }
+
+    public PersonDirectoryService(
+            PersonRepository personRepository,
+            PersonCreationRepository creationRepository,
+            Clock clock
     ) {
         this.personRepository = Objects.requireNonNull(
                 personRepository,
@@ -27,6 +37,7 @@ public final class PersonDirectoryService {
                 creationRepository,
                 "creationRepository cannot be null"
         );
+        this.clock = Objects.requireNonNull(clock, "clock cannot be null");
     }
 
     /** Creates a baseline person and persists it at version zero. */
@@ -46,12 +57,12 @@ public final class PersonDirectoryService {
         if (!creationRepository.insert(person)) {
             throw new PersonCreationConflictException(person.getId());
         }
-        return PersonDetails.from(new VersionedPerson(person.copy(), 0L));
+        return PersonDetails.from(new VersionedPerson(person.copy(), 0L), clock);
     }
 
     /** Returns one complete read model without exposing a mutable aggregate. */
     public PersonDetails get(PersonId personId) {
-        return PersonDetails.from(load(personId));
+        return PersonDetails.from(load(personId), clock);
     }
 
     /** Returns only the current short-term state and its persisted version. */

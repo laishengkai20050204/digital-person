@@ -81,7 +81,7 @@ final class Mem0HttpClient {
                 .build();
         return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .thenApply(response -> {
-                    requireSuccess(response.statusCode(), response.body());
+                    requireSuccess(response.statusCode());
                     return null;
                 });
     }
@@ -126,7 +126,7 @@ final class Mem0HttpClient {
     }
 
     private JsonNode parseResponse(int status, String body) {
-        requireSuccess(status, body);
+        requireSuccess(status);
         if (body == null || body.isBlank()) {
             return objectMapper.getNodeFactory().nullNode();
         }
@@ -140,16 +140,12 @@ final class Mem0HttpClient {
         }
     }
 
-    private static void requireSuccess(int status, String body) {
+    private static void requireSuccess(int status) {
         if (status >= 200 && status < 300) {
             return;
         }
-        String normalizedBody = body == null ? "" : body.strip();
-        if (normalizedBody.length() > 512) {
-            normalizedBody = normalizedBody.substring(0, 512);
-        }
         throw new CompletionException(new Mem0ClientException(
-                "Mem0 request failed with status " + status + ": " + normalizedBody
+                "Mem0 request failed with status " + status
         ));
     }
 

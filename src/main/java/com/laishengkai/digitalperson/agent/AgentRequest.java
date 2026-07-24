@@ -19,6 +19,7 @@ public record AgentRequest(
         int maxModelInvocations
 ) {
     public static final int DEFAULT_MAX_MODEL_INVOCATIONS = 8;
+    public static final int MAX_TOOLS = 32;
 
     public AgentRequest {
         messages = List.copyOf(Objects.requireNonNull(
@@ -39,6 +40,11 @@ public record AgentRequest(
         tools = List.copyOf(Objects.requireNonNullElse(tools, List.of()));
         if (tools.stream().anyMatch(Objects::isNull)) {
             throw new NullPointerException("tools cannot contain null");
+        }
+        if (tools.size() > MAX_TOOLS) {
+            throw new IllegalArgumentException(
+                    "tools cannot exceed " + MAX_TOOLS
+            );
         }
         if (maxModelInvocations <= 0) {
             throw new IllegalArgumentException(

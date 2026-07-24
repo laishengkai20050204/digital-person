@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -35,6 +36,16 @@ public class Mem0MemoryConfiguration {
     )
     PersonMemoryStore mem0PersonMemoryStore(Mem0HttpClient client) {
         return new Mem0PersonMemoryStore(client);
+    }
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.memory.mem0",
+            name = "enabled",
+            havingValue = "true"
+    )
+    DialogueMemoryRecorder dialogueMemoryRecorder(PersonMemoryStore memoryStore) {
+        return new DialogueMemoryRecorder(memoryStore);
     }
 
     @Bean

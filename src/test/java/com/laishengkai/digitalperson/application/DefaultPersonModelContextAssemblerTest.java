@@ -1,9 +1,12 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.experience.PersonEventSnapshot;
 import com.laishengkai.digitalperson.experience.TimeRange;
+import com.laishengkai.digitalperson.memory.MemoryItem;
+import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import com.laishengkai.digitalperson.modelcontext.PersonModelContextSnapshot;
@@ -14,6 +17,7 @@ import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import org.junit.jupiter.api.Test;
 
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -165,4 +169,75 @@ class DefaultPersonModelContextAssemblerTest {
                 receivedQuery.get().relevanceQuery()
         );
     }
+    @Test
+    void boundsMemoryConversationAndRelevanceQueryByCharacters() {
+        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        AtomicReference<PersonMemoryQuery> receivedQuery = new AtomicReference<>();
+        DefaultPersonModelContextAssembler assembler =
+                new DefaultPersonModelContextAssembler(
+                        query -> {
+                            receivedQuery.set(query);
+                            return CompletableFuture.completedFuture(
+                                    PersonMemoryContext.available(List.of(
+                                            new MemoryItem(
+                                                    "memory-1",
+                                                    MemorySection.EPISODIC,
+                                                    "abcdefghijklmnop",
+                                                    0.9,
+                                                    NOW.minusSeconds(60),
+                                                    NOW
+                                            ),
+                                            new MemoryItem(
+                                                    "memory-2",
+                                                    MemorySection.PREFERENCE,
+                                                    "qrstuvwxyz",
+                                                    0.8,
+                                                    NOW.minusSeconds(30),
+                                                    NOW
+                                            )
+                                    ))
+                            );
+                        },
+                        query -> CompletableFuture.completedFuture(List.of(
+                                new ConversationTurnSnapshot(
+                                        ConversationTurnSnapshot.Role.USER,
+                                        "old-turn",
+                                        NOW.minusSeconds(20)
+                                ),
+                                new ConversationTurnSnapshot(
+                                        ConversationTurnSnapshot.Role.PERSON,
+                                        "latest-turn-is-long",
+                                        NOW.minusSeconds(10)
+                                )
+                        )),
+                        Duration.ofHours(24),
+                        12,
+                        10,
+                        15
+                );
+
+        PersonModelContextSnapshot context = assembler.assemble(
+                person,
+                person.getStateSnapshot(),
+                StateEvolutionContext.initial(),
+                new PersonModelContextAssemblyRequest(
+                        Set.of(),
+                        "012345678901234567890123456789",
+                        false,
+                        20,
+                        20
+                ),
+                NOW
+        ).toCompletableFuture().join();
+
+        assertEquals(15, receivedQuery.get().relevanceQuery().length());
+        assertEquals(12, context.memory().items().stream()
+                .mapToInt(item -> item.content().length())
+                .sum());
+        assertEquals(1, context.recentConversation().size());
+        assertEquals(10, context.recentConversation().getFirst().text().length());
+        assertEquals(ConversationTurnSnapshot.Role.PERSON,
+                context.recentConversation().getFirst().role());
+    }
+
 }

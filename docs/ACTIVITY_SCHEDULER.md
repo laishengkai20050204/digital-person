@@ -80,7 +80,7 @@ next_review_at = 当前时间 + initial-review-delay
 initial-review-delay = 1 分钟
 ```
 
-当前实现仍在每次轮询时执行缺失记录补齐。人物规模扩大后，应改为“创建人物时同步建计划 + 低频 reconciliation”。
+创建人物时已经在同一数据库事务中同步建立首轮计划；轮询仍保留缺失记录补齐作为修复性 reconciliation。人物规模扩大后，应把该兜底扫描降为低频任务。
 
 ## 5. 数据库租约
 
@@ -403,10 +403,9 @@ POST /api/persons/{personId}/activity-decisions
 
 仍未实现：
 
-- 创建人物时同步创建调度记录；
 - 低频 reconciliation 取代每轮全表补齐；
 - 调度管理 HTTP API；
 - Prometheus 指标和告警；
 - 按人物成本预算；
 - 按前台、调度、诊断划分独立模型并发配额；
-- 对底层供应商请求进行主动取消。
+- 验证并强化底层供应商对取消信号的实际响应。

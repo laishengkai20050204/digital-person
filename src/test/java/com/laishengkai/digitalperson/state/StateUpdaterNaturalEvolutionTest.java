@@ -13,6 +13,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StateUpdaterNaturalEvolutionTest {
@@ -89,6 +90,63 @@ class StateUpdaterNaturalEvolutionTest {
         );
 
         assertTrue(state.snapshot().hunger() < 0.75);
+    }
+
+
+    @Test
+    void combinedNaturalAndEventEvolutionIsPartitionInvariant() {
+        Instant start = Instant.parse("2026-07-23T10:00:00Z");
+        Instant end = start.plus(Duration.ofHours(1));
+        RegisteredStateEffect drainingEffect = new RegisteredStateEffect(
+                EffectId.random(),
+                null,
+                StateEffectType.EMOTIONAL,
+                "sustained cognitive effort",
+                start,
+                StateEffectEndPolicy.FIXED_TIME,
+                end,
+                List.of(new StateTransition(StateDimension.ENERGY, -0.8))
+        );
+        StateEvolutionContext initialContext = new StateEvolutionContext(
+                start,
+                Map.of(drainingEffect.effectId(), drainingEffect)
+        );
+        PersonState oneShot = state(0.72, 0.25, 0.35, 0.15, 0.20);
+        PersonState partitioned = oneShot.copy();
+
+        UPDATER.prepareWithNaturalEvolution(
+                PERSON_ID,
+                SHANGHAI,
+                oneShot,
+                List.of(),
+                List.of(),
+                end,
+                initialContext,
+                Map.of()
+        );
+
+        StateEvolutionContext context = initialContext;
+        for (int step = 1; step <= 4; step++) {
+            Instant stepEnd = start.plus(Duration.ofMinutes(15L * step));
+            context = UPDATER.prepareWithNaturalEvolution(
+                    PERSON_ID,
+                    SHANGHAI,
+                    partitioned,
+                    List.of(),
+                    List.of(),
+                    stepEnd,
+                    context,
+                    Map.of()
+            ).settledContext();
+        }
+
+        PersonStateSnapshot expected = oneShot.snapshot();
+        PersonStateSnapshot actual = partitioned.snapshot();
+        assertEquals(expected.energy(), actual.energy(), 1.0e-12);
+        assertEquals(expected.fatigue(), actual.fatigue(), 1.0e-12);
+        assertEquals(expected.mentalLoad(), actual.mentalLoad(), 1.0e-12);
+        assertEquals(expected.sleepiness(), actual.sleepiness(), 1.0e-12);
+        assertEquals(expected.hunger(), actual.hunger(), 1.0e-12);
     }
 
     @Test

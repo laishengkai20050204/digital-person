@@ -17,12 +17,14 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 /** Stateless deterministic state evolution service over natural and event effects. */
 public final class StateUpdater {
@@ -137,15 +139,17 @@ public final class StateUpdater {
                 naturalInput != null
         );
 
-        if (naturalInput != null) {
-            settleNaturalUntil(
+        if (naturalInput == null) {
+            settleUntil(currentState, currentTime, currentContext, safeEndTimes);
+        } else {
+            settleWithNaturalEvolution(
                     currentState,
                     currentTime,
                     currentContext,
+                    safeEndTimes,
                     naturalInput
             );
         }
-        settleUntil(currentState, currentTime, currentContext, safeEndTimes);
 
         Map<EffectId, RegisteredStateEffect> retainedEffects = new HashMap<>();
         currentContext.effects().forEach((effectId, effect) -> {
@@ -294,10 +298,11 @@ public final class StateUpdater {
         );
     }
 
-    private void settleNaturalUntil(
+    private void settleWithNaturalEvolution(
             PersonState state,
             Instant now,
             StateEvolutionContext context,
+            Map<EventId, Instant> eventEndTimes,
             NaturalInput input
     ) {
         Instant lastUpdatedAt = context.lastUpdatedAt();
@@ -313,40 +318,67 @@ public final class StateUpdater {
             return;
         }
 
+        List<Instant> boundaries = combinedSettlementBoundaries(
+                lastUpdatedAt,
+                now,
+                context.effects().values(),
+                eventEndTimes,
+                input.personEvents()
+        );
         Instant intervalStart = lastUpdatedAt;
-        int stepCount = 0;
-        while (intervalStart.isBefore(now)) {
-            Instant candidateEnd = intervalStart.plus(NATURAL_STEP);
-            Instant intervalEnd = candidateEnd.isBefore(now) ? candidateEnd : now;
+        int appliedIntervalCount = 0;
+
+        for (Instant intervalEnd : boundaries) {
             Duration duration = Duration.between(intervalStart, intervalEnd);
+            if (duration.isZero()) {
+                intervalStart = intervalEnd;
+                continue;
+            }
+
             Instant sampleTime = intervalStart.plusNanos(duration.toNanos() / 2L);
             NaturalMetrics metrics = naturalMetrics(input.personEvents(), sampleTime);
-            applyNaturalStep(
-                    state,
+            List<NaturalTransition> naturalTransitions = naturalTransitions(
                     input,
                     metrics,
-                    sampleTime,
+                    sampleTime
+            );
+            Instant currentIntervalStart = intervalStart;
+            List<StateEffect> activeEffects = context.effects().values().stream()
+                    .filter(effect -> effect.isActiveAt(
+                            currentIntervalStart,
+                            eventEndTimes
+                    ))
+                    .map(effect -> (StateEffect) effect)
+                    .toList();
+            List<StateTransition> eventTransitions = transitionMerger.merge(activeEffects);
+
+            applyCombinedTransitions(
+                    state,
+                    naturalTransitions,
+                    eventTransitions,
                     duration
             );
+            appliedIntervalCount++;
             intervalStart = intervalEnd;
-            stepCount++;
         }
 
         LOGGER.debug(
-                "Settled natural state evolution: personId={}, elapsedMs={}, stepCount={}",
+                "Settled combined natural and event state evolution: personId={}, elapsedMs={}, boundaryCount={}, appliedIntervalCount={}",
                 input.personId(),
                 Duration.between(lastUpdatedAt, now).toMillis(),
-                stepCount
+                boundaries.size(),
+                appliedIntervalCount
         );
     }
 
-    private void applyNaturalStep(
-            PersonState state,
+    private List<NaturalTransition> naturalTransitions(
             NaturalInput input,
             NaturalMetrics metrics,
-            Instant sampleTime,
-            Duration duration
+            Instant sampleTime
     ) {
+        Map<StateDimension, NaturalTransition> transitions = new EnumMap<>(
+                StateDimension.class
+        );
         ActivityType primary = metrics.primaryActivity();
         boolean sleeping = primary == ActivityType.SLEEP;
         boolean eating = primary == ActivityType.EAT;
@@ -364,14 +396,13 @@ public final class StateUpdater {
             hungerTarget = clamp(0.08 + Math.max(0.0, hoursSinceMeal - 1.0) * 0.12);
             hungerRate = sleeping ? 0.10 : 0.22;
         }
-        applyNaturalTarget(
-                state,
+        putNaturalTransition(
+                transitions,
                 input,
                 localDate,
                 StateDimension.HUNGER,
                 hungerTarget,
-                hungerRate,
-                duration
+                hungerRate
         );
 
         double sleepinessTarget;
@@ -392,14 +423,13 @@ public final class StateUpdater {
             );
             sleepinessRate = 0.30;
         }
-        applyNaturalTarget(
-                state,
+        putNaturalTransition(
+                transitions,
                 input,
                 localDate,
                 StateDimension.SLEEPINESS,
                 sleepinessTarget,
-                sleepinessRate,
-                duration
+                sleepinessRate
         );
 
         double energyTarget;
@@ -432,55 +462,145 @@ public final class StateUpdater {
             fatigueTarget = clampRange(0.18 + Math.max(0.0, awakeHours - 8.0) * 0.02, 0.18, 0.55);
             fatigueRate = 0.08;
         }
-        applyNaturalTarget(
-                state,
+        putNaturalTransition(
+                transitions,
                 input,
                 localDate,
                 StateDimension.ENERGY,
                 energyTarget,
-                energyRate,
-                duration
+                energyRate
         );
-        applyNaturalTarget(
-                state,
+        putNaturalTransition(
+                transitions,
                 input,
                 localDate,
                 StateDimension.FATIGUE,
                 fatigueTarget,
-                fatigueRate,
-                duration
+                fatigueRate
         );
 
         if (sleeping) {
-            applyNaturalTarget(state, input, localDate, StateDimension.MENTAL_LOAD, 0.08, 0.30, duration);
-            applyNaturalTarget(state, input, localDate, StateDimension.FOCUS, 0.15, 0.30, duration);
-            applyNaturalTarget(state, input, localDate, StateDimension.MOTIVATION, 0.50, 0.12, duration);
+            putNaturalTransition(transitions, input, localDate, StateDimension.MENTAL_LOAD, 0.08, 0.30);
+            putNaturalTransition(transitions, input, localDate, StateDimension.FOCUS, 0.15, 0.30);
+            putNaturalTransition(transitions, input, localDate, StateDimension.MOTIVATION, 0.50, 0.12);
         } else if (primary != ActivityType.STUDY && primary != ActivityType.WORK) {
             double mentalLoadTarget = primary == ActivityType.REST
                     || primary == ActivityType.ENTERTAINMENT
                     ? 0.18
                     : 0.25;
-            applyNaturalTarget(state, input, localDate, StateDimension.MENTAL_LOAD, mentalLoadTarget, 0.08, duration);
-            applyNaturalTarget(state, input, localDate, StateDimension.FOCUS, 0.55, 0.08, duration);
-            applyNaturalTarget(state, input, localDate, StateDimension.MOTIVATION, 0.60, 0.04, duration);
+            putNaturalTransition(transitions, input, localDate, StateDimension.MENTAL_LOAD, mentalLoadTarget, 0.08);
+            putNaturalTransition(transitions, input, localDate, StateDimension.FOCUS, 0.55, 0.08);
+            putNaturalTransition(transitions, input, localDate, StateDimension.MOTIVATION, 0.60, 0.04);
         }
+        return List.copyOf(transitions.values());
     }
 
-    private void applyNaturalTarget(
-            PersonState state,
+    private static void putNaturalTransition(
+            Map<StateDimension, NaturalTransition> transitions,
             NaturalInput input,
             LocalDate localDate,
             StateDimension dimension,
             double baseTarget,
-            double baseRate,
-            Duration duration
+            double baseRate
     ) {
         String seedPrefix = input.personId() + "|" + localDate + "|" + dimension.name();
         double targetOffset = (stableUnit(seedPrefix + "|target") - 0.5) * 0.06;
         double rateMultiplier = 0.90 + stableUnit(seedPrefix + "|rate") * 0.20;
         double target = dimension.clamp(baseTarget + targetOffset);
         double rate = baseRate * rateMultiplier;
-        transitionModel.applyTarget(state, dimension, target, rate, duration);
+        transitions.put(dimension, new NaturalTransition(dimension, target, rate));
+    }
+
+    private void applyCombinedTransitions(
+            PersonState state,
+            List<NaturalTransition> naturalTransitions,
+            List<StateTransition> eventTransitions,
+            Duration duration
+    ) {
+        Map<StateDimension, NaturalTransition> naturalByDimension = new EnumMap<>(
+                StateDimension.class
+        );
+        naturalTransitions.forEach(transition -> naturalByDimension.put(
+                transition.dimension(),
+                transition
+        ));
+        Map<StateDimension, StateTransition> eventByDimension = new EnumMap<>(
+                StateDimension.class
+        );
+        eventTransitions.forEach(transition -> eventByDimension.put(
+                transition.dimension(),
+                transition
+        ));
+
+        Set<StateDimension> dimensions = EnumSet.noneOf(StateDimension.class);
+        dimensions.addAll(naturalByDimension.keySet());
+        dimensions.addAll(eventByDimension.keySet());
+
+        for (StateDimension dimension : dimensions) {
+            NaturalTransition natural = naturalByDimension.get(dimension);
+            StateTransition event = eventByDimension.get(dimension);
+            if (natural == null) {
+                transitionModel.apply(state, event, duration);
+                continue;
+            }
+            if (event == null) {
+                transitionModel.applyTarget(
+                        state,
+                        dimension,
+                        natural.target(),
+                        natural.hourlyRate(),
+                        duration
+                );
+                continue;
+            }
+
+            double eventRate = Math.abs(event.shape());
+            double eventTarget = event.shape() > 0.0
+                    ? dimension.getMaximum()
+                    : dimension.getMinimum();
+            double combinedRate = natural.hourlyRate() + eventRate;
+            double combinedTarget = (
+                    natural.target() * natural.hourlyRate()
+                            + eventTarget * eventRate
+            ) / combinedRate;
+            transitionModel.applyTarget(
+                    state,
+                    dimension,
+                    dimension.clamp(combinedTarget),
+                    combinedRate,
+                    duration
+            );
+        }
+    }
+
+    private static List<Instant> combinedSettlementBoundaries(
+            Instant start,
+            Instant end,
+            Collection<RegisteredStateEffect> effects,
+            Map<EventId, Instant> eventEndTimes,
+            List<PersonEvent> personEvents
+    ) {
+        Set<Instant> boundaries = new TreeSet<>(settlementBoundaries(
+                start,
+                end,
+                effects,
+                eventEndTimes
+        ));
+        Instant naturalBoundary = start.plus(NATURAL_STEP);
+        while (naturalBoundary.isBefore(end)) {
+            boundaries.add(naturalBoundary);
+            naturalBoundary = naturalBoundary.plus(NATURAL_STEP);
+        }
+        for (PersonEvent event : personEvents) {
+            if (event.getStartTime().isAfter(start) && event.getStartTime().isBefore(end)) {
+                boundaries.add(event.getStartTime());
+            }
+            event.getEndTime()
+                    .filter(boundary -> boundary.isAfter(start) && boundary.isBefore(end))
+                    .ifPresent(boundaries::add);
+        }
+        boundaries.add(end);
+        return List.copyOf(boundaries);
     }
 
     private static NaturalMetrics naturalMetrics(
@@ -707,6 +827,22 @@ public final class StateUpdater {
             }
         }
         return eventsByChannel;
+    }
+
+    private record NaturalTransition(
+            StateDimension dimension,
+            double target,
+            double hourlyRate
+    ) {
+        private NaturalTransition {
+            Objects.requireNonNull(dimension, "dimension cannot be null");
+            if (!dimension.contains(target)) {
+                throw new IllegalArgumentException("target must be within dimension bounds");
+            }
+            if (!Double.isFinite(hourlyRate) || hourlyRate <= 0.0) {
+                throw new IllegalArgumentException("hourlyRate must be finite and positive");
+            }
+        }
     }
 
     private record NaturalInput(

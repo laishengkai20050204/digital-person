@@ -1,9 +1,11 @@
 package com.laishengkai.digitalperson.infrastructure.context;
 
+import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.conversation.NoOpRecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.memory.NoOpPersonMemoryGateway;
+import com.laishengkai.digitalperson.infrastructure.spring.PersonApplicationConfiguration;
 import com.laishengkai.digitalperson.memory.MemoryAvailability;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
@@ -11,6 +13,7 @@ import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Set;
 
@@ -20,7 +23,10 @@ class StateEvaluationContextConfigurationTest {
 
     private final ApplicationContextRunner contextRunner =
             new ApplicationContextRunner()
-                    .withUserConfiguration(StateEvaluationContextConfiguration.class);
+                    .withUserConfiguration(
+                            PersonApplicationConfiguration.class,
+                            StateEvaluationContextConfiguration.class
+                    );
 
     @Test
     void registersExplicitNoOpProvidersAndAssemblerByDefault() {
@@ -43,4 +49,15 @@ class StateEvaluationContextConfigurationTest {
                     .isEqualTo(MemoryAvailability.DISABLED);
         });
     }
+    @Test
+    void applicationFallbackCannotShadowTheProviderAwareAssembler() {
+        contextRunner.run(context -> {
+            StateEvaluationContextAssembler assembler = context.getBean(
+                    StateEvaluationContextAssembler.class
+            );
+            assertThat(ReflectionTestUtils.getField(assembler, "commonAssembler"))
+                    .isSameAs(context.getBean(PersonModelContextAssembler.class));
+        });
+    }
+
 }
