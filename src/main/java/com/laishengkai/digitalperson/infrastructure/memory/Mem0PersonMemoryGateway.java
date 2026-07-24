@@ -24,9 +24,18 @@ public final class Mem0PersonMemoryGateway implements PersonMemoryGateway {
     );
 
     private final Mem0HttpClient client;
+    private final double minimumRelevance;
 
-    Mem0PersonMemoryGateway(Mem0HttpClient client) {
+    Mem0PersonMemoryGateway(Mem0HttpClient client, double minimumRelevance) {
         this.client = Objects.requireNonNull(client, "client cannot be null");
+        if (!Double.isFinite(minimumRelevance)
+                || minimumRelevance < 0.0
+                || minimumRelevance > 1.0) {
+            throw new IllegalArgumentException(
+                    "minimumRelevance must be between 0.0 and 1.0"
+            );
+        }
+        this.minimumRelevance = minimumRelevance;
     }
 
     @Override
@@ -54,7 +63,7 @@ public final class Mem0PersonMemoryGateway implements PersonMemoryGateway {
         });
     }
 
-    private static List<MemoryItem> parse(
+    private List<MemoryItem> parse(
             JsonNode response,
             PersonMemoryQuery query
     ) {
@@ -76,11 +85,15 @@ public final class Mem0PersonMemoryGateway implements PersonMemoryGateway {
             if (!query.sections().isEmpty() && !query.sections().contains(section)) {
                 continue;
             }
+            double relevance = score(result);
+            if (relevance < minimumRelevance) {
+                continue;
+            }
             items.add(new MemoryItem(
                     id,
                     section,
                     content,
-                    score(result),
+                    relevance,
                     timestamp(result, "created_at"),
                     timestamp(result, "updated_at")
             ));
