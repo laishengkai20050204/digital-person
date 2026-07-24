@@ -1,0 +1,37 @@
+name: Apply deadline cancellation race fix
+
+on:
+  push:
+    branches:
+      - agent/fix-activity-deadline-cancellation-race
+    paths:
+      - .agent-fix/deadline-race.patch
+      - .github/workflows/apply-deadline-race-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/fix-activity-deadline-cancellation-race
+          fetch-depth: 0
+
+      - name: Apply focused patch
+        run: |
+          git apply --check .agent-fix/deadline-race.patch
+          git apply .agent-fix/deadline-race.patch
+          rm -f .agent-fix/deadline-race.patch
+          rmdir .agent-fix 2>/dev/null || true
+
+      - name: Commit fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/main/java/com/laishengkai/digitalperson/application/PersonActivityDecisionService.java .agent-fix
+          git commit -m "Fix activity deadline cancellation race"
+          git push origin HEAD:agent/fix-activity-deadline-cancellation-race
