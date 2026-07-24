@@ -29,6 +29,10 @@
   - 自然饥饿、困倦、疲劳和能量演化
   - Java 侧活动持续时长等级
   - 设计边界、验收标准和实施顺序
+- [生产环境变量配置](./ENVIRONMENT_CONFIGURATION.md)
+  - 唯一应用配置入口 `/etc/person-ai/person-ai.env`
+  - systemd `EnvironmentFile` 的加载与检查方式
+  - 安全查看变量名、文件权限和 Mem0 专用配置
 - [云服务器运行与排障手册](./SERVER_OPERATIONS.md)
   - systemd、健康检查、版本确认和日志命令
   - 环境变量与本地测试助手
@@ -55,6 +59,6 @@
 ## 文档维护规则
 
 - 示例中不得出现真实 API Key、数据库密码或内部令牌。
-- 生产命令默认使用服务名 `person-ai`、目录 `/opt/person-ai`、环境文件 `/etc/person-ai/person-ai.env`。
+- 生产命令默认使用服务名 `person-ai`、目录 `/opt/person-ai`、应用环境文件 `/etc/person-ai/person-ai.env`、Mem0 部署环境文件 `/etc/person-ai/mem0.env`。
 - 修改 API、环境变量、部署路径或自动化边界时，必须同步更新本目录。
 - 运行结果与代码不一致时，以当前 `main` 分支代码和实际部署提交 SHA 为准。
