@@ -38,6 +38,10 @@ digital-person:
     max-conversation-turns: ${DIALOGUE_MAX_CONVERSATION_TURNS:12}
     max-output-tokens: ${DIALOGUE_MAX_OUTPUT_TOKENS:1200}
     temperature: ${DIALOGUE_TEMPERATURE:0.7}
+    conversation-summary-enabled: ${CONVERSATION_SUMMARY_ENABLED:true}
+    conversation-summary-batch-turns: ${CONVERSATION_SUMMARY_BATCH_TURNS:8}
+    conversation-summary-max-output-tokens: ${CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS:800}
+    conversation-summary-temperature: ${CONVERSATION_SUMMARY_TEMPERATURE:0.2}
   activity-scheduler:
     enabled: ${ACTIVITY_SCHEDULER_ENABLED:false}
     poll-interval: ${ACTIVITY_SCHEDULER_POLL_INTERVAL:10s}

@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -33,10 +34,12 @@ public final class PersonDialogueService {
     private final PersonModelContextAssembler contextAssembler;
     private final PersonDialogueModel dialogueModel;
     private final RecentConversationStore conversationStore;
+    private final ConversationSummaryService summaryService;
     private final DialogueMemoryRecorder memoryRecorder;
     private final Clock clock;
     private final int maxMemoryItems;
     private final int maxConversationTurns;
+    private final int conversationSummaryBatchTurns;
 
     /** Compatibility constructor for deployments without raw conversation persistence. */
     public PersonDialogueService(
@@ -53,13 +56,16 @@ public final class PersonDialogueService {
                 contextAssembler,
                 dialogueModel,
                 null,
+                null,
                 memoryRecorder,
                 clock,
                 maxMemoryItems,
-                maxConversationTurns
+                maxConversationTurns,
+                1
         );
     }
 
+    /** Compatibility constructor for raw persistence without rolling summarization. */
     public PersonDialogueService(
             PersonRepository personRepository,
             PersonModelContextAssembler contextAssembler,
@@ -69,6 +75,32 @@ public final class PersonDialogueService {
             Clock clock,
             int maxMemoryItems,
             int maxConversationTurns
+    ) {
+        this(
+                personRepository,
+                contextAssembler,
+                dialogueModel,
+                conversationStore,
+                null,
+                memoryRecorder,
+                clock,
+                maxMemoryItems,
+                maxConversationTurns,
+                1
+        );
+    }
+
+    public PersonDialogueService(
+            PersonRepository personRepository,
+            PersonModelContextAssembler contextAssembler,
+            PersonDialogueModel dialogueModel,
+            RecentConversationStore conversationStore,
+            ConversationSummaryService summaryService,
+            DialogueMemoryRecorder memoryRecorder,
+            Clock clock,
+            int maxMemoryItems,
+            int maxConversationTurns,
+            int conversationSummaryBatchTurns
     ) {
         this.personRepository = Objects.requireNonNull(
                 personRepository,
@@ -83,12 +115,17 @@ public final class PersonDialogueService {
                 "dialogueModel cannot be null"
         );
         this.conversationStore = conversationStore;
+        this.summaryService = summaryService;
         this.memoryRecorder = memoryRecorder;
         this.clock = Objects.requireNonNull(clock, "clock cannot be null");
         this.maxMemoryItems = positive(maxMemoryItems, "maxMemoryItems");
         this.maxConversationTurns = positive(
                 maxConversationTurns,
                 "maxConversationTurns"
+        );
+        this.conversationSummaryBatchTurns = positive(
+                conversationSummaryBatchTurns,
+                "conversationSummaryBatchTurns"
         );
     }
 
@@ -112,13 +149,16 @@ public final class PersonDialogueService {
         }
 
         Person person = loaded.person().copy();
+        int retrievalTurns = summaryService == null
+                ? maxConversationTurns
+                : Math.addExact(maxConversationTurns, conversationSummaryBatchTurns - 1);
         PersonModelContextAssemblyRequest contextRequest =
                 new PersonModelContextAssemblyRequest(
                         Set.of(),
                         normalizedMessage,
                         false,
                         maxMemoryItems,
-                        maxConversationTurns
+                        retrievalTurns
                 );
 
         final CompletionStage<com.laishengkai.digitalperson.modelcontext.PersonModelContextSnapshot>
@@ -138,6 +178,7 @@ public final class PersonDialogueService {
             return CompletableFuture.failedFuture(error);
         }
 
+        ZoneId localTimeZone = person.getIdentity().timeZone();
         return contextStage.thenCompose(context -> {
             if (context == null) {
                 throw new CompletionException(new PersonDialogueException(
@@ -151,6 +192,7 @@ public final class PersonDialogueService {
             );
         }).thenCompose(result -> completeExchange(
                 requestedPersonId,
+                localTimeZone,
                 normalizedMessage,
                 requireResult(result),
                 occurredAt
@@ -159,6 +201,7 @@ public final class PersonDialogueService {
 
     private CompletionStage<PersonDialogueExchange> completeExchange(
             PersonId personId,
+            ZoneId localTimeZone,
             String userMessage,
             DialogueResult result,
             Instant occurredAt
@@ -175,8 +218,21 @@ public final class PersonDialogueService {
                 result,
                 occurredAt
         );
-        return conversationStage.thenCombine(memoryStage, (conversation, memory) ->
-                new PersonDialogueExchange(
+        CompletionStage<Void> summaryStage = conversationStage.thenCompose(conversation -> {
+            if (conversation.status() != PersonDialogueExchange.ConversationStatus.STORED
+                    || summaryService == null) {
+                return CompletableFuture.completedFuture(null);
+            }
+            return summaryService.summarizeIfNeeded(
+                    personId,
+                    localTimeZone,
+                    clock.instant()
+            );
+        });
+
+        CompletionStage<PersonDialogueExchange> exchangeStage = conversationStage.thenCombine(
+                memoryStage,
+                (conversation, memory) -> new PersonDialogueExchange(
                         personId,
                         result,
                         occurredAt,
@@ -186,6 +242,7 @@ public final class PersonDialogueService {
                         memory.mutationCount()
                 )
         );
+        return exchangeStage.thenCombine(summaryStage, (exchange, ignored) -> exchange);
     }
 
     private CompletionStage<ConversationOutcome> persistConversation(

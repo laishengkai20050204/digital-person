@@ -1,5 +1,8 @@
 package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
+import com.laishengkai.digitalperson.conversation.ConversationSummarySnapshot;
+import com.laishengkai.digitalperson.conversation.ConversationSummaryStore;
+import com.laishengkai.digitalperson.conversation.ConversationSummaryWorkItem;
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.conversation.RecentConversationQuery;
@@ -7,19 +10,21 @@ import com.laishengkai.digitalperson.conversation.RecentConversationStore;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
-/** MySQL adapter for append-only raw dialogue turns with bounded per-person retention. */
+/** MySQL adapter for raw dialogue turns and their optimistic rolling summary. */
 public final class JdbcRecentConversationRepository
-        implements RecentConversationGateway, RecentConversationStore {
+        implements RecentConversationGateway, RecentConversationStore, ConversationSummaryStore {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             JdbcRecentConversationRepository.class
     );
@@ -44,10 +49,74 @@ public final class JdbcRecentConversationRepository
                     occurred_at
                 FROM person_conversation_turn
                 WHERE person_id = ?
+                  AND conversation_turn_id > COALESCE(
+                      (
+                          SELECT covered_through_turn_id
+                          FROM person_conversation_summary
+                          WHERE person_id = ?
+                      ),
+                      0
+                  )
                 ORDER BY conversation_turn_id DESC
                 LIMIT ?
             ) recent_turns
             ORDER BY conversation_turn_id ASC
+            """;
+
+    private static final String SUMMARY_SELECT_SQL = """
+            SELECT
+                summary_text,
+                covered_through_turn_id,
+                summarized_turn_count,
+                version,
+                created_at,
+                updated_at
+            FROM person_conversation_summary
+            WHERE person_id = ?
+            """;
+
+    private static final String UNSUMMARIZED_COUNT_SQL = """
+            SELECT COUNT(*)
+            FROM person_conversation_turn
+            WHERE person_id = ?
+              AND conversation_turn_id > ?
+            """;
+
+    private static final String SUMMARY_BATCH_SQL = """
+            SELECT
+                conversation_turn_id,
+                role,
+                turn_text,
+                occurred_at
+            FROM person_conversation_turn
+            WHERE person_id = ?
+              AND conversation_turn_id > ?
+            ORDER BY conversation_turn_id ASC
+            LIMIT ?
+            """;
+
+    private static final String SUMMARY_INSERT_SQL = """
+            INSERT INTO person_conversation_summary (
+                person_id,
+                summary_text,
+                covered_through_turn_id,
+                summarized_turn_count,
+                version,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, 0, ?, ?)
+            """;
+
+    private static final String SUMMARY_UPDATE_SQL = """
+            UPDATE person_conversation_summary
+            SET summary_text = ?,
+                covered_through_turn_id = ?,
+                summarized_turn_count = summarized_turn_count + ?,
+                version = version + 1,
+                updated_at = ?
+            WHERE person_id = ?
+              AND version = ?
+              AND covered_through_turn_id = ?
             """;
 
     private static final String RETENTION_CUTOFF_SQL = """
@@ -104,6 +173,7 @@ public final class JdbcRecentConversationRepository
                             resultSet.getTimestamp("occurred_at").toInstant()
                     ),
                     requested.personId().toString(),
+                    requested.personId().toString(),
                     requested.maxTurns()
             );
             return CompletableFuture.completedFuture(List.copyOf(turns));
@@ -114,6 +184,146 @@ public final class JdbcRecentConversationRepository
                     error
             );
             return CompletableFuture.completedFuture(List.of());
+        }
+    }
+
+    @Override
+    public CompletionStage<Optional<ConversationSummarySnapshot>> retrieve(PersonId personId) {
+        PersonId requestedPersonId = Objects.requireNonNull(
+                personId,
+                "personId cannot be null"
+        );
+        try {
+            return CompletableFuture.completedFuture(findSummary(requestedPersonId));
+        } catch (RuntimeException error) {
+            LOGGER.warn(
+                    "Conversation summary retrieval failed; continuing without summary: personId={}",
+                    requestedPersonId,
+                    error
+            );
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+    }
+
+    @Override
+    public CompletionStage<Optional<ConversationSummaryWorkItem>> findWork(
+            PersonId personId,
+            int recentTurnsToKeep,
+            int batchTurns
+    ) {
+        PersonId requestedPersonId = Objects.requireNonNull(
+                personId,
+                "personId cannot be null"
+        );
+        if (recentTurnsToKeep <= 0 || batchTurns <= 0) {
+            throw new IllegalArgumentException("summary turn limits must be positive");
+        }
+
+        try {
+            Optional<ConversationSummarySnapshot> existing = findSummary(requestedPersonId);
+            long coveredThrough = existing
+                    .map(ConversationSummarySnapshot::coveredThroughTurnId)
+                    .orElse(0L);
+            Long unsummarized = jdbcTemplate.queryForObject(
+                    UNSUMMARIZED_COUNT_SQL,
+                    Long.class,
+                    requestedPersonId.toString(),
+                    coveredThrough
+            );
+            long required = Math.addExact((long) recentTurnsToKeep, batchTurns);
+            if (Objects.requireNonNullElse(unsummarized, 0L) < required) {
+                return CompletableFuture.completedFuture(Optional.empty());
+            }
+
+            List<StoredTurn> storedTurns = jdbcTemplate.query(
+                    SUMMARY_BATCH_SQL,
+                    (resultSet, rowNumber) -> new StoredTurn(
+                            resultSet.getLong("conversation_turn_id"),
+                            new ConversationTurnSnapshot(
+                                    parseRole(resultSet.getString("role")),
+                                    resultSet.getString("turn_text"),
+                                    resultSet.getTimestamp("occurred_at").toInstant()
+                            )
+                    ),
+                    requestedPersonId.toString(),
+                    coveredThrough,
+                    batchTurns
+            );
+            if (storedTurns.size() != batchTurns) {
+                return CompletableFuture.completedFuture(Optional.empty());
+            }
+
+            ConversationSummaryWorkItem work = new ConversationSummaryWorkItem(
+                    existing,
+                    storedTurns.stream().map(StoredTurn::turn).toList(),
+                    storedTurns.getLast().id()
+            );
+            return CompletableFuture.completedFuture(Optional.of(work));
+        } catch (RuntimeException error) {
+            return CompletableFuture.failedFuture(new PersonPersistenceException(
+                    "could not prepare rolling conversation summary work",
+                    error
+            ));
+        }
+    }
+
+    @Override
+    public CompletionStage<Boolean> save(
+            PersonId personId,
+            ConversationSummaryWorkItem workItem,
+            String summary,
+            Instant summarizedAt
+    ) {
+        PersonId requestedPersonId = Objects.requireNonNull(
+                personId,
+                "personId cannot be null"
+        );
+        ConversationSummaryWorkItem work = Objects.requireNonNull(
+                workItem,
+                "workItem cannot be null"
+        );
+        String normalizedSummary = requireText(summary, "summary");
+        Instant now = Objects.requireNonNull(summarizedAt, "summarizedAt cannot be null");
+
+        try {
+            if (work.existingSummary().isEmpty()) {
+                try {
+                    int inserted = jdbcTemplate.update(
+                            SUMMARY_INSERT_SQL,
+                            requestedPersonId.toString(),
+                            normalizedSummary,
+                            work.coveredThroughTurnId(),
+                            work.turns().size(),
+                            Timestamp.from(now),
+                            Timestamp.from(now)
+                    );
+                    return CompletableFuture.completedFuture(inserted == 1);
+                } catch (DuplicateKeyException conflict) {
+                    return CompletableFuture.completedFuture(false);
+                }
+            }
+
+            int updated = jdbcTemplate.update(
+                    SUMMARY_UPDATE_SQL,
+                    normalizedSummary,
+                    work.coveredThroughTurnId(),
+                    work.turns().size(),
+                    Timestamp.from(now),
+                    requestedPersonId.toString(),
+                    work.expectedVersion(),
+                    work.expectedCoveredThroughTurnId()
+            );
+            if (updated > 1) {
+                throw new PersonPersistenceException(
+                        "conversation summary update modified more than one row"
+                );
+            }
+            return CompletableFuture.completedFuture(updated == 1);
+        } catch (RuntimeException error) {
+            return CompletableFuture.failedFuture(new PersonPersistenceException(
+                    "could not persist rolling conversation summary",
+                    error
+            ));
         }
     }
 
@@ -174,6 +384,21 @@ public final class JdbcRecentConversationRepository
         }
     }
 
+    private Optional<ConversationSummarySnapshot> findSummary(PersonId personId) {
+        return jdbcTemplate.query(
+                SUMMARY_SELECT_SQL,
+                (resultSet, rowNumber) -> new ConversationSummarySnapshot(
+                        resultSet.getString("summary_text"),
+                        resultSet.getLong("covered_through_turn_id"),
+                        resultSet.getLong("summarized_turn_count"),
+                        resultSet.getLong("version"),
+                        resultSet.getTimestamp("created_at").toInstant(),
+                        resultSet.getTimestamp("updated_at").toInstant()
+                ),
+                personId.toString()
+        ).stream().findFirst();
+    }
+
     private void prune(PersonId personId) {
         Optional<Long> cutoff = jdbcTemplate.query(
                 RETENTION_CUTOFF_SQL,
@@ -198,6 +423,26 @@ public final class JdbcRecentConversationRepository
                     "stored conversation role is unsupported",
                     error
             );
+        }
+    }
+
+    private static String requireText(String value, String fieldName) {
+        String normalized = Objects.requireNonNull(
+                value,
+                fieldName + " cannot be null"
+        ).strip();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException(fieldName + " cannot be blank");
+        }
+        return normalized;
+    }
+
+    private record StoredTurn(long id, ConversationTurnSnapshot turn) {
+        private StoredTurn {
+            if (id <= 0) {
+                throw new IllegalArgumentException("id must be positive");
+            }
+            turn = Objects.requireNonNull(turn, "turn cannot be null");
         }
     }
 }
