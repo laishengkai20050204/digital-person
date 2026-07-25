@@ -69,6 +69,8 @@ public final class PersonDialogueController {
             String personId,
             List<String> replies,
             Instant occurredAt,
+            String conversationStatus,
+            int persistedConversationTurnCount,
             String memoryStatus,
             int memoryMutationCount
     ) {
@@ -77,6 +79,8 @@ public final class PersonDialogueController {
                     exchange.personId().toString(),
                     exchange.result().replies(),
                     exchange.occurredAt(),
+                    exchange.conversationStatus().name(),
+                    exchange.persistedConversationTurnCount(),
                     exchange.memoryStatus().name(),
                     exchange.memoryMutationCount()
             );
