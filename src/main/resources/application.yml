@@ -30,6 +30,8 @@ digital-person:
       connection-timeout: ${MYSQL_CONNECTION_TIMEOUT:30s}
       conversation:
         retention-turns: ${CONVERSATION_RETENTION_TURNS:500}
+        episode-enabled: ${CONVERSATION_EPISODE_ENABLED:true}
+        episode-max-items: ${CONVERSATION_EPISODE_MAX_ITEMS:3}
   person-api:
     enabled: ${PERSON_API_ENABLED:false}
     token: ${PERSON_API_TOKEN:}
@@ -42,6 +44,9 @@ digital-person:
     conversation-summary-batch-turns: ${CONVERSATION_SUMMARY_BATCH_TURNS:8}
     conversation-summary-max-output-tokens: ${CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS:800}
     conversation-summary-temperature: ${CONVERSATION_SUMMARY_TEMPERATURE:0.2}
+    conversation-episode-enabled: ${CONVERSATION_EPISODE_ENABLED:true}
+    conversation-episode-max-output-tokens: ${CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS:700}
+    conversation-episode-temperature: ${CONVERSATION_EPISODE_TEMPERATURE:0.1}
   activity-scheduler:
     enabled: ${ACTIVITY_SCHEDULER_ENABLED:false}
     poll-interval: ${ACTIVITY_SCHEDULER_POLL_INTERVAL:10s}
