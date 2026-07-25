@@ -4,7 +4,7 @@ set -Eeuo pipefail
 APP_SHA="${APP_SHA:?APP_SHA is required}"
 APP_DIR="${APP_DIR:-/opt/person-ai}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
-REPOSITORY_URL="${REPOSITORY_URL:-git@github.com:laishengkai20050204/digital-person.git}"
+REPOSITORY_URL="${REPOSITORY_URL:-https://github.com/laishengkai20050204/digital-person.git}"
 SERVICE_NAME="${SERVICE_NAME:-person-ai}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}"
 DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/github-readonly}"
@@ -18,6 +18,11 @@ CURRENT_LINK="$APP_DIR/current.jar"
 MAVEN_CACHE="$APP_DIR/maven-repository"
 LOCK_FILE="$APP_DIR/deploy.lock"
 NEW_JAR="$RELEASE_DIR/person-ai-$APP_SHA.jar"
+
+# A caller may invoke this script after switching from another user whose home
+# directory is not traversable. Move to a universally accessible directory
+# before tools such as Maven attempt to resolve the current working directory.
+cd "${TMPDIR:-/tmp}"
 
 if [[ ! "$APP_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "APP_SHA 必须是完整的 40 位小写 Git commit SHA"
@@ -84,9 +89,19 @@ if ! mvn -version | grep -q "Java version: 21"; then
   exit 1
 fi
 
-if [ ! -r "$DEPLOY_KEY" ]; then
-  echo "缺少只读 GitHub Deploy Key：$DEPLOY_KEY"
-  exit 1
+USES_SSH=false
+case "$REPOSITORY_URL" in
+  git@*|ssh://*) USES_SSH=true ;;
+esac
+
+if [ "$USES_SSH" = true ]; then
+  if [ ! -r "$DEPLOY_KEY" ]; then
+    echo "SSH 仓库地址需要只读 GitHub Deploy Key：$DEPLOY_KEY"
+    exit 1
+  fi
+  if [ -z "${GIT_SSH_COMMAND:-}" ]; then
+    export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes"
+  fi
 fi
 
 mkdir -p "$APP_DIR" "$BUILD_ROOT" "$RELEASE_DIR" "$MAVEN_CACHE"
@@ -97,13 +112,13 @@ if ! flock -n 9; then
   exit 1
 fi
 
-if [ -z "${GIT_SSH_COMMAND:-}" ]; then
-  export GIT_SSH_COMMAND="ssh -i $DEPLOY_KEY -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes"
-fi
-
 if [ ! -d "$SOURCE_REPO" ]; then
   echo "首次部署：克隆只读源仓库"
-  git clone --bare "$REPOSITORY_URL" "$SOURCE_REPO"
+  if [ "$USES_SSH" = true ]; then
+    git clone --bare "$REPOSITORY_URL" "$SOURCE_REPO"
+  else
+    git -c http.version=HTTP/1.1 clone --bare "$REPOSITORY_URL" "$SOURCE_REPO"
+  fi
 else
   if [ ! -f "$SOURCE_REPO/HEAD" ]; then
     echo "源码目录存在但不是有效的 bare Git 仓库：$SOURCE_REPO"
@@ -113,10 +128,34 @@ else
 fi
 
 echo "拉取 origin/$DEPLOY_BRANCH"
-git --git-dir="$SOURCE_REPO" fetch \
-  --prune \
-  origin \
-  "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"
+FETCHED=false
+for attempt in $(seq 1 6); do
+  if [ "$USES_SSH" = true ]; then
+    if git --git-dir="$SOURCE_REPO" fetch \
+      --prune \
+      origin \
+      "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"; then
+      FETCHED=true
+      break
+    fi
+  else
+    if git -c http.version=HTTP/1.1 --git-dir="$SOURCE_REPO" fetch \
+      --prune \
+      origin \
+      "+refs/heads/$DEPLOY_BRANCH:refs/remotes/origin/$DEPLOY_BRANCH"; then
+      FETCHED=true
+      break
+    fi
+  fi
+
+  echo "GitHub 拉取失败，准备重试：$attempt/6" >&2
+  sleep $((attempt * 3))
+done
+
+if [ "$FETCHED" != true ]; then
+  echo "连续重试后仍无法从 GitHub 拉取源码" >&2
+  exit 1
+fi
 
 if ! git --git-dir="$SOURCE_REPO" cat-file -e "$APP_SHA^{commit}"; then
   echo "远端仓库中不存在提交：$APP_SHA"
@@ -219,10 +258,8 @@ if [ "$CURRENT_RELEASE" != "$NEW_JAR" ] || [ ! -f "$CURRENT_RELEASE" ]; then
   exit 1
 fi
 
-# 删除旧 rsync 方案遗留的临时文件。
 rm -f /tmp/person-ai-upload.jar /tmp/person-ai-*.upload.jar
 
-# 当前版本永不参与清理；另保留四个备份版本。
 find "$RELEASE_DIR" -maxdepth 1 -type f \
   -name 'person-ai-*.jar' \
   ! -path "$CURRENT_RELEASE" \
