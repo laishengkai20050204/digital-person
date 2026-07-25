@@ -116,11 +116,28 @@ public class MySqlPersonPersistenceConfiguration {
     }
 
     @Bean
+    JdbcConversationEpisodeRepository jdbcConversationEpisodeRepository(
+            @Qualifier("personJdbcTemplate") JdbcTemplate jdbcTemplate
+    ) {
+        return new JdbcConversationEpisodeRepository(jdbcTemplate);
+    }
+
+    @Bean
     @Primary
     RecentConversationGateway summaryAwareRecentConversationGateway(
-            JdbcRecentConversationRepository repository
+            JdbcRecentConversationRepository repository,
+            JdbcConversationEpisodeRepository episodeRepository,
+            MySqlRecentConversationProperties properties
     ) {
-        return new SummaryAwareRecentConversationGateway(repository, repository);
+        if (!properties.episodeEnabled()) {
+            return new SummaryAwareRecentConversationGateway(repository, repository);
+        }
+        return new SummaryAwareRecentConversationGateway(
+                repository,
+                repository,
+                episodeRepository,
+                properties.episodeMaxItems()
+        );
     }
 
     @Bean
