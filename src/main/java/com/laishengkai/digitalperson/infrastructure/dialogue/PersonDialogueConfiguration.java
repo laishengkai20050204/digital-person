@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.infrastructure.dialogue;
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
+import com.laishengkai.digitalperson.conversation.RecentConversationStore;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
 import com.laishengkai.digitalperson.person.PersonRepository;
@@ -51,6 +52,7 @@ public class PersonDialogueConfiguration {
             PersonRepository personRepository,
             PersonModelContextAssembler contextAssembler,
             PersonDialogueModel dialogueModel,
+            ObjectProvider<RecentConversationStore> conversationStoreProvider,
             ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
             PersonDialogueProperties properties
     ) {
@@ -58,6 +60,7 @@ public class PersonDialogueConfiguration {
                 personRepository,
                 contextAssembler,
                 dialogueModel,
+                conversationStoreProvider.getIfAvailable(),
                 memoryRecorderProvider.getIfAvailable(),
                 Clock.systemUTC(),
                 properties.maxMemoryItems(),
