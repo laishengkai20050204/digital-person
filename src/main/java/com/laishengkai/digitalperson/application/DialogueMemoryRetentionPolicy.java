@@ -4,6 +4,7 @@ import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -16,7 +17,9 @@ import java.util.regex.Pattern;
  * content out of long-term memory.</p>
  */
 public final class DialogueMemoryRetentionPolicy {
-    private static final int PATTERN_FLAGS = Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+    private static final int PATTERN_FLAGS = Pattern.CASE_INSENSITIVE
+            | Pattern.UNICODE_CASE
+            | Pattern.DOTALL;
 
     private static final Set<String> SYNTHETIC_MESSAGES = Set.of(
             "测试",
@@ -122,7 +125,30 @@ public final class DialogueMemoryRetentionPolicy {
         return !WELL_KNOWN_CREDENTIAL.matcher(normalized).find()
                 && !ONE_TIME_CODE_ASSIGNMENT.matcher(normalized).find()
                 && !CHINESE_CREDENTIAL_ASSIGNMENT.matcher(normalized).find()
-                && !ENGLISH_CREDENTIAL_ASSIGNMENT.matcher(normalized).find();
+                && !containsEnglishAssignedCredential(normalized);
+    }
+
+    private static boolean containsEnglishAssignedCredential(String value) {
+        Matcher matcher = ENGLISH_CREDENTIAL_ASSIGNMENT.matcher(value);
+        while (matcher.find()) {
+            if (looksLikeCredentialValue(matcher.group(1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean looksLikeCredentialValue(String value) {
+        if (value.length() >= 16) {
+            return true;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char character = value.charAt(index);
+            if (Character.isDigit(character) || "_./+=-".indexOf(character) >= 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String normalize(String value) {
