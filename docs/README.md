@@ -15,6 +15,11 @@
   - 整轮决策 deadline、乐观锁冲突重试和模型失败退避
   - 全局 LLM 并发闸门和费用保护
   - 云服务器启用、观察、暂停和验证命令
+- [近期对话 MySQL 持久化](./RECENT_CONVERSATION_PERSISTENCE.md)
+  - 正式对话的原始 USER / PERSON 消息写入
+  - 最近 N 条读取、应用重启恢复和每人物保留上限
+  - MySQL 原始对话与 Mem0 长期记忆的职责边界
+  - `conversationStatus` 验收与生产排障命令
 - [Spring 装配、人物调度创建与诊断边界](./RUNTIME_WIRING_AND_DIAGNOSTICS.md)
   - 核心应用服务与 Web 适配器的 Bean 所有权
   - 人物聚合与首轮调度记录的同事务创建
@@ -53,6 +58,8 @@
 8. 所有模型入口共享全局并发上限。
 9. 所有步骤按时成功后，以乐观锁统一保存人物聚合。
 10. 调度表保存新的 `nextReviewAt`，等待下一轮。
+
+启用 MySQL 持久化后，正式对话还会把完成的用户消息和人物回复保存到独立原始对话表。下一轮上下文会加载最近消息；Mem0 继续负责跨时间的长期事实、偏好和摘要。
 
 调度器默认关闭，只有设置 `ACTIVITY_SCHEDULER_ENABLED=true` 后才会产生自动模型调用。原始提示词和模型输出诊断另由 `DIAGNOSTICS_ENABLED` 控制，默认关闭。
 
