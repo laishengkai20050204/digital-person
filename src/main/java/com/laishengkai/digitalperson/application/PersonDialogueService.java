@@ -1,5 +1,7 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
+import com.laishengkai.digitalperson.conversation.RecentConversationStore;
 import com.laishengkai.digitalperson.dialogue.DialogueResult;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueException;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
@@ -13,6 +15,7 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -20,7 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 
-/** Coordinates context retrieval, direct reply generation and fail-open memory recording. */
+/** Coordinates context retrieval, direct reply generation and fail-open persistence. */
 public final class PersonDialogueService {
     public static final int MAX_USER_MESSAGE_CHARACTERS = 16_000;
 
@@ -29,15 +32,39 @@ public final class PersonDialogueService {
     private final PersonRepository personRepository;
     private final PersonModelContextAssembler contextAssembler;
     private final PersonDialogueModel dialogueModel;
+    private final RecentConversationStore conversationStore;
     private final DialogueMemoryRecorder memoryRecorder;
     private final Clock clock;
     private final int maxMemoryItems;
     private final int maxConversationTurns;
 
+    /** Compatibility constructor for deployments without raw conversation persistence. */
     public PersonDialogueService(
             PersonRepository personRepository,
             PersonModelContextAssembler contextAssembler,
             PersonDialogueModel dialogueModel,
+            DialogueMemoryRecorder memoryRecorder,
+            Clock clock,
+            int maxMemoryItems,
+            int maxConversationTurns
+    ) {
+        this(
+                personRepository,
+                contextAssembler,
+                dialogueModel,
+                null,
+                memoryRecorder,
+                clock,
+                maxMemoryItems,
+                maxConversationTurns
+        );
+    }
+
+    public PersonDialogueService(
+            PersonRepository personRepository,
+            PersonModelContextAssembler contextAssembler,
+            PersonDialogueModel dialogueModel,
+            RecentConversationStore conversationStore,
             DialogueMemoryRecorder memoryRecorder,
             Clock clock,
             int maxMemoryItems,
@@ -55,6 +82,7 @@ public final class PersonDialogueService {
                 dialogueModel,
                 "dialogueModel cannot be null"
         );
+        this.conversationStore = conversationStore;
         this.memoryRecorder = memoryRecorder;
         this.clock = Objects.requireNonNull(clock, "clock cannot be null");
         this.maxMemoryItems = positive(maxMemoryItems, "maxMemoryItems");
@@ -135,14 +163,91 @@ public final class PersonDialogueService {
             DialogueResult result,
             Instant occurredAt
     ) {
+        CompletionStage<ConversationOutcome> conversationStage = persistConversation(
+                personId,
+                userMessage,
+                result,
+                occurredAt
+        );
+        CompletionStage<MemoryOutcome> memoryStage = recordMemory(
+                personId,
+                userMessage,
+                result,
+                occurredAt
+        );
+        return conversationStage.thenCombine(memoryStage, (conversation, memory) ->
+                new PersonDialogueExchange(
+                        personId,
+                        result,
+                        occurredAt,
+                        conversation.status(),
+                        conversation.persistedTurnCount(),
+                        memory.status(),
+                        memory.mutationCount()
+                )
+        );
+    }
+
+    private CompletionStage<ConversationOutcome> persistConversation(
+            PersonId personId,
+            String userMessage,
+            DialogueResult result,
+            Instant occurredAt
+    ) {
+        if (conversationStore == null) {
+            return CompletableFuture.completedFuture(ConversationOutcome.disabled());
+        }
+
+        List<ConversationTurnSnapshot> turns = new ArrayList<>(result.replies().size() + 1);
+        turns.add(new ConversationTurnSnapshot(
+                ConversationTurnSnapshot.Role.USER,
+                userMessage,
+                occurredAt
+        ));
+        result.replies().forEach(reply -> turns.add(new ConversationTurnSnapshot(
+                ConversationTurnSnapshot.Role.PERSON,
+                reply,
+                occurredAt
+        )));
+        List<ConversationTurnSnapshot> immutableTurns = List.copyOf(turns);
+
+        final CompletionStage<Integer> stage;
+        try {
+            stage = Objects.requireNonNull(
+                    conversationStore.append(personId, immutableTurns),
+                    "conversationStore stage cannot be null"
+            );
+        } catch (RuntimeException error) {
+            logConversationFailure(personId, error);
+            return CompletableFuture.completedFuture(ConversationOutcome.failed());
+        }
+
+        return stage.handle((stored, failure) -> {
+            if (failure != null) {
+                logConversationFailure(personId, unwrap(failure));
+                return ConversationOutcome.failed();
+            }
+            if (stored == null || stored != immutableTurns.size()) {
+                LOGGER.warn(
+                        "Dialogue conversation persistence returned an unexpected count: personId={}, expected={}, actual={}",
+                        personId,
+                        immutableTurns.size(),
+                        stored
+                );
+                return ConversationOutcome.failed();
+            }
+            return ConversationOutcome.stored(stored);
+        });
+    }
+
+    private CompletionStage<MemoryOutcome> recordMemory(
+            PersonId personId,
+            String userMessage,
+            DialogueResult result,
+            Instant occurredAt
+    ) {
         if (memoryRecorder == null) {
-            return CompletableFuture.completedFuture(new PersonDialogueExchange(
-                    personId,
-                    result,
-                    occurredAt,
-                    PersonDialogueExchange.MemoryStatus.DISABLED,
-                    0
-            ));
+            return CompletableFuture.completedFuture(MemoryOutcome.disabled());
         }
 
         final CompletionStage<List<com.laishengkai.digitalperson.memory.MemoryMutation>> stage;
@@ -153,34 +258,16 @@ public final class PersonDialogueService {
             );
         } catch (RuntimeException error) {
             logMemoryFailure(personId, error);
-            return CompletableFuture.completedFuture(new PersonDialogueExchange(
-                    personId,
-                    result,
-                    occurredAt,
-                    PersonDialogueExchange.MemoryStatus.FAILED,
-                    0
-            ));
+            return CompletableFuture.completedFuture(MemoryOutcome.failed());
         }
 
         return stage.handle((mutations, failure) -> {
             if (failure != null) {
                 logMemoryFailure(personId, unwrap(failure));
-                return new PersonDialogueExchange(
-                        personId,
-                        result,
-                        occurredAt,
-                        PersonDialogueExchange.MemoryStatus.FAILED,
-                        0
-                );
+                return MemoryOutcome.failed();
             }
             List<?> safeMutations = Objects.requireNonNullElse(mutations, List.of());
-            return new PersonDialogueExchange(
-                    personId,
-                    result,
-                    occurredAt,
-                    PersonDialogueExchange.MemoryStatus.PROCESSED,
-                    safeMutations.size()
-            );
+            return MemoryOutcome.processed(safeMutations.size());
         });
     }
 
@@ -249,11 +336,62 @@ public final class PersonDialogueService {
         );
     }
 
+    private static void logConversationFailure(PersonId personId, Throwable error) {
+        LOGGER.warn(
+                "Dialogue conversation persistence failed; returning generated reply: personId={}",
+                personId,
+                error
+        );
+    }
+
     private static void logMemoryFailure(PersonId personId, Throwable error) {
         LOGGER.warn(
                 "Dialogue memory recording failed; returning generated reply: personId={}",
                 personId,
                 error
         );
+    }
+
+    private record ConversationOutcome(
+            PersonDialogueExchange.ConversationStatus status,
+            int persistedTurnCount
+    ) {
+        private static ConversationOutcome stored(int count) {
+            return new ConversationOutcome(
+                    PersonDialogueExchange.ConversationStatus.STORED,
+                    count
+            );
+        }
+
+        private static ConversationOutcome disabled() {
+            return new ConversationOutcome(
+                    PersonDialogueExchange.ConversationStatus.DISABLED,
+                    0
+            );
+        }
+
+        private static ConversationOutcome failed() {
+            return new ConversationOutcome(
+                    PersonDialogueExchange.ConversationStatus.FAILED,
+                    0
+            );
+        }
+    }
+
+    private record MemoryOutcome(
+            PersonDialogueExchange.MemoryStatus status,
+            int mutationCount
+    ) {
+        private static MemoryOutcome processed(int count) {
+            return new MemoryOutcome(PersonDialogueExchange.MemoryStatus.PROCESSED, count);
+        }
+
+        private static MemoryOutcome disabled() {
+            return new MemoryOutcome(PersonDialogueExchange.MemoryStatus.DISABLED, 0);
+        }
+
+        private static MemoryOutcome failed() {
+            return new MemoryOutcome(PersonDialogueExchange.MemoryStatus.FAILED, 0);
+        }
     }
 }

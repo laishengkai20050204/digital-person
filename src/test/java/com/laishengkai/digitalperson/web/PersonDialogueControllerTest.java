@@ -24,7 +24,7 @@ class PersonDialogueControllerTest {
     private static final String TOKEN = "person-api-token";
 
     @Test
-    void exposesGeneratedReplyAndMemoryOutcome() {
+    void exposesGeneratedReplyAndPersistenceOutcomes() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
         PersonDialogueController controller = new PersonDialogueController(
                 service(person),
@@ -42,6 +42,8 @@ class PersonDialogueControllerTest {
         assertThat(response.replies()).containsExactly("你好，我在呢。");
         assertThat(response.occurredAt())
                 .isEqualTo(Instant.parse("2026-07-25T01:00:00Z"));
+        assertThat(response.conversationStatus()).isEqualTo("DISABLED");
+        assertThat(response.persistedConversationTurnCount()).isZero();
         assertThat(response.memoryStatus()).isEqualTo("DISABLED");
         assertThat(response.memoryMutationCount()).isZero();
     }
