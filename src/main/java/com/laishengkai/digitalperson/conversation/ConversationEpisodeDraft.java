@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.conversation;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 /** One complete event extracted from an older, stable conversation batch. */
@@ -23,7 +24,12 @@ public record ConversationEpisodeDraft(
         title = requireBoundedText(title, "title", MAX_TITLE_CHARACTERS);
         summary = requireBoundedText(summary, "summary", MAX_SUMMARY_CHARACTERS);
         eventType = requireBoundedText(eventType, "eventType", MAX_LABEL_CHARACTERS)
-                .toUpperCase(java.util.Locale.ROOT);
+                .toUpperCase(Locale.ROOT);
+        if (!eventType.matches("[A-Z][A-Z0-9_]*")) {
+            throw new IllegalArgumentException(
+                    "eventType must be an uppercase ASCII identifier"
+            );
+        }
         participants = boundedLabels(participants, "participants");
         emotions = boundedLabels(emotions, "emotions");
         outcome = normalizeBounded(outcome, "outcome", MAX_OUTCOME_CHARACTERS);
@@ -50,9 +56,14 @@ public record ConversationEpisodeDraft(
     }
 
     private static List<String> boundedLabels(List<String> values, String fieldName) {
-        List<String> safe = List.copyOf(Objects.requireNonNull(values, fieldName + " cannot be null"));
+        List<String> safe = List.copyOf(Objects.requireNonNull(
+                values,
+                fieldName + " cannot be null"
+        ));
         if (safe.size() > MAX_LABELS) {
-            throw new IllegalArgumentException(fieldName + " cannot contain more than " + MAX_LABELS + " values");
+            throw new IllegalArgumentException(
+                    fieldName + " cannot contain more than " + MAX_LABELS + " values"
+            );
         }
         return safe.stream()
                 .map(value -> requireBoundedText(value, fieldName, MAX_LABEL_CHARACTERS))
@@ -60,7 +71,11 @@ public record ConversationEpisodeDraft(
                 .toList();
     }
 
-    private static String requireBoundedText(String value, String fieldName, int maxCharacters) {
+    private static String requireBoundedText(
+            String value,
+            String fieldName,
+            int maxCharacters
+    ) {
         String normalized = normalizeBounded(value, fieldName, maxCharacters);
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException(fieldName + " cannot be blank");
@@ -68,10 +83,19 @@ public record ConversationEpisodeDraft(
         return normalized;
     }
 
-    private static String normalizeBounded(String value, String fieldName, int maxCharacters) {
-        String normalized = Objects.requireNonNull(value, fieldName + " cannot be null").strip();
+    private static String normalizeBounded(
+            String value,
+            String fieldName,
+            int maxCharacters
+    ) {
+        String normalized = Objects.requireNonNull(
+                value,
+                fieldName + " cannot be null"
+        ).strip();
         if (normalized.length() > maxCharacters) {
-            throw new IllegalArgumentException(fieldName + " cannot exceed " + maxCharacters + " characters");
+            throw new IllegalArgumentException(
+                    fieldName + " cannot exceed " + maxCharacters + " characters"
+            );
         }
         return normalized;
     }
