@@ -1,12 +1,15 @@
 package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
+import com.laishengkai.digitalperson.conversation.ConversationSummaryStore;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
+import com.laishengkai.digitalperson.conversation.RecentConversationStore;
 import com.laishengkai.digitalperson.infrastructure.context.StateEvaluationContextConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.annotation.Bean;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,17 +27,32 @@ class ConversationGatewayBeanNameTest {
         assertThat(beanName(fallback)).isEqualTo("recentConversationGateway");
     }
 
+    @Test
+    void mysqlRepositoryIsTheOnlyBeanExposingEachConversationStoreCapability() {
+        assertThat(beanMethodsAssignableTo(RecentConversationStore.class))
+                .extracting(Method::getName)
+                .containsExactly("jdbcRecentConversationRepository");
+        assertThat(beanMethodsAssignableTo(ConversationSummaryStore.class))
+                .extracting(Method::getName)
+                .containsExactly("jdbcRecentConversationRepository");
+    }
+
     private static Method gatewayBeanMethod(Class<?> configurationClass) {
         return Arrays.stream(configurationClass.getDeclaredMethods())
                 .filter(method -> method.isAnnotationPresent(Bean.class))
-                .filter(method -> RecentConversationGateway.class.isAssignableFrom(
-                        method.getReturnType()
-                ))
+                .filter(method -> method.getReturnType().equals(RecentConversationGateway.class))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError(
-                        "configuration has no RecentConversationGateway bean: "
+                        "configuration has no explicit RecentConversationGateway bean: "
                                 + configurationClass.getName()
                 ));
+    }
+
+    private static List<Method> beanMethodsAssignableTo(Class<?> capability) {
+        return Arrays.stream(MySqlPersonPersistenceConfiguration.class.getDeclaredMethods())
+                .filter(method -> method.isAnnotationPresent(Bean.class))
+                .filter(method -> capability.isAssignableFrom(method.getReturnType()))
+                .toList();
     }
 
     private static String beanName(Method method) {
