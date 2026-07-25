@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.dialogue;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 /** Runtime limits for the formal person dialogue flow. */
 @ConfigurationProperties(prefix = "digital-person.dialogue")
@@ -23,6 +24,62 @@ public record PersonDialogueProperties(
     private static final int DEFAULT_CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS = 800;
     private static final double DEFAULT_CONVERSATION_SUMMARY_TEMPERATURE = 0.2;
 
+    /**
+     * Explicitly selects the canonical constructor for Spring Boot configuration binding.
+     * The record also has a compatibility constructor, so implicit constructor selection is
+     * intentionally not relied upon.
+     */
+    @ConstructorBinding
+    public PersonDialogueProperties(
+            Integer maxMemoryItems,
+            Integer maxConversationTurns,
+            Integer maxOutputTokens,
+            Double temperature,
+            Boolean conversationSummaryEnabled,
+            Integer conversationSummaryBatchTurns,
+            Integer conversationSummaryMaxOutputTokens,
+            Double conversationSummaryTemperature
+    ) {
+        this.maxMemoryItems = positiveOrDefault(
+                maxMemoryItems,
+                DEFAULT_MAX_MEMORY_ITEMS,
+                "maxMemoryItems"
+        );
+        this.maxConversationTurns = positiveOrDefault(
+                maxConversationTurns,
+                DEFAULT_MAX_CONVERSATION_TURNS,
+                "maxConversationTurns"
+        );
+        this.maxOutputTokens = positiveOrDefault(
+                maxOutputTokens,
+                DEFAULT_MAX_OUTPUT_TOKENS,
+                "maxOutputTokens"
+        );
+        this.temperature = temperatureOrDefault(
+                temperature,
+                DEFAULT_TEMPERATURE,
+                "temperature"
+        );
+        this.conversationSummaryEnabled = conversationSummaryEnabled == null
+                ? DEFAULT_CONVERSATION_SUMMARY_ENABLED
+                : conversationSummaryEnabled;
+        this.conversationSummaryBatchTurns = positiveOrDefault(
+                conversationSummaryBatchTurns,
+                DEFAULT_CONVERSATION_SUMMARY_BATCH_TURNS,
+                "conversationSummaryBatchTurns"
+        );
+        this.conversationSummaryMaxOutputTokens = positiveOrDefault(
+                conversationSummaryMaxOutputTokens,
+                DEFAULT_CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS,
+                "conversationSummaryMaxOutputTokens"
+        );
+        this.conversationSummaryTemperature = temperatureOrDefault(
+                conversationSummaryTemperature,
+                DEFAULT_CONVERSATION_SUMMARY_TEMPERATURE,
+                "conversationSummaryTemperature"
+        );
+    }
+
     /** Compatibility constructor for callers that only configure reply generation. */
     public PersonDialogueProperties(
             Integer maxMemoryItems,
@@ -39,47 +96,6 @@ public record PersonDialogueProperties(
                 null,
                 null,
                 null
-        );
-    }
-
-    public PersonDialogueProperties {
-        maxMemoryItems = positiveOrDefault(
-                maxMemoryItems,
-                DEFAULT_MAX_MEMORY_ITEMS,
-                "maxMemoryItems"
-        );
-        maxConversationTurns = positiveOrDefault(
-                maxConversationTurns,
-                DEFAULT_MAX_CONVERSATION_TURNS,
-                "maxConversationTurns"
-        );
-        maxOutputTokens = positiveOrDefault(
-                maxOutputTokens,
-                DEFAULT_MAX_OUTPUT_TOKENS,
-                "maxOutputTokens"
-        );
-        temperature = temperatureOrDefault(
-                temperature,
-                DEFAULT_TEMPERATURE,
-                "temperature"
-        );
-        conversationSummaryEnabled = conversationSummaryEnabled == null
-                ? DEFAULT_CONVERSATION_SUMMARY_ENABLED
-                : conversationSummaryEnabled;
-        conversationSummaryBatchTurns = positiveOrDefault(
-                conversationSummaryBatchTurns,
-                DEFAULT_CONVERSATION_SUMMARY_BATCH_TURNS,
-                "conversationSummaryBatchTurns"
-        );
-        conversationSummaryMaxOutputTokens = positiveOrDefault(
-                conversationSummaryMaxOutputTokens,
-                DEFAULT_CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS,
-                "conversationSummaryMaxOutputTokens"
-        );
-        conversationSummaryTemperature = temperatureOrDefault(
-                conversationSummaryTemperature,
-                DEFAULT_CONVERSATION_SUMMARY_TEMPERATURE,
-                "conversationSummaryTemperature"
         );
     }
 
