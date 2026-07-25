@@ -119,7 +119,7 @@ public class MySqlPersonPersistenceConfiguration {
 
     @Bean
     @Primary
-    RecentConversationGateway recentConversationGateway(
+    RecentConversationGateway summaryAwareRecentConversationGateway(
             JdbcRecentConversationRepository repository
     ) {
         return new SummaryAwareRecentConversationGateway(repository, repository);
