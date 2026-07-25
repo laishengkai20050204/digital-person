@@ -3,6 +3,7 @@ package com.laishengkai.digitalperson.application;
 import com.laishengkai.digitalperson.dialogue.DialogueResult;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueException;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
+import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonRepository;
@@ -87,7 +88,7 @@ public final class PersonDialogueService {
                 new PersonModelContextAssemblyRequest(
                         Set.of(),
                         normalizedMessage,
-                        true,
+                        false,
                         maxMemoryItems,
                         maxConversationTurns
                 );
@@ -115,6 +116,7 @@ public final class PersonDialogueService {
                         "person dialogue context was not assembled"
                 ));
             }
+            logMemoryRetrieval(requestedPersonId, context.memory());
             return Objects.requireNonNull(
                     dialogueModel.reply(context, normalizedMessage),
                     "dialogueModel stage cannot be null"
@@ -227,6 +229,24 @@ public final class PersonDialogueService {
             current = current.getCause();
         }
         return current;
+    }
+
+    private static void logMemoryRetrieval(PersonId personId, PersonMemoryContext memory) {
+        PersonMemoryContext safeMemory = Objects.requireNonNull(
+                memory,
+                "memory context cannot be null"
+        );
+        double highestRelevance = safeMemory.items().stream()
+                .mapToDouble(item -> item.relevance())
+                .max()
+                .orElse(0.0);
+        LOGGER.info(
+                "Dialogue memory retrieval completed: personId={}, availability={}, itemCount={}, highestRelevance={}",
+                personId,
+                safeMemory.availability(),
+                safeMemory.items().size(),
+                highestRelevance
+        );
     }
 
     private static void logMemoryFailure(PersonId personId, Throwable error) {
