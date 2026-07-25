@@ -7,7 +7,6 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -29,11 +28,6 @@ import java.time.Clock;
         name = "enabled",
         havingValue = "true"
 )
-@ConditionalOnBean({
-        LanguageModelGateway.class,
-        PersonRepository.class,
-        PersonModelContextAssembler.class
-})
 @EnableConfigurationProperties(PersonDialogueProperties.class)
 public class PersonDialogueConfiguration {
 

@@ -3,7 +3,6 @@ package com.laishengkai.digitalperson.web;
 import com.laishengkai.digitalperson.application.PersonDialogueExchange;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.person.PersonId;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,7 +20,6 @@ import java.util.concurrent.CompletionStage;
 /** Token-protected formal HTTP boundary for direct user-to-person dialogue. */
 @RestController
 @RequestMapping("/api/persons/{personId}/dialogues")
-@ConditionalOnBean(PersonDialogueService.class)
 @ConditionalOnProperty(
         prefix = "digital-person.person-api",
         name = "enabled",
