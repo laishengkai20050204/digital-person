@@ -308,7 +308,10 @@ class JdbcRecentConversationRepositoryMySqlTest {
         assertThat(relevant.getFirst().sourceEndTurnId())
                 .isEqualTo(work.coveredThroughTurnId());
 
-        assertTrue(personRepository.deleteById(person.getId()));
+        assertThat(jdbcTemplate.update(
+                "DELETE FROM digital_person WHERE person_id = ?",
+                person.getId().toString()
+        )).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM person_conversation_episode WHERE person_id = ?",
                 Integer.class,
