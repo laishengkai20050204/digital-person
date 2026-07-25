@@ -29,6 +29,8 @@ class Mem0PropertiesTest {
 
         assertEquals(0.30, properties.minimumRelevance());
         assertTrue(properties.extractionInstructions().contains("简体中文"));
+        assertTrue(properties.extractionInstructions().contains("验证码"));
+        assertTrue(properties.extractionInstructions().contains("不要记住或不要保存"));
         assertTrue(properties.baseUrl().toString().contains("127.0.0.1:8888"));
         assertTrue(properties.healthPath().startsWith("/"));
         assertTrue(properties.toString().contains("<redacted>"));
@@ -36,13 +38,13 @@ class Mem0PropertiesTest {
     }
 
     @Test
-    void allowsExplicitZeroThreshold() {
+    void preservesMandatoryGuardrailsWhenCustomInstructionsAreConfigured() {
         Mem0Properties properties = new Mem0Properties(
                 true,
                 false,
                 false,
                 0.0,
-                "使用简体中文",
+                "只保存与学习计划有关的稳定事实",
                 null,
                 "",
                 null,
@@ -51,6 +53,9 @@ class Mem0PropertiesTest {
         );
 
         assertEquals(0.0, properties.minimumRelevance());
+        assertTrue(properties.extractionInstructions().contains("只保存与学习计划有关"));
+        assertTrue(properties.extractionInstructions().contains("API Key"));
+        assertTrue(properties.extractionInstructions().contains("附加提取要求"));
     }
 
     @Test
