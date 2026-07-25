@@ -21,9 +21,18 @@ public record Mem0Properties(
         String healthPath
 ) {
     static final double DEFAULT_MINIMUM_RELEVANCE = 0.30;
-    static final String DEFAULT_EXTRACTION_INSTRUCTIONS = """
+    static final String MANDATORY_EXTRACTION_GUARDRAILS = """
+            长期记忆安全边界：
+            1. 不要保存测试消息、占位内容、验证码、一次性代码、密码、API Key、访问令牌、密钥或其他认证信息。
+            2. 用户明确要求不要记住或不要保存的当前内容，不得写入长期记忆。
+            3. 不要保存无持续价值的寒暄、确认回复、瞬时情绪、临时状态或一次性调试内容；只有当它们构成重要经历、持续计划、稳定偏好或长期关系变化时才可保留。
+            4. 不要把人物回复中的推测、安慰话术、角色扮演修辞或模型自行补充的内容当作用户事实。
+            """.strip();
+    private static final String DEFAULT_EXTRACTION_POLICY = """
             将提取出的长期记忆始终写成简体中文。只保存对未来交互有持续价值的明确事实、偏好、关系、目标、计划、承诺、习惯和重要经历；使用第三人称，表达简洁，一条记忆只包含一个主要事实；不要使用“Agent learned that”等英文模板，不要翻译人名、产品名等专有名词。
             """.strip();
+    static final String DEFAULT_EXTRACTION_INSTRUCTIONS =
+            MANDATORY_EXTRACTION_GUARDRAILS + "\n\n" + DEFAULT_EXTRACTION_POLICY;
 
     private static final URI DEFAULT_BASE_URL = URI.create("http://127.0.0.1:8888");
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(2);
@@ -113,7 +122,15 @@ public record Mem0Properties(
 
     private static String normalizeInstructions(String value) {
         String normalized = normalize(value);
-        return normalized.isEmpty() ? DEFAULT_EXTRACTION_INSTRUCTIONS : normalized;
+        if (normalized.isEmpty()) {
+            return DEFAULT_EXTRACTION_INSTRUCTIONS;
+        }
+        if (normalized.startsWith(MANDATORY_EXTRACTION_GUARDRAILS)) {
+            return normalized;
+        }
+        return MANDATORY_EXTRACTION_GUARDRAILS
+                + "\n\n附加提取要求：\n"
+                + normalized;
     }
 
     private static String normalize(String value) {

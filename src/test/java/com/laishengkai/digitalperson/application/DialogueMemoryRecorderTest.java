@@ -58,6 +58,33 @@ class DialogueMemoryRecorderTest {
     }
 
     @Test
+    void suppressesTemporaryDialogueWithoutCallingTheProvider() {
+        PersonMemoryStore store = new PersonMemoryStore() {
+            @Override
+            public java.util.concurrent.CompletionStage<List<MemoryMutation>> add(
+                    PersonMemoryWriteRequest request
+            ) {
+                throw new AssertionError("temporary dialogue must not reach the provider");
+            }
+
+            @Override
+            public java.util.concurrent.CompletionStage<Void> delete(String memoryId) {
+                return CompletableFuture.completedFuture(null);
+            }
+        };
+        DialogueMemoryRecorder recorder = new DialogueMemoryRecorder(store);
+
+        List<MemoryMutation> mutations = recorder.record(
+                PersonId.random(),
+                "验证码：493821",
+                new DialogueResult("", List.of("收到。")),
+                Instant.EPOCH
+        ).toCompletableFuture().join();
+
+        assertTrue(mutations.isEmpty());
+    }
+
+    @Test
     void rejectsAnUnboundedMessageBeforeCallingTheProvider() {
         PersonMemoryStore store = new PersonMemoryStore() {
             @Override
