@@ -1,6 +1,6 @@
 CREATE TABLE person_conversation_turn (
     conversation_turn_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    person_id CHAR(36) NOT NULL,
+    person_id CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     role VARCHAR(16) NOT NULL,
     turn_text MEDIUMTEXT NOT NULL,
     occurred_at TIMESTAMP(6) NOT NULL,
