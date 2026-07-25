@@ -21,6 +21,7 @@ class DialogueMemoryRetentionPolicyTest {
                 "验证码：493821",
                 "临时密码 abcdef",
                 "API key: abc12345",
+                "password is hunter2",
                 "我的访问令牌是 token-123456",
                 "sk-proj-abcdefghijklmnop"
         );
@@ -39,6 +40,7 @@ class DialogueMemoryRetentionPolicyTest {
                 "我正在学习大模型 token 的计费方式",
                 "我的目标是以后从事 API 安全测试",
                 "我平时使用密码管理器保存账号",
+                "Password is important for account security",
                 "我希望你记住我最喜欢科幻电影"
         );
 
