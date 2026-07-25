@@ -25,6 +25,7 @@ import java.time.Clock;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({
         MySqlPersonPersistenceProperties.class,
+        MySqlRecentConversationProperties.class,
         ActivitySchedulerProperties.class
 })
 @ConditionalOnProperty(
@@ -97,6 +98,20 @@ public class MySqlPersonPersistenceConfiguration {
             PersonAggregateJsonMapper aggregateMapper
     ) {
         return new JdbcPersonRepository(jdbcTemplate, aggregateMapper);
+    }
+
+    @Bean
+    @Primary
+    JdbcRecentConversationRepository jdbcRecentConversationRepository(
+            @Qualifier("personJdbcTemplate") JdbcTemplate jdbcTemplate,
+            @Qualifier("personTransactionTemplate") TransactionTemplate transactionTemplate,
+            MySqlRecentConversationProperties properties
+    ) {
+        return new JdbcRecentConversationRepository(
+                jdbcTemplate,
+                transactionTemplate,
+                properties.retentionTurns()
+        );
     }
 
     @Bean
