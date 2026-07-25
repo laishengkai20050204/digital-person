@@ -72,7 +72,7 @@ class PersonDialogueServiceTest {
         assertThat(exchange.memoryMutationCount()).isEqualTo(1);
         assertThat(contextRequest.get().relevanceSeed())
                 .isEqualTo("你还记得我喜欢什么电影吗？");
-        assertThat(contextRequest.get().includeEventContextInRelevanceQuery()).isTrue();
+        assertThat(contextRequest.get().includeEventContextInRelevanceQuery()).isFalse();
         assertThat(contextRequest.get().maxMemoryItems()).isEqualTo(8);
         assertThat(contextRequest.get().maxConversationTurns()).isEqualTo(12);
         assertThat(memoryRequest.get().personId()).isEqualTo(person.getId());
