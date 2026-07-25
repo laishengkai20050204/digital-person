@@ -1,5 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.persistence.mysql;
 
+import com.laishengkai.digitalperson.conversation.ConversationEpisodeGateway;
+import com.laishengkai.digitalperson.conversation.ConversationEpisodeStore;
 import com.laishengkai.digitalperson.conversation.ConversationSummaryStore;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.conversation.RecentConversationStore;
@@ -28,13 +30,19 @@ class ConversationGatewayBeanNameTest {
     }
 
     @Test
-    void mysqlRepositoryIsTheOnlyBeanExposingEachConversationStoreCapability() {
+    void mysqlRepositoriesUniquelyExposeConversationStoreCapabilities() {
         assertThat(beanMethodsAssignableTo(RecentConversationStore.class))
                 .extracting(Method::getName)
                 .containsExactly("jdbcRecentConversationRepository");
         assertThat(beanMethodsAssignableTo(ConversationSummaryStore.class))
                 .extracting(Method::getName)
                 .containsExactly("jdbcRecentConversationRepository");
+        assertThat(beanMethodsAssignableTo(ConversationEpisodeStore.class))
+                .extracting(Method::getName)
+                .containsExactly("jdbcConversationEpisodeRepository");
+        assertThat(beanMethodsAssignableTo(ConversationEpisodeGateway.class))
+                .extracting(Method::getName)
+                .containsExactly("jdbcConversationEpisodeRepository");
     }
 
     private static Method gatewayBeanMethod(Class<?> configurationClass) {

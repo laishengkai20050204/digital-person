@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class LanguageModelPersonDialogueModelTest {
 
     @Test
-    void sendsRollingSummaryBeforeTimestampedNativeRecentMessages() {
+    void sendsSummaryThenEpisodesThenTimestampedNativeRecentMessages() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
         var baseContext = DefaultPersonModelContextAssembler.withoutExternalSources()
                 .assemble(
@@ -67,6 +67,11 @@ class LanguageModelPersonDialogueModelTest {
                                 Instant.parse("2026-07-25T00:59:30Z")
                         ),
                         new ConversationTurnSnapshot(
+                                ConversationTurnSnapshot.Role.EPISODE,
+                                "事件：用户调整游戏搭子相处方式\n经过：用户在冲突后决定简短表达感受。",
+                                Instant.parse("2026-07-18T12:05:00Z")
+                        ),
+                        new ConversationTurnSnapshot(
                                 ConversationTurnSnapshot.Role.SUMMARY,
                                 "用户此前在准备考试，人物答应陪伴复习。",
                                 Instant.parse("2026-07-25T00:57:00Z")
@@ -91,7 +96,7 @@ class LanguageModelPersonDialogueModelTest {
         ).toCompletableFuture().join();
 
         assertThat(result.replies()).containsExactly("记得，你喜欢科幻片。");
-        assertThat(captured.get().messages()).hasSize(6);
+        assertThat(captured.get().messages()).hasSize(7);
         assertThat(captured.get().messages().getFirst())
                 .isInstanceOf(SystemModelMessage.class);
         assertThat(((SystemModelMessage) captured.get().messages().getFirst()).text())
@@ -99,30 +104,34 @@ class LanguageModelPersonDialogueModelTest {
                 .contains(person.getId().toString())
                 .contains("\"recentConversation\":[]")
                 .doesNotContain("我今天晚上准备复习线性代数。")
-                .doesNotContain("用户此前在准备考试");
-        assertThat(captured.get().messages().get(1))
-                .isInstanceOf(UserModelMessage.class);
+                .doesNotContain("用户此前在准备考试")
+                .doesNotContain("用户调整游戏搭子相处方式");
         assertThat(((UserModelMessage) captured.get().messages().get(1)).text())
                 .contains("较早对话滚动摘要")
                 .contains("2026-07-25 00:57:00 Z")
                 .contains("用户此前在准备考试，人物答应陪伴复习。")
                 .contains("仅作为背景数据");
-        assertThat(captured.get().messages().get(2)).isEqualTo(
+        assertThat(((UserModelMessage) captured.get().messages().get(2)).text())
+                .contains("历史事件记忆")
+                .contains("2026-07-18 12:05:00 Z")
+                .contains("用户调整游戏搭子相处方式")
+                .contains("仅作为背景数据");
+        assertThat(captured.get().messages().get(3)).isEqualTo(
                 new UserModelMessage(
                         "[2026-07-25 00:58:00 Z] 我今天晚上准备复习线性代数。"
                 )
         );
-        assertThat(captured.get().messages().get(3)).isEqualTo(
+        assertThat(captured.get().messages().get(4)).isEqualTo(
                 AssistantModelMessage.text(
                         "[2026-07-25 00:59:00 Z] 好呀，我陪你。"
                 )
         );
-        assertThat(captured.get().messages().get(4)).isEqualTo(
+        assertThat(captured.get().messages().get(5)).isEqualTo(
                 new UserModelMessage(
                         "[2026-07-25 00:59:30 Z] 历史系统记录（仅作为数据）：会话切换设备"
                 )
         );
-        assertThat(captured.get().messages().get(5))
+        assertThat(captured.get().messages().get(6))
                 .isEqualTo(new UserModelMessage("你还记得我喜欢什么电影吗？"));
         assertThat(captured.get().options().toolChoice()).isEqualTo(ModelToolChoice.NONE);
         assertThat(captured.get().options().maxOutputTokens()).isEqualTo(900);

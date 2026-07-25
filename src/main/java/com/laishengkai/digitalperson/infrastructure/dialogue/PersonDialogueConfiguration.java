@@ -4,8 +4,10 @@ import com.laishengkai.digitalperson.application.ConversationSummaryService;
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
+import com.laishengkai.digitalperson.conversation.ConversationEpisodeStore;
 import com.laishengkai.digitalperson.conversation.ConversationSummaryStore;
 import com.laishengkai.digitalperson.conversation.RecentConversationStore;
+import com.laishengkai.digitalperson.dialogue.ConversationEpisodeModel;
 import com.laishengkai.digitalperson.dialogue.ConversationSummaryModel;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
@@ -70,6 +72,26 @@ public class PersonDialogueConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.dialogue",
+            name = "conversation-episode-enabled",
+            havingValue = "true",
+            matchIfMissing = true
+    )
+    @ConditionalOnMissingBean(ConversationEpisodeModel.class)
+    ConversationEpisodeModel conversationEpisodeModel(
+            LanguageModelGateway languageModelGateway,
+            JsonMapper jsonMapper,
+            PersonDialogueProperties properties
+    ) {
+        return new LanguageModelConversationEpisodeModel(
+                languageModelGateway,
+                jsonMapper,
+                properties
+        );
+    }
+
+    @Bean
     @ConditionalOnMissingBean(PersonDialogueService.class)
     PersonDialogueService personDialogueService(
             PersonRepository personRepository,
@@ -78,12 +100,16 @@ public class PersonDialogueConfiguration {
             ObjectProvider<RecentConversationStore> conversationStoreProvider,
             ObjectProvider<ConversationSummaryStore> summaryStoreProvider,
             ObjectProvider<ConversationSummaryModel> summaryModelProvider,
+            ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
+            ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
             ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
             PersonDialogueProperties properties
     ) {
         ConversationSummaryService summaryService = summaryService(
                 summaryStoreProvider,
                 summaryModelProvider,
+                episodeStoreProvider,
+                episodeModelProvider,
                 properties
         );
         return new PersonDialogueService(
@@ -103,6 +129,8 @@ public class PersonDialogueConfiguration {
     private static ConversationSummaryService summaryService(
             ObjectProvider<ConversationSummaryStore> storeProvider,
             ObjectProvider<ConversationSummaryModel> modelProvider,
+            ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
+            ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
             PersonDialogueProperties properties
     ) {
         if (!properties.conversationSummaryEnabled()) {
@@ -113,9 +141,22 @@ public class PersonDialogueConfiguration {
         if (store == null || model == null) {
             return null;
         }
+
+        ConversationEpisodeStore episodeStore = null;
+        ConversationEpisodeModel episodeModel = null;
+        if (properties.conversationEpisodeEnabled()) {
+            episodeStore = episodeStoreProvider.getIfAvailable();
+            episodeModel = episodeModelProvider.getIfAvailable();
+            if (episodeStore == null || episodeModel == null) {
+                episodeStore = null;
+                episodeModel = null;
+            }
+        }
         return new ConversationSummaryService(
                 store,
                 model,
+                episodeStore,
+                episodeModel,
                 properties.maxConversationTurns(),
                 properties.conversationSummaryBatchTurns()
         );
