@@ -4,9 +4,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import com.laishengkai.digitalperson.conversation.ConversationSummaryStore;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
-import com.laishengkai.digitalperson.conversation.RecentConversationStore;
 import com.laishengkai.digitalperson.infrastructure.conversation.SummaryAwareRecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.scheduling.ActivitySchedulerProperties;
 import com.laishengkai.digitalperson.infrastructure.scheduling.PersonActivityScheduleRepository;
@@ -123,22 +121,6 @@ public class MySqlPersonPersistenceConfiguration {
             JdbcRecentConversationRepository repository
     ) {
         return new SummaryAwareRecentConversationGateway(repository, repository);
-    }
-
-    @Bean
-    @Primary
-    RecentConversationStore recentConversationStore(
-            JdbcRecentConversationRepository repository
-    ) {
-        return repository;
-    }
-
-    @Bean
-    @Primary
-    ConversationSummaryStore conversationSummaryStore(
-            JdbcRecentConversationRepository repository
-    ) {
-        return repository;
     }
 
     @Bean
