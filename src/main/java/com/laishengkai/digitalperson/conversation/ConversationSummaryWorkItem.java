@@ -8,6 +8,7 @@ import java.util.Optional;
 public record ConversationSummaryWorkItem(
         Optional<ConversationSummarySnapshot> existingSummary,
         List<ConversationTurnSnapshot> turns,
+        long sourceStartTurnId,
         long coveredThroughTurnId
 ) {
     public ConversationSummaryWorkItem {
@@ -22,16 +23,43 @@ public record ConversationSummaryWorkItem(
         if (turns.stream().anyMatch(Objects::isNull)) {
             throw new NullPointerException("turns cannot contain null");
         }
-        if (coveredThroughTurnId <= 0) {
-            throw new IllegalArgumentException("coveredThroughTurnId must be positive");
+        if (sourceStartTurnId <= 0) {
+            throw new IllegalArgumentException("sourceStartTurnId must be positive");
         }
-        existingSummary.ifPresent(summary -> {
-            if (coveredThroughTurnId <= summary.coveredThroughTurnId()) {
-                throw new IllegalArgumentException(
-                        "coveredThroughTurnId must advance the existing summary"
-                );
-            }
-        });
+        if (coveredThroughTurnId < sourceStartTurnId) {
+            throw new IllegalArgumentException(
+                    "coveredThroughTurnId cannot be before sourceStartTurnId"
+            );
+        }
+        long previousCoverage = existingSummary
+                .map(ConversationSummarySnapshot::coveredThroughTurnId)
+                .orElse(0L);
+        if (sourceStartTurnId <= previousCoverage) {
+            throw new IllegalArgumentException(
+                    "sourceStartTurnId must be after existing summary coverage"
+            );
+        }
+        if (coveredThroughTurnId <= previousCoverage) {
+            throw new IllegalArgumentException(
+                    "coveredThroughTurnId must advance the existing summary"
+            );
+        }
+    }
+
+    /** Compatibility constructor for callers that do not retain concrete source row ids. */
+    public ConversationSummaryWorkItem(
+            Optional<ConversationSummarySnapshot> existingSummary,
+            List<ConversationTurnSnapshot> turns,
+            long coveredThroughTurnId
+    ) {
+        this(
+                existingSummary,
+                Objects.requireNonNull(turns, "turns cannot be null"),
+                Objects.requireNonNull(existingSummary, "existingSummary cannot be null")
+                        .map(ConversationSummarySnapshot::coveredThroughTurnId)
+                        .orElse(0L) + 1L,
+                coveredThroughTurnId
+        );
     }
 
     public long expectedVersion() {
