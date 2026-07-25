@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.laishengkai.digitalperson.conversation.ConversationEpisodeDraft;
+import com.laishengkai.digitalperson.conversation.ConversationEpisodeSnapshot;
 import com.laishengkai.digitalperson.conversation.ConversationSummarySnapshot;
 import com.laishengkai.digitalperson.conversation.ConversationSummaryWorkItem;
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
@@ -239,6 +241,79 @@ class JdbcRecentConversationRepositoryMySqlTest {
         assertThat(secondSummary.summarizedTurnCount()).isEqualTo(16);
         assertThat(secondSummary.content())
                 .isEqualTo("前十六条消息已经被合并成新的滚动摘要。");
+    }
+
+    @Test
+    void storesDeduplicatesRanksAndCascadesConversationEpisodes() {
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        assertTrue(personRepository.insert(person));
+        JdbcRecentConversationRepository conversationRepository =
+                new JdbcRecentConversationRepository(
+                        jdbcTemplate,
+                        transactionTemplate,
+                        100
+                );
+        conversationRepository.append(person.getId(), numberedTurns(1, 20))
+                .toCompletableFuture()
+                .join();
+        ConversationSummaryWorkItem work = conversationRepository.findWork(
+                person.getId(),
+                12,
+                8
+        ).toCompletableFuture().join().orElseThrow();
+        JdbcConversationEpisodeRepository episodeRepository =
+                new JdbcConversationEpisodeRepository(jdbcTemplate);
+
+        ConversationEpisodeDraft conflict = new ConversationEpisodeDraft(
+                "用户调整游戏搭子相处方式",
+                "用户因游戏搭子临时去玩 Steam 感到被忽视，讨论后决定简短表达感受。",
+                "CONFLICT",
+                List.of("用户", "游戏搭子"),
+                List.of("失落", "不安全感"),
+                "用户决定观察对方后续行动。",
+                0.85
+        );
+        ConversationEpisodeDraft study = new ConversationEpisodeDraft(
+                "用户开始准备线性代数考试",
+                "用户制定了晚间复习线性代数的计划。",
+                "STUDY",
+                List.of("用户"),
+                List.of("专注"),
+                "用户准备当晚开始复习。",
+                0.65
+        );
+
+        assertThat(episodeRepository.saveAll(
+                person.getId(),
+                work,
+                List.of(conflict, study),
+                NOW.plusSeconds(100)
+        ).toCompletableFuture().join()).isEqualTo(2);
+        assertThat(episodeRepository.saveAll(
+                person.getId(),
+                work,
+                List.of(conflict, study),
+                NOW.plusSeconds(101)
+        ).toCompletableFuture().join()).isZero();
+
+        List<ConversationEpisodeSnapshot> relevant = episodeRepository.retrieve(
+                person.getId(),
+                "上次和游戏搭子发生矛盾后我决定怎么办",
+                1
+        ).toCompletableFuture().join();
+        assertThat(relevant).hasSize(1);
+        assertThat(relevant.getFirst().episode().title())
+                .isEqualTo("用户调整游戏搭子相处方式");
+        assertThat(relevant.getFirst().sourceStartTurnId()).isPositive();
+        assertThat(relevant.getFirst().sourceEndTurnId())
+                .isEqualTo(work.coveredThroughTurnId());
+
+        assertTrue(personRepository.deleteById(person.getId()));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM person_conversation_episode WHERE person_id = ?",
+                Integer.class,
+                person.getId().toString()
+        )).isZero();
     }
 
     private static List<ConversationTurnSnapshot> numberedTurns(int start, int end) {
