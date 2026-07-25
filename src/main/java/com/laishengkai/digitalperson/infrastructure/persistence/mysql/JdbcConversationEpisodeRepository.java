@@ -7,13 +7,13 @@ import com.laishengkai.digitalperson.conversation.ConversationSummaryWorkItem;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.text.Normalizer;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -30,6 +30,7 @@ public final class JdbcConversationEpisodeRepository implements ConversationEpis
     );
     private static final int MIN_CANDIDATE_LIMIT = 20;
     private static final int CANDIDATE_MULTIPLIER = 8;
+    private static final int MAX_CANDIDATE_LIMIT = 1_000;
     private static final String LABEL_SEPARATOR = "、";
 
     private static final String SOURCE_START_SQL = """
@@ -56,7 +57,6 @@ public final class JdbcConversationEpisodeRepository implements ConversationEpis
                 ended_at,
                 created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON DUPLICATE KEY UPDATE episode_id = episode_id
             """;
 
     private static final String RETRIEVE_SQL = """
@@ -135,29 +135,33 @@ public final class JdbcConversationEpisodeRepository implements ConversationEpis
                 endedAt = swap;
             }
 
-            List<Object[]> arguments = new ArrayList<>(safeEpisodes.size());
-            for (ConversationEpisodeDraft episode : safeEpisodes) {
-                arguments.add(new Object[]{
-                        requestedPersonId.toString(),
-                        sourceStartTurnId,
-                        work.coveredThroughTurnId(),
-                        episode.title(),
-                        episode.summary(),
-                        episode.eventType(),
-                        String.join(LABEL_SEPARATOR, episode.participants()),
-                        String.join(LABEL_SEPARATOR, episode.emotions()),
-                        episode.outcome(),
-                        BigDecimal.valueOf(episode.importance()),
-                        Timestamp.from(startedAt),
-                        Timestamp.from(endedAt),
-                        Timestamp.from(now)
-                });
-            }
-            int[] updates = jdbcTemplate.batchUpdate(INSERT_SQL, arguments);
             int inserted = 0;
-            for (int update : updates) {
-                if (update > 0) {
+            for (ConversationEpisodeDraft episode : safeEpisodes) {
+                try {
+                    int updated = jdbcTemplate.update(
+                            INSERT_SQL,
+                            requestedPersonId.toString(),
+                            sourceStartTurnId,
+                            work.coveredThroughTurnId(),
+                            episode.title(),
+                            episode.summary(),
+                            episode.eventType(),
+                            String.join(LABEL_SEPARATOR, episode.participants()),
+                            String.join(LABEL_SEPARATOR, episode.emotions()),
+                            episode.outcome(),
+                            BigDecimal.valueOf(episode.importance()),
+                            Timestamp.from(startedAt),
+                            Timestamp.from(endedAt),
+                            Timestamp.from(now)
+                    );
+                    if (updated != 1) {
+                        throw new PersonPersistenceException(
+                                "conversation episode insertion did not modify exactly one row"
+                        );
+                    }
                     inserted++;
+                } catch (DuplicateKeyException duplicate) {
+                    // The source-range/title key makes retries and concurrent extraction idempotent.
                 }
             }
             return CompletableFuture.completedFuture(inserted);
@@ -186,9 +190,9 @@ public final class JdbcConversationEpisodeRepository implements ConversationEpis
         if (maxItems <= 0) {
             throw new IllegalArgumentException("maxItems must be positive");
         }
-        int candidateLimit = Math.max(
-                MIN_CANDIDATE_LIMIT,
-                Math.multiplyExact(maxItems, CANDIDATE_MULTIPLIER)
+        int candidateLimit = Math.min(
+                MAX_CANDIDATE_LIMIT,
+                Math.max(MIN_CANDIDATE_LIMIT, maxItems * CANDIDATE_MULTIPLIER)
         );
 
         try {
@@ -278,7 +282,8 @@ public final class JdbcConversationEpisodeRepository implements ConversationEpis
         LinkedHashSet<String> result = new LinkedHashSet<>();
 
         for (String token : normalized.split("[^\\p{L}\\p{N}]+")) {
-            if (token.length() >= 2 && token.codePoints().noneMatch(JdbcConversationEpisodeRepository::isHan)) {
+            if (token.length() >= 2
+                    && token.codePoints().noneMatch(JdbcConversationEpisodeRepository::isHan)) {
                 result.add(token);
             }
         }
