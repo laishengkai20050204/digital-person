@@ -13,6 +13,7 @@
 其中包括：
 
 - `MYSQL_*`：MySQL 连接与连接池配置；
+- `CONVERSATION_*`：近期原始对话的保留策略；
 - `PERSON_*`：人物 API 开关和内部令牌；
 - `LLM_*`：模型地址、API Key、模型 ID、超时和连接测试；
 - `ACTIVITY_SCHEDULER_*`：自主活动调度器配置；
@@ -85,10 +86,26 @@ sudo grep -E '^[A-Z0-9_]+=' /etc/person-ai/person-ai.env \
 PID="$(systemctl show person-ai -p MainPID --value)"
 
 sudo sh -c "tr '\0' '\n' < /proc/$PID/environ" \
-  | grep -E '^(MYSQL_PERSISTENCE_ENABLED|PERSON_API_ENABLED|LLM_ENABLED|LLM_MODEL|ACTIVITY_SCHEDULER_ENABLED|MEM0_ENABLED|SERVER_PORT)='
+  | grep -E '^(MYSQL_PERSISTENCE_ENABLED|CONVERSATION_RETENTION_TURNS|PERSON_API_ENABLED|LLM_ENABLED|LLM_MODEL|ACTIVITY_SCHEDULER_ENABLED|MEM0_ENABLED|SERVER_PORT)='
 ```
 
 禁止无过滤地输出 `/proc/<pid>/environ`，其中可能包含 API Key、数据库密码和内部令牌。
+
+## 近期对话保留配置
+
+启用 MySQL 持久化后，正式对话会保存完成的用户消息和人物回复。默认每个人物保留最近 500 条原始消息：
+
+```bash
+CONVERSATION_RETENTION_TURNS=500
+```
+
+该值必须为正整数。它控制数据库实际保留量，不等于一次模型调用注入的消息数量；模型上下文上限由以下变量控制：
+
+```bash
+DIALOGUE_MAX_CONVERSATION_TURNS=12
+```
+
+原始对话正文属于私人数据。生产排障时优先查询条数、角色、时间和正文长度，不要在共享终端直接打印完整正文。
 
 ## 文件权限
 
