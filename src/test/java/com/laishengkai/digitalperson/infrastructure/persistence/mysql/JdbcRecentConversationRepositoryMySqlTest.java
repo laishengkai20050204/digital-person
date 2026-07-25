@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.laishengkai.digitalperson.conversation.ConversationSummarySnapshot;
+import com.laishengkai.digitalperson.conversation.ConversationSummaryWorkItem;
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.conversation.RecentConversationQuery;
 import com.laishengkai.digitalperson.person.Person;
@@ -21,6 +23,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.mysql.MySQLContainer;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -146,6 +149,107 @@ class JdbcRecentConversationRepositoryMySqlTest {
                         NOW.plusSeconds(2),
                         NOW.plusSeconds(3)
                 );
+    }
+
+    @Test
+    void summarizesOldestBatchLeavesRecentWindowAndUsesOptimisticVersioning() {
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        assertTrue(personRepository.insert(person));
+        JdbcRecentConversationRepository repository = new JdbcRecentConversationRepository(
+                jdbcTemplate,
+                transactionTemplate,
+                100
+        );
+        repository.append(person.getId(), numberedTurns(1, 20))
+                .toCompletableFuture()
+                .join();
+
+        ConversationSummaryWorkItem firstWork = repository.findWork(
+                person.getId(),
+                12,
+                8
+        ).toCompletableFuture().join().orElseThrow();
+        assertThat(firstWork.existingSummary()).isEmpty();
+        assertThat(firstWork.turns())
+                .extracting(ConversationTurnSnapshot::text)
+                .containsExactly(
+                        "消息1", "消息2", "消息3", "消息4",
+                        "消息5", "消息6", "消息7", "消息8"
+                );
+
+        assertThat(repository.save(
+                person.getId(),
+                firstWork,
+                "用户和人物已经讨论了前八条消息。",
+                NOW.plusSeconds(100)
+        ).toCompletableFuture().join()).isTrue();
+        assertThat(repository.save(
+                person.getId(),
+                firstWork,
+                "过期并发写入",
+                NOW.plusSeconds(101)
+        ).toCompletableFuture().join()).isFalse();
+
+        ConversationSummarySnapshot firstSummary = repository.retrieve(person.getId())
+                .toCompletableFuture()
+                .join()
+                .orElseThrow();
+        assertThat(firstSummary.content()).isEqualTo("用户和人物已经讨论了前八条消息。");
+        assertThat(firstSummary.summarizedTurnCount()).isEqualTo(8);
+        assertThat(firstSummary.version()).isZero();
+        assertThat(firstSummary.coveredThroughTurnId())
+                .isEqualTo(firstWork.coveredThroughTurnId());
+
+        List<ConversationTurnSnapshot> remaining = repository.retrieve(
+                new RecentConversationQuery(person.getId(), "", 19)
+        ).toCompletableFuture().join();
+        assertThat(remaining).hasSize(12);
+        assertThat(remaining.getFirst().text()).isEqualTo("消息9");
+        assertThat(remaining.getLast().text()).isEqualTo("消息20");
+        assertThat(repository.findWork(person.getId(), 12, 8)
+                .toCompletableFuture().join()).isEmpty();
+
+        repository.append(person.getId(), numberedTurns(21, 28))
+                .toCompletableFuture()
+                .join();
+        ConversationSummaryWorkItem secondWork = repository.findWork(
+                person.getId(),
+                12,
+                8
+        ).toCompletableFuture().join().orElseThrow();
+        assertThat(secondWork.existingSummary()).contains(firstSummary);
+        assertThat(secondWork.turns())
+                .extracting(ConversationTurnSnapshot::text)
+                .containsExactly(
+                        "消息9", "消息10", "消息11", "消息12",
+                        "消息13", "消息14", "消息15", "消息16"
+                );
+
+        assertThat(repository.save(
+                person.getId(),
+                secondWork,
+                "前十六条消息已经被合并成新的滚动摘要。",
+                NOW.plusSeconds(200)
+        ).toCompletableFuture().join()).isTrue();
+        ConversationSummarySnapshot secondSummary = repository.retrieve(person.getId())
+                .toCompletableFuture()
+                .join()
+                .orElseThrow();
+        assertThat(secondSummary.version()).isEqualTo(1);
+        assertThat(secondSummary.summarizedTurnCount()).isEqualTo(16);
+        assertThat(secondSummary.content())
+                .isEqualTo("前十六条消息已经被合并成新的滚动摘要。");
+    }
+
+    private static List<ConversationTurnSnapshot> numberedTurns(int start, int end) {
+        List<ConversationTurnSnapshot> turns = new ArrayList<>();
+        for (int number = start; number <= end; number++) {
+            ConversationTurnSnapshot.Role role = number % 2 == 1
+                    ? ConversationTurnSnapshot.Role.USER
+                    : ConversationTurnSnapshot.Role.PERSON;
+            turns.add(turn(role, "消息" + number, number));
+        }
+        return List.copyOf(turns);
     }
 
     private static ConversationTurnSnapshot turn(
