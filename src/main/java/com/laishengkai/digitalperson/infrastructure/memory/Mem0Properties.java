@@ -125,6 +125,9 @@ public record Mem0Properties(
         if (normalized.isEmpty()) {
             return DEFAULT_EXTRACTION_INSTRUCTIONS;
         }
+        if (normalized.startsWith(MANDATORY_EXTRACTION_GUARDRAILS)) {
+            return normalized;
+        }
         return MANDATORY_EXTRACTION_GUARDRAILS
                 + "\n\n附加提取要求：\n"
                 + normalized;
