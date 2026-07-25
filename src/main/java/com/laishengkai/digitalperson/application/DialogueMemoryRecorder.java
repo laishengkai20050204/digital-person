@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 
 /** Writes one completed dialogue exchange through the provider-neutral memory port. */
@@ -22,11 +23,23 @@ public final class DialogueMemoryRecorder {
     public static final int MAX_EXCHANGE_CHARACTERS = 48_000;
 
     private final PersonMemoryStore memoryStore;
+    private final DialogueMemoryRetentionPolicy retentionPolicy;
 
     public DialogueMemoryRecorder(PersonMemoryStore memoryStore) {
+        this(memoryStore, new DialogueMemoryRetentionPolicy());
+    }
+
+    DialogueMemoryRecorder(
+            PersonMemoryStore memoryStore,
+            DialogueMemoryRetentionPolicy retentionPolicy
+    ) {
         this.memoryStore = Objects.requireNonNull(
                 memoryStore,
                 "memoryStore cannot be null"
+        );
+        this.retentionPolicy = Objects.requireNonNull(
+                retentionPolicy,
+                "retentionPolicy cannot be null"
         );
     }
 
@@ -48,11 +61,19 @@ public final class DialogueMemoryRecorder {
                 occurredAt,
                 "occurredAt cannot be null"
         );
+        String normalizedUserMessage = requireBoundedMessage(
+                userMessage,
+                "userMessage"
+        );
+
+        if (!retentionPolicy.shouldRecord(normalizedUserMessage)) {
+            return CompletableFuture.completedFuture(List.of());
+        }
 
         List<MemoryMessage> messages = new ArrayList<>();
         messages.add(new MemoryMessage(
                 MemoryMessageRole.USER,
-                requireBoundedMessage(userMessage, "userMessage")
+                normalizedUserMessage
         ));
         for (String reply : dialogueResult.replies()) {
             String normalized = Objects.requireNonNull(
