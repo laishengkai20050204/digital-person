@@ -3,7 +3,7 @@ package com.laishengkai.digitalperson.conversation;
 import java.time.Instant;
 import java.util.Objects;
 
-/** One immutable recent raw conversation turn. */
+/** One immutable recent raw conversation turn or synthetic rolling-summary context item. */
 public record ConversationTurnSnapshot(
         Role role,
         String text,
@@ -21,6 +21,8 @@ public record ConversationTurnSnapshot(
     public enum Role {
         USER,
         PERSON,
-        SYSTEM
+        SYSTEM,
+        /** Synthetic context item loaded from person_conversation_summary, never stored as a raw turn. */
+        SUMMARY
     }
 }
