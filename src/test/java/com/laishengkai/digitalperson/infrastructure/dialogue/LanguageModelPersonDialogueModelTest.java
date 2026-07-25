@@ -2,6 +2,7 @@ package com.laishengkai.digitalperson.infrastructure.dialogue;
 
 import com.laishengkai.digitalperson.application.DefaultPersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.PersonModelContextAssemblyRequest;
+import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.dialogue.DialogueResult;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
 import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
@@ -9,12 +10,14 @@ import com.laishengkai.digitalperson.dialogue.ModelToolChoice;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueException;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
+import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.personality.Personality;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -28,22 +31,29 @@ class LanguageModelPersonDialogueModelTest {
     @Test
     void sendsAssembledContextAndReturnsDirectTextReply() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
-        var context = DefaultPersonModelContextAssembler.withoutExternalSources()
-                .assemble(
-                        person,
-                        person.getStateSnapshot(),
-                        person.getStateEvolutionContext(),
-                        new PersonModelContextAssemblyRequest(
-                                Set.of(),
-                                "用户喜欢什么电影",
-                                true,
-                                8,
-                                12
-                        ),
-                        Instant.parse("2026-07-25T01:00:00Z")
-                )
-                .toCompletableFuture()
-                .join();
+        Instant previousTurnAt = Instant.parse("2026-07-25T00:55:00Z");
+        var context = new DefaultPersonModelContextAssembler(
+                query -> CompletableFuture.completedFuture(PersonMemoryContext.disabled()),
+                query -> CompletableFuture.completedFuture(List.of(
+                        new ConversationTurnSnapshot(
+                                ConversationTurnSnapshot.Role.USER,
+                                "我五分钟前说过这句话。",
+                                previousTurnAt
+                        )
+                ))
+        ).assemble(
+                person,
+                person.getStateSnapshot(),
+                person.getStateEvolutionContext(),
+                new PersonModelContextAssemblyRequest(
+                        Set.of(),
+                        "用户喜欢什么电影",
+                        true,
+                        8,
+                        12
+                ),
+                Instant.parse("2026-07-25T01:00:00Z")
+        ).toCompletableFuture().join();
         AtomicReference<LanguageModelRequest> captured = new AtomicReference<>();
         LanguageModelPersonDialogueModel model = new LanguageModelPersonDialogueModel(
                 request -> {
@@ -65,9 +75,14 @@ class LanguageModelPersonDialogueModelTest {
         assertThat(captured.get().messages()).hasSize(2);
         assertThat(captured.get().messages().getFirst())
                 .isInstanceOf(SystemModelMessage.class);
-        assertThat(((SystemModelMessage) captured.get().messages().getFirst()).text())
+        String systemMessage = ((SystemModelMessage) captured.get().messages().getFirst()).text();
+        assertThat(systemMessage)
                 .contains("context_json")
-                .contains(person.getId().toString());
+                .contains(person.getId().toString())
+                .contains("recentConversation 每条消息的 occurredAt 是 UTC 时间")
+                .contains("\"recentConversation\"")
+                .contains("\"occurredAt\":\"2026-07-25T00:55:00Z\"")
+                .contains("\"now\":\"2026-07-25T01:00:00Z\"");
         assertThat(captured.get().messages().get(1))
                 .isEqualTo(new UserModelMessage("你还记得我喜欢什么电影吗？"));
         assertThat(captured.get().options().toolChoice()).isEqualTo(ModelToolChoice.NONE);
