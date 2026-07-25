@@ -12,7 +12,7 @@ class PersonDialoguePropertiesBindingTest {
             .withUserConfiguration(TestConfiguration.class);
 
     @Test
-    void bindsCanonicalRecordConstructorWhenCompatibilityConstructorAlsoExists() {
+    void bindsCanonicalRecordConstructorWhenCompatibilityConstructorsAlsoExist() {
         contextRunner.withPropertyValues(
                 "digital-person.dialogue.max-memory-items=6",
                 "digital-person.dialogue.max-conversation-turns=14",
@@ -21,7 +21,10 @@ class PersonDialoguePropertiesBindingTest {
                 "digital-person.dialogue.conversation-summary-enabled=true",
                 "digital-person.dialogue.conversation-summary-batch-turns=10",
                 "digital-person.dialogue.conversation-summary-max-output-tokens=700",
-                "digital-person.dialogue.conversation-summary-temperature=0.15"
+                "digital-person.dialogue.conversation-summary-temperature=0.15",
+                "digital-person.dialogue.conversation-episode-enabled=true",
+                "digital-person.dialogue.conversation-episode-max-output-tokens=650",
+                "digital-person.dialogue.conversation-episode-temperature=0.08"
         ).run(context -> {
             assertThat(context).hasNotFailed();
             PersonDialogueProperties properties = context.getBean(
@@ -35,6 +38,9 @@ class PersonDialoguePropertiesBindingTest {
             assertThat(properties.conversationSummaryBatchTurns()).isEqualTo(10);
             assertThat(properties.conversationSummaryMaxOutputTokens()).isEqualTo(700);
             assertThat(properties.conversationSummaryTemperature()).isEqualTo(0.15);
+            assertThat(properties.conversationEpisodeEnabled()).isTrue();
+            assertThat(properties.conversationEpisodeMaxOutputTokens()).isEqualTo(650);
+            assertThat(properties.conversationEpisodeTemperature()).isEqualTo(0.08);
         });
     }
 
