@@ -1,7 +1,6 @@
 package com.laishengkai.digitalperson.infrastructure.dialogue;
 
 import com.laishengkai.digitalperson.application.PersonDialogueService;
-import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.infrastructure.spring.PersonApplicationConfiguration;
 import com.laishengkai.digitalperson.person.Person;
@@ -61,14 +60,6 @@ class PersonDialogueSpringWiringTest {
                     return false;
                 }
             };
-        }
-
-        @Bean
-        PersonModelContextAssembler personModelContextAssembler() {
-            return (person, state, evolution, request, time) ->
-                    CompletableFuture.failedFuture(
-                            new UnsupportedOperationException("not invoked by wiring test")
-                    );
         }
 
         @Bean
