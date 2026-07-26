@@ -196,7 +196,7 @@ class PersonAggregateJsonMapperTest {
                 Set.of(listening.getId())
         );
 
-        return new Person(
+        return Person.reconstitute(
                 PersonId.random(),
                 identity,
                 personality,

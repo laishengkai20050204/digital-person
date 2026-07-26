@@ -48,13 +48,9 @@
 
 以下类型目前可能尚未进入完整生产链路，但与下一阶段微信对话、主动消息和回复决策直接对应，因此保留：
 
-- `DecisionMaker`
 - `DialogueContext`
 - `DialogueDecision`
 - `ReplyIntent`
-- `ConversationMessageAssembler`
-
-其中 `ConversationMessageAssembler` 已明确承担历史消息角色保持：用户消息继续作为 `user`，人物消息继续作为 `assistant`，系统消息继续作为 `system`。这比把完整历史拼成单个字符串更适合后续长期对话。
 
 这些类型后续可以根据真实微信入口调整字段，但不能仅因当前调用量少而删除。
 

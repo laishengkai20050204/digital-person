@@ -67,15 +67,7 @@ state and context -> choose activity -> create event -> evaluate event effects
 
 ## Dialogue generation
 
-Dialogue generation must preserve actual roles. `ConversationMessageAssembler` builds:
-
-```text
-SystemModelMessage(person definition and dialogue policy)
-UserModelMessage / AssistantModelMessage / SystemModelMessage for prior turns
-UserModelMessage(current user message)
-```
-
-The caller must exclude the current user message from the supplied history to avoid duplication. The model gateway never loads or persists conversation history by itself.
+Dialogue generation must preserve actual roles through the active dialogue request assembler.
 
 ## Relationship data
 

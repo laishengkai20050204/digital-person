@@ -11,6 +11,7 @@ import tools.jackson.databind.node.ObjectNode;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -22,14 +23,18 @@ final class Mem0HttpClient {
     private final Mem0Properties properties;
     private final JsonMapper jsonMapper;
     private final HttpClient httpClient;
+    private final HttpResponse.BodyHandler<byte[]> responseBodyHandler;
 
     Mem0HttpClient(Mem0Properties properties, JsonMapper jsonMapper) {
         this.properties = Objects.requireNonNull(properties, "properties cannot be null");
         this.jsonMapper = Objects.requireNonNull(jsonMapper, "jsonMapper cannot be null");
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(properties.connectTimeout())
-                .followRedirects(HttpClient.Redirect.NORMAL)
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
+        this.responseBodyHandler = new LimitedByteArrayBodyHandler(
+                properties.maxResponseBytes()
+        );
     }
 
     CompletionStage<Boolean> probe() {
@@ -38,7 +43,7 @@ final class Mem0HttpClient {
                 .build();
         return httpClient.sendAsync(request, HttpResponse.BodyHandlers.discarding())
                 .thenApply(response -> response.statusCode() >= 200
-                        && response.statusCode() < 400)
+                        && response.statusCode() < 300)
                 .exceptionally(ignored -> false);
     }
 
@@ -83,9 +88,10 @@ final class Mem0HttpClient {
         HttpRequest request = requestBuilder("/memories/" + normalized)
                 .DELETE()
                 .build();
-        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+        return httpClient.sendAsync(request, responseBodyHandler)
                 .thenApply(response -> {
                     requireSuccess(response.statusCode());
+                    requireJsonContentTypeWhenPresent(response);
                     return null;
                 });
     }
@@ -112,11 +118,8 @@ final class Mem0HttpClient {
                 )
                 .header("Content-Type", "application/json")
                 .build();
-        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-                .thenApply(response -> parseResponse(
-                        response.statusCode(),
-                        response.body()
-                ));
+        return httpClient.sendAsync(request, responseBodyHandler)
+                .thenApply(this::parseResponse);
     }
 
     private HttpRequest.Builder requestBuilder(String path) {
@@ -129,17 +132,43 @@ final class Mem0HttpClient {
         return builder;
     }
 
-    private JsonNode parseResponse(int status, String body) {
-        requireSuccess(status);
-        if (body == null || body.isBlank()) {
+    private JsonNode parseResponse(HttpResponse<byte[]> response) {
+        requireSuccess(response.statusCode());
+        byte[] body = response.body();
+        if (body == null || body.length == 0) {
             return jsonMapper.getNodeFactory().nullNode();
         }
+        requireJsonContentType(response);
         try {
-            return jsonMapper.readTree(body);
+            return jsonMapper.readTree(new String(body, StandardCharsets.UTF_8));
         } catch (JacksonException exception) {
             throw new CompletionException(new Mem0ClientException(
                     "Mem0 returned invalid JSON",
                     exception
+            ));
+        }
+    }
+
+    private static void requireJsonContentTypeWhenPresent(
+            HttpResponse<byte[]> response
+    ) {
+        byte[] body = response.body();
+        if (body != null && body.length > 0) {
+            requireJsonContentType(response);
+        }
+    }
+
+    private static void requireJsonContentType(HttpResponse<?> response) {
+        String contentType = response.headers()
+                .firstValue("Content-Type")
+                .orElse("")
+                .toLowerCase(Locale.ROOT);
+        int separator = contentType.indexOf(';');
+        String mediaType = (separator < 0 ? contentType : contentType.substring(0, separator))
+                .strip();
+        if (!mediaType.equals("application/json") && !mediaType.endsWith("+json")) {
+            throw new CompletionException(new Mem0ClientException(
+                    "Mem0 returned an unsupported Content-Type"
             ));
         }
     }

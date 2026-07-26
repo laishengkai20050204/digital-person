@@ -46,7 +46,7 @@ class StateUpdateConsistencyRegressionTest {
 
     @Test
     void completedEventEffectMustStopAtTheEventEndBoundary() {
-        Person person = new Person(PERSONALITY, stateWithValence(0.7));
+        Person person = Person.create(PERSONALITY, stateWithValence(0.7));
         PersonEvent eating = event(ActivityType.EAT, "吃饭", START);
 
         InMemoryRepository repository = new InMemoryRepository(person);
@@ -82,7 +82,7 @@ class StateUpdateConsistencyRegressionTest {
 
     @Test
     void staleEvaluationMustNotOverwriteAReplacementEventCommittedLater() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         PersonEvent eating = event(ActivityType.EAT, "吃饭", START);
 
         CompletableFuture<EventStateImpact> eatingEvaluation =

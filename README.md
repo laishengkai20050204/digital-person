@@ -75,13 +75,13 @@ src/main/java/com/laishengkai/digitalperson/
 本项目使用 Java 21 和 Spring Boot 4.1，默认监听 `8080` 端口。
 
 ```bash
-mvn spring-boot:run
+./mvnw spring-boot:run
 ```
 
 打包并运行可执行 JAR：
 
 ```bash
-mvn clean verify
+./mvnw clean verify
 java -jar target/digital-person-0.3.0-SNAPSHOT.jar
 ```
 
@@ -320,10 +320,10 @@ export EVENT_LOG_LEVEL=DEBUG
 ## 构建
 
 ```bash
-mvn verify
+./mvnw verify
 ```
 
-GitHub Actions 使用 Java 21 执行编译、Spring 上下文启动测试、单元测试、MySQL 8.4 Testcontainers 集成测试和 JaCoCo 报告生成。测试不会向真实模型供应商发送网络请求。
+GitHub Actions 使用固定版本的 Maven Wrapper 和 Java 21 执行编译、Spring 上下文启动测试、单元测试、MySQL 8.4 Testcontainers 集成测试、ArchUnit 架构约束和 JaCoCo 覆盖率门禁。测试不会向真实模型供应商发送网络请求。
 
 ## 下一步
 

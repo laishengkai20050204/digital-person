@@ -159,7 +159,7 @@ class ResidualStateEffectPersistenceTest {
     }
 
     private static Person personWithCommunicationAndMusic() {
-        Person person = new Person(new Personality(0.5, 0.7, 0.4, 0.8, 0.6, 0.9));
+        Person person = Person.create(new Personality(0.5, 0.7, 0.4, 0.8, 0.6, 0.9));
         Instant communicationEnd = START.plus(Duration.ofMinutes(10));
         PersonEvent communication = new PersonEvent(
                 EventId.random(),

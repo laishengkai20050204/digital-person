@@ -41,7 +41,7 @@ class DefaultStateEvaluationContextAssemblerTest {
 
     @Test
     void assemblesPersonalityEventsMemoryConversationAndRuntimeTime() {
-        Person person = new Person(
+        Person person = Person.create(
                 new PersonIdentity(
                         "沈知夏",
                         LocalDate.parse("2006-04-18"),
