@@ -1,0 +1,227 @@
+diff --git a/docs/DIALOGUE_MEMORY_RETENTION.md b/docs/DIALOGUE_MEMORY_RETENTION.md
+index a8df551..653f23f 100644
+--- a/docs/DIALOGUE_MEMORY_RETENTION.md
++++ b/docs/DIALOGUE_MEMORY_RETENTION.md
+@@ -9,19 +9,21 @@
+   ↓
+ 原始 USER / PERSON 消息写入 MySQL
+   ↓
++返回用户响应并将记忆任务交给专用后处理执行器
++  ↓
+ DialogueMemoryRetentionPolicy 检查当前用户消息
+   ├─ 可进入长期记忆：交给 Mem0 infer=true
+-  └─ 明确不应长期保存：跳过 Mem0，返回 0 个 mutation
++  └─ 明确不应长期保存：跳过 Mem0，记录 0 个 mutation
+ ```
+ 
+ 被过滤时，对外结果仍为：
+ 
+ ```text
+-memoryStatus = PROCESSED
++memoryStatus = SCHEDULED
+ memoryMutationCount = 0
+ ```
+ 
+-这表示记忆链路已经正常完成判断，不代表 Mem0 故障。
++响应只表示任务已经调度，不等待过滤判断或 Mem0 完成。被过滤后的 0 个 mutation 会记录在服务日志中，不会回写已经返回的 HTTP 响应。
+ 
+ ## Java 侧硬过滤
+ 
+diff --git a/docs/RECENT_CONVERSATION_PERSISTENCE.md b/docs/RECENT_CONVERSATION_PERSISTENCE.md
+index 0e655f9..4421547 100644
+--- a/docs/RECENT_CONVERSATION_PERSISTENCE.md
++++ b/docs/RECENT_CONVERSATION_PERSISTENCE.md
+@@ -257,7 +257,7 @@ CONVERSATION_SUMMARY_ENABLED=false
+ {
+   "conversationStatus": "STORED",
+   "persistedConversationTurnCount": 2,
+-  "memoryStatus": "PROCESSED",
++  "memoryStatus": "SCHEDULED",
+   "memoryMutationCount": 0
+ }
+ ```
+@@ -272,7 +272,7 @@ CONVERSATION_SUMMARY_ENABLED=false
+ | `DISABLED` | 没有启用 MySQL 对话存储 |
+ | `FAILED` | 回复已生成，但本轮原始对话写入失败 |
+ 
+-`memoryStatus` 仍只表示 Mem0 的对话后长期记忆处理结果，与 MySQL 原始对话和滚动摘要状态无关。
++`memoryStatus` 只描述 Mem0 后处理是否成功调度，与 MySQL 原始对话和滚动摘要状态无关。`SCHEDULED` 不表示 Mem0 已经完成；异步完成数量和故障通过服务日志观察。
+ 
+ ## 9. 部署后验证
+ 
+diff --git a/docs/dialogue-api.md b/docs/dialogue-api.md
+index 0f32bc1..575b8d1 100644
+--- a/docs/dialogue-api.md
++++ b/docs/dialogue-api.md
+@@ -32,8 +32,10 @@ Content-Type: application/json
+     "当然记得，你最喜欢科幻片。"
+   ],
+   "occurredAt": "2026-07-25T01:00:00Z",
+-  "memoryStatus": "PROCESSED",
+-  "memoryMutationCount": 1
++  "conversationStatus": "STORED",
++  "persistedConversationTurnCount": 2,
++  "memoryStatus": "SCHEDULED",
++  "memoryMutationCount": 0
+ }
+ ```
+ 
+@@ -105,11 +107,13 @@ LanguageModelGateway
+     ↓
+ 生成一条直接人物回复
+     ↓
+-DialogueMemoryRecorder
++原始 USER / PERSON 消息写入 MySQL
+     ↓
+-Mem0 infer=true 提取、更新或删除长期记忆
++返回 HTTP 响应（Mem0 后处理已调度）
+     ↓
+-返回 HTTP 响应
++专用虚拟线程异步执行
++    ├── DialogueMemoryRecorder → Mem0 infer=true
++    └── 滚动摘要与情节提取
+ ```
+ 
+ 当前不会先调用额外模型生成 Mem0 查询参数。原始用户消息和事件上下文由 Java 组成相关性查询，再调用 Mem0 向量检索。
+@@ -119,16 +123,18 @@ Mem0 infer=true 提取、更新或删除长期记忆
+ 响应中的 `memoryStatus`：
+ 
+ ```text
+-PROCESSED
++SCHEDULED
+ DISABLED
+ FAILED
++PROCESSED
+ ```
+ 
+-- `PROCESSED`：Mem0 已完成本轮处理；`memoryMutationCount` 可以是 `0`，表示模型认为没有需要新增、更新或删除的长期记忆。
++- `SCHEDULED`：长期记忆任务已交给专用后处理执行器；HTTP 响应不会等待 Mem0 完成，因此 `memoryMutationCount` 固定为 `0`。最终 mutation 数量或失败原因只写入服务日志。
+ - `DISABLED`：当前未启用 Mem0 写入。
+-- `FAILED`：回复已经生成，但 Mem0 写入失败；服务采用 fail-open，仍返回人物回复。
++- `FAILED`：长期记忆任务未能进入后处理执行器，例如执行器已经关闭；人物回复仍按 fail-open 返回。
++- `PROCESSED`：保留给同步或旧版适配器的兼容状态，正式 HTTP 对话链路通常不再返回该值。
+ 
+-Mem0 错误不会把用户对话正文或供应商响应正文暴露给客户端。
++Mem0 在任务开始后的异步失败不会反向改变已经返回的响应，也不会把用户对话正文或供应商响应正文暴露给客户端。
+ 
+ ## 6. 测试命令
+ 
+diff --git a/src/main/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutor.java b/src/main/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutor.java
+index 6fe62b7..471fd84 100644
+--- a/src/main/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutor.java
++++ b/src/main/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutor.java
+@@ -548,7 +548,10 @@ public final class DefaultAgentExecutor implements AgentExecutor {
+                 && agentError.getMessage().startsWith("tool execution timed out:")) {
+             return agentError;
+         }
+-        return new AgentExecutionException("tool execution failed: " + toolName);
++        return new AgentExecutionException(
++                "tool execution failed: " + toolName,
++                error
++        );
+     }
+ 
+     private static Throwable unwrap(Throwable error) {
+diff --git a/src/main/java/com/laishengkai/digitalperson/application/PersonCurrentStateProjector.java b/src/main/java/com/laishengkai/digitalperson/application/PersonCurrentStateProjector.java
+new file mode 100644
+index 0000000..20abdc4
+--- /dev/null
++++ b/src/main/java/com/laishengkai/digitalperson/application/PersonCurrentStateProjector.java
+@@ -0,0 +1,81 @@
++package com.laishengkai.digitalperson.application;
++
++import com.laishengkai.digitalperson.experience.EventId;
++import com.laishengkai.digitalperson.experience.PersonEvent;
++import com.laishengkai.digitalperson.person.Person;
++import com.laishengkai.digitalperson.state.PersonState;
++import com.laishengkai.digitalperson.state.PersonStateSnapshot;
++import com.laishengkai.digitalperson.state.StateEvolutionContext;
++import com.laishengkai.digitalperson.state.StateUpdatePreparation;
++import com.laishengkai.digitalperson.state.StateUpdater;
++import org.slf4j.Logger;
++import org.slf4j.LoggerFactory;
++
++import java.time.Instant;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.Objects;
++
++/** Builds a read-only, current-time state projection without mutating persistence. */
++public final class PersonCurrentStateProjector {
++    private static final Logger LOGGER = LoggerFactory.getLogger(
++            PersonCurrentStateProjector.class
++    );
++
++    private final StateUpdater stateUpdater;
++
++    public PersonCurrentStateProjector(StateUpdater stateUpdater) {
++        this.stateUpdater = Objects.requireNonNull(
++                stateUpdater,
++                "stateUpdater cannot be null"
++        );
++    }
++
++    public Projection project(Person person, Instant projectionTime) {
++        Person source = Objects.requireNonNull(person, "person cannot be null");
++        Instant now = Objects.requireNonNull(
++                projectionTime,
++                "projectionTime cannot be null"
++        );
++        PersonState workingState = source.getState();
++        StateUpdatePreparation preparation = stateUpdater.prepareWithNaturalEvolution(
++                source.getId(),
++                source.getIdentity().timeZone(),
++                workingState,
++                source.getCurrentPersonEvents(now),
++                source.getPersonTimeline().getAll(),
++                now,
++                source.getStateEvolutionContext(),
++                eventEndTimes(source)
++        );
++        if (!preparation.eventsToEvaluate().isEmpty()) {
++            LOGGER.debug(
++                    "Current-state projection omitted unevaluated event effects: personId={}, pendingChannels={}",
++                    source.getId(),
++                    preparation.pendingEvents().keySet()
++            );
++        }
++        return new Projection(workingState.snapshot(), preparation.settledContext());
++    }
++
++    private static Map<EventId, Instant> eventEndTimes(Person person) {
++        Map<EventId, Instant> endTimes = new HashMap<>();
++        for (PersonEvent event : person.getPersonTimeline().getAll()) {
++            event.getEndTime().ifPresent(endTime -> endTimes.put(event.getId(), endTime));
++        }
++        return Map.copyOf(endTimes);
++    }
++
++    public record Projection(
++            PersonStateSnapshot state,
++            StateEvolutionContext evolutionContext
++    ) {
++        public Projection {
++            state = Objects.requireNonNull(state, "state cannot be null");
++            evolutionContext = Objects.requireNonNull(
++                    evolutionContext,
++                    "evolutionContext cannot be null"
++            );
++        }
++    }
++}
+
+diff --git a/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueExchange.java b/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueExchange.java
+index 62b453b..6ec3fd6 100644
+--- a/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueExchange.java
++++ b/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueExchange.java
+@@ -59,7 +59,10 @@ public record PersonDialogueExchange(
+     }
+ 
+     public enum MemoryStatus {
++        /** Recording completed before the exchange was returned (legacy/synchronous adapters). */
+         PROCESSED,
++        /** Recording was accepted and continues outside the user-response critical path. */
++        SCHEDULED,
+         DISABLED,
+         FAILED
+     }
