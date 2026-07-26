@@ -15,11 +15,15 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DeferredImportSelector;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.type.AnnotationMetadata;
 
 import java.time.Clock;
 
 /** Spring wiring for autonomous event lifecycle decisions. */
 @Configuration(proxyBeanMethods = false)
+@Import(PersonActivityDecisionConfiguration.PersonActivityDecisionServiceImportSelector.class)
 public class PersonActivityDecisionConfiguration {
 
     @Bean
@@ -43,33 +47,47 @@ public class PersonActivityDecisionConfiguration {
         return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
     }
 
-    /** Creates the autonomous activity boundary whenever all required ports exist. */
-    @Bean
+    /** Defers service conditions until the model and external ports are registered. */
+    public static final class PersonActivityDecisionServiceImportSelector
+            implements DeferredImportSelector {
+        @Override
+        public String[] selectImports(AnnotationMetadata importingClassMetadata) {
+            return new String[]{PersonActivityDecisionServiceConfiguration.class.getName()};
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
     @ConditionalOnBean({
-            PersonActivityDecisionModel.class,
             PersonRepository.class,
-            PersonModelContextAssembler.class,
+            StateUpdater.class,
+            PersonActivityDecisionModel.class,
+            PersonActivityDecisionContextAssembler.class,
             EventStateImpactEvaluator.class,
-            StateEvaluationContextAssembler.class
+            StateEvaluationContextAssembler.class,
+            Clock.class
     })
-    @ConditionalOnMissingBean(PersonActivityDecisionService.class)
-    PersonActivityDecisionService personActivityDecisionService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            PersonActivityDecisionModel activityDecisionModel,
-            PersonActivityDecisionContextAssembler activityContextAssembler,
-            EventStateImpactEvaluator effectEvaluator,
-            StateEvaluationContextAssembler effectContextAssembler,
-            Clock clock
-    ) {
-        return new PersonActivityDecisionService(
-                personRepository,
-                stateUpdater,
-                activityDecisionModel,
-                activityContextAssembler,
-                effectEvaluator,
-                effectContextAssembler,
-                clock
-        );
+    static class PersonActivityDecisionServiceConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean(PersonActivityDecisionService.class)
+        PersonActivityDecisionService personActivityDecisionService(
+                PersonRepository personRepository,
+                StateUpdater stateUpdater,
+                PersonActivityDecisionModel decisionModel,
+                PersonActivityDecisionContextAssembler contextAssembler,
+                EventStateImpactEvaluator stateImpactEvaluator,
+                StateEvaluationContextAssembler evaluationContextAssembler,
+                Clock clock
+        ) {
+            return new PersonActivityDecisionService(
+                    personRepository,
+                    stateUpdater,
+                    decisionModel,
+                    contextAssembler,
+                    stateImpactEvaluator,
+                    evaluationContextAssembler,
+                    clock
+            );
+        }
     }
 }
