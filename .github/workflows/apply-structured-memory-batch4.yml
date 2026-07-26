@@ -32,7 +32,12 @@ jobs:
         run: |
           set -euo pipefail
           cat .github/batch4.part00 \
-              .github/batch4.part01 \
+              .github/batch4.part01.s00 \
+              .github/batch4.part01.s01 \
+              .github/batch4.part01.s02 \
+              .github/batch4.part01.s03 \
+              .github/batch4.part01.s04 \
+              .github/batch4.part01.s05 \
               .github/batch4.part02 \
               .github/batch4.part03 \
               > /tmp/batch4.patch.gz.b64
@@ -44,6 +49,12 @@ jobs:
           git apply --index /tmp/batch4.patch
           rm -f .github/batch4.part00 \
                 .github/batch4.part01 \
+                .github/batch4.part01.s00 \
+                .github/batch4.part01.s01 \
+                .github/batch4.part01.s02 \
+                .github/batch4.part01.s03 \
+                .github/batch4.part01.s04 \
+                .github/batch4.part01.s05 \
                 .github/batch4.part02 \
                 .github/batch4.part03 \
                 .github/workflows/apply-structured-memory-batch4.yml
