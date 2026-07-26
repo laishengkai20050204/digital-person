@@ -12,18 +12,15 @@ import com.laishengkai.digitalperson.dialogue.ConversationEpisodeModel;
 import com.laishengkai.digitalperson.dialogue.ConversationSummaryModel;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
+import com.laishengkai.digitalperson.infrastructure.spring.LateConditionalBeanRegistrar;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.DeferredImportSelector;
-import org.springframework.context.annotation.Import;
-import org.springframework.core.type.AnnotationMetadata;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
@@ -39,7 +36,6 @@ import java.util.concurrent.Executors;
         havingValue = "true"
 )
 @EnableConfigurationProperties(PersonDialogueProperties.class)
-@Import(PersonDialogueConfiguration.DialogueServiceImportSelector.class)
 public class PersonDialogueConfiguration {
 
     public static final String POST_PROCESSING_EXECUTOR =
@@ -107,58 +103,59 @@ public class PersonDialogueConfiguration {
         );
     }
 
-    /** Defers repository checks until all regular user configurations are parsed. */
-    public static final class DialogueServiceImportSelector
-            implements DeferredImportSelector {
-        @Override
-        public String[] selectImports(AnnotationMetadata importingClassMetadata) {
-            return new String[]{DialogueServiceConfiguration.class.getName()};
-        }
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    @ConditionalOnBean(PersonRepository.class)
-    static class DialogueServiceConfiguration {
-
-        @Bean
-        @ConditionalOnMissingBean(PersonDialogueService.class)
-        PersonDialogueService personDialogueService(
-                PersonRepository personRepository,
-                PersonModelContextAssembler contextAssembler,
-                PersonDialogueModel dialogueModel,
-                ObjectProvider<RecentConversationStore> conversationStoreProvider,
-                ObjectProvider<ConversationSummaryStore> summaryStoreProvider,
-                ObjectProvider<ConversationSummaryModel> summaryModelProvider,
-                ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
-                ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
-                ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
-                PersonCurrentStateProjector stateProjector,
-                @Qualifier(POST_PROCESSING_EXECUTOR) Executor postProcessingExecutor,
-                Clock clock,
-                PersonDialogueProperties properties
-        ) {
-            ConversationSummaryService summaryService = summaryService(
-                    summaryStoreProvider,
-                    summaryModelProvider,
-                    episodeStoreProvider,
-                    episodeModelProvider,
-                    properties
+    /** Registers the service after repository and optional provider definitions are known. */
+    @Bean
+    static BeanDefinitionRegistryPostProcessor personDialogueServiceRegistrar() {
+        return new LateConditionalBeanRegistrar(beanFactory -> {
+            if (!LateConditionalBeanRegistrar.hasBean(
+                    beanFactory,
+                    POST_PROCESSING_EXECUTOR
+            )) {
+                return;
+            }
+            LateConditionalBeanRegistrar.registerIfPossible(
+                    beanFactory,
+                    "personDialogueService",
+                    PersonDialogueService.class,
+                    () -> {
+                        PersonDialogueProperties properties = beanFactory.getBean(
+                                PersonDialogueProperties.class
+                        );
+                        ConversationSummaryService summaryService = summaryService(
+                                beanFactory.getBeanProvider(ConversationSummaryStore.class),
+                                beanFactory.getBeanProvider(ConversationSummaryModel.class),
+                                beanFactory.getBeanProvider(ConversationEpisodeStore.class),
+                                beanFactory.getBeanProvider(ConversationEpisodeModel.class),
+                                properties
+                        );
+                        return new PersonDialogueService(
+                                beanFactory.getBean(PersonRepository.class),
+                                beanFactory.getBean(PersonModelContextAssembler.class),
+                                beanFactory.getBean(PersonDialogueModel.class),
+                                beanFactory.getBeanProvider(RecentConversationStore.class)
+                                        .getIfAvailable(),
+                                summaryService,
+                                beanFactory.getBeanProvider(DialogueMemoryRecorder.class)
+                                        .getIfAvailable(),
+                                beanFactory.getBean(PersonCurrentStateProjector.class),
+                                beanFactory.getBean(
+                                        POST_PROCESSING_EXECUTOR,
+                                        Executor.class
+                                ),
+                                beanFactory.getBean(Clock.class),
+                                properties.maxMemoryItems(),
+                                properties.maxConversationTurns(),
+                                properties.conversationSummaryBatchTurns()
+                        );
+                    },
+                    PersonRepository.class,
+                    PersonModelContextAssembler.class,
+                    PersonDialogueModel.class,
+                    PersonCurrentStateProjector.class,
+                    Clock.class,
+                    PersonDialogueProperties.class
             );
-            return new PersonDialogueService(
-                    personRepository,
-                    contextAssembler,
-                    dialogueModel,
-                    conversationStoreProvider.getIfAvailable(),
-                    summaryService,
-                    memoryRecorderProvider.getIfAvailable(),
-                    stateProjector,
-                    postProcessingExecutor,
-                    clock,
-                    properties.maxMemoryItems(),
-                    properties.maxConversationTurns(),
-                    properties.conversationSummaryBatchTurns()
-            );
-        }
+        });
     }
 
     private static ConversationSummaryService summaryService(
