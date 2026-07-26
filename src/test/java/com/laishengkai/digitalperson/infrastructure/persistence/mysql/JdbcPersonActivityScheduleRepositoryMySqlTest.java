@@ -176,6 +176,39 @@ class JdbcPersonActivityScheduleRepositoryMySqlTest {
         ));
     }
 
+
+    @Test
+    void anExpiredLeaseCannotCommitEvenBeforeAnotherWorkerReclaimsIt() {
+        Person person = person();
+        assertTrue(personRepository.insert(person));
+        scheduleRepository.initializeMissing(NOW);
+
+        PersonActivityScheduleLease lease = scheduleRepository.claimDue(
+                NOW,
+                1,
+                Duration.ofMinutes(10)
+        ).getFirst();
+        Instant afterExpiry = lease.leaseUntil().plusSeconds(1);
+
+        assertFalse(scheduleRepository.completeSuccess(
+                lease,
+                afterExpiry.plus(Duration.ofMinutes(5)),
+                afterExpiry
+        ));
+        assertFalse(scheduleRepository.completeFailure(
+                lease,
+                afterExpiry.plus(Duration.ofMinutes(5)),
+                "Timeout",
+                afterExpiry
+        ));
+        assertFalse(scheduleRepository.rescheduleWithoutFailure(
+                lease,
+                afterExpiry.plus(Duration.ofMinutes(5)),
+                afterExpiry
+        ));
+        assertEquals(lease.leaseToken().toString(), leaseToken(lease));
+    }
+
     private static int failureCount(PersonActivityScheduleLease lease) {
         return jdbcTemplate.queryForObject(
                 "SELECT failure_count FROM person_activity_schedule WHERE person_id = ?",

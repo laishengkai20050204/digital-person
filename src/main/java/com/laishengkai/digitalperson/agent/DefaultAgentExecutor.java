@@ -548,7 +548,10 @@ public final class DefaultAgentExecutor implements AgentExecutor {
                 && agentError.getMessage().startsWith("tool execution timed out:")) {
             return agentError;
         }
-        return new AgentExecutionException("tool execution failed: " + toolName);
+        return new AgentExecutionException(
+                "tool execution failed: " + toolName,
+                error
+        );
     }
 
     private static Throwable unwrap(Throwable error) {

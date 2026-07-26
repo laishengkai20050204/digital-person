@@ -43,6 +43,17 @@ class PersonEventApiSpringWiringTest {
         });
     }
 
+    @Test
+    void keepsEventApplicationServiceWhenHttpApiIsDisabled() {
+        contextRunner
+                .withPropertyValues("digital-person.person-api.enabled=false")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PersonEventCommandService.class);
+                    assertThat(context).doesNotHaveBean(PersonEventController.class);
+                });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class RequiredInfrastructure {
 

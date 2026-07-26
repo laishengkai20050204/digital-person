@@ -51,6 +51,20 @@ class PersonActivityDecisionApiSpringWiringTest {
         });
     }
 
+    @Test
+    void keepsActivityApplicationServiceWhenHttpApiAndSchedulerAreDisabled() {
+        contextRunner
+                .withPropertyValues(
+                        "digital-person.person-api.enabled=false",
+                        "digital-person.activity-scheduler.enabled=false"
+                )
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(PersonActivityDecisionService.class);
+                    assertThat(context).doesNotHaveBean(PersonActivityDecisionController.class);
+                });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class RequiredInfrastructure {
 

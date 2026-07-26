@@ -257,7 +257,7 @@ CONVERSATION_SUMMARY_ENABLED=false
 {
   "conversationStatus": "STORED",
   "persistedConversationTurnCount": 2,
-  "memoryStatus": "PROCESSED",
+  "memoryStatus": "SCHEDULED",
   "memoryMutationCount": 0
 }
 ```
@@ -272,7 +272,7 @@ CONVERSATION_SUMMARY_ENABLED=false
 | `DISABLED` | 没有启用 MySQL 对话存储 |
 | `FAILED` | 回复已生成，但本轮原始对话写入失败 |
 
-`memoryStatus` 仍只表示 Mem0 的对话后长期记忆处理结果，与 MySQL 原始对话和滚动摘要状态无关。
+`memoryStatus` 只描述 Mem0 后处理是否成功调度，与 MySQL 原始对话和滚动摘要状态无关。`SCHEDULED` 不表示 Mem0 已经完成；异步完成数量和故障通过服务日志观察。
 
 ## 9. 部署后验证
 

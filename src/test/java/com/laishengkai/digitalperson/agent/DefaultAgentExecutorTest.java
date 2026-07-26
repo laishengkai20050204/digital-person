@@ -409,6 +409,11 @@ class DefaultAgentExecutorTest {
                 error
         );
         assertEquals("tool execution failed: lookup", agentError.getMessage());
+        IllegalStateException cause = assertInstanceOf(
+                IllegalStateException.class,
+                agentError.getCause()
+        );
+        assertEquals("secret provider detail", cause.getMessage());
     }
 
     private static LanguageModelResponse response(
