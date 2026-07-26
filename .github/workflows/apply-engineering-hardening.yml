@@ -26,18 +26,36 @@ jobs:
           ref: agent/engineering-hardening
           fetch-depth: 0
 
-      - name: Apply and verify engineering hardening
+      - name: Apply engineering hardening
         shell: bash
         run: |
           set -euo pipefail
           cat .github/batch2.patch.gz.b64.?? | base64 --decode | gzip --decompress > /tmp/batch2.patch
           git apply --index /tmp/batch2.patch
+          bash -n mvnw
+          bash -n ops/deploy-from-git.sh
+
+      - name: Verify engineering hardening
+        shell: bash
+        run: |
+          set -o pipefail
+          ./mvnw --batch-mode --no-transfer-progress verify 2>&1 | tee /tmp/engineering-hardening-verify.log
+
+      - name: Upload verification failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engineering-hardening-verify-log
+          path: /tmp/engineering-hardening-verify.log
+          if-no-files-found: warn
+
+      - name: Commit verified engineering hardening
+        shell: bash
+        run: |
+          set -euo pipefail
           rm -f .github/batch2.patch.gz.b64
           rm -f .github/batch2.patch.gz.b64.??
           rm -f .github/workflows/apply-engineering-hardening.yml
-          bash -n mvnw
-          bash -n ops/deploy-from-git.sh
-          ./mvnw --batch-mode --no-transfer-progress verify
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add -A
