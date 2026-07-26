@@ -26,6 +26,13 @@ jobs:
           ref: agent/engineering-hardening
           fetch-depth: 0
 
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Apply engineering hardening
         shell: bash
         run: |
