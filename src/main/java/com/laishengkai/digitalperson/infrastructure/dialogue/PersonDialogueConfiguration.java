@@ -21,6 +21,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DeferredImportSelector;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.type.AnnotationMetadata;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
@@ -36,6 +39,7 @@ import java.util.concurrent.Executors;
         havingValue = "true"
 )
 @EnableConfigurationProperties(PersonDialogueProperties.class)
+@Import(PersonDialogueConfiguration.DialogueServiceImportSelector.class)
 public class PersonDialogueConfiguration {
 
     public static final String POST_PROCESSING_EXECUTOR =
@@ -103,45 +107,68 @@ public class PersonDialogueConfiguration {
         );
     }
 
-    @Bean
-    @ConditionalOnBean(PersonRepository.class)
-    @ConditionalOnMissingBean(PersonDialogueService.class)
-    PersonDialogueService personDialogueService(
-            PersonRepository personRepository,
-            PersonModelContextAssembler contextAssembler,
-            PersonDialogueModel dialogueModel,
-            ObjectProvider<RecentConversationStore> conversationStoreProvider,
-            ObjectProvider<ConversationSummaryStore> summaryStoreProvider,
-            ObjectProvider<ConversationSummaryModel> summaryModelProvider,
-            ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
-            ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
-            ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
-            PersonCurrentStateProjector stateProjector,
-            @Qualifier(POST_PROCESSING_EXECUTOR) Executor postProcessingExecutor,
-            Clock clock,
-            PersonDialogueProperties properties
-    ) {
-        ConversationSummaryService summaryService = summaryService(
-                summaryStoreProvider,
-                summaryModelProvider,
-                episodeStoreProvider,
-                episodeModelProvider,
-                properties
-        );
-        return new PersonDialogueService(
-                personRepository,
-                contextAssembler,
-                dialogueModel,
-                conversationStoreProvider.getIfAvailable(),
-                summaryService,
-                memoryRecorderProvider.getIfAvailable(),
-                stateProjector,
-                postProcessingExecutor,
-                clock,
-                properties.maxMemoryItems(),
-                properties.maxConversationTurns(),
-                properties.conversationSummaryBatchTurns()
-        );
+    /** Defers repository checks until all regular user configurations are parsed. */
+    public static final class DialogueServiceImportSelector
+            implements DeferredImportSelector {
+        @Override
+        public String[] selectImports(AnnotationMetadata importingClassMetadata) {
+            return new String[]{DialogueServiceConfiguration.class.getName()};
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnBean(
+            value = {
+                    PersonRepository.class,
+                    PersonModelContextAssembler.class,
+                    PersonDialogueModel.class,
+                    PersonCurrentStateProjector.class,
+                    PersonDialogueProperties.class,
+                    Clock.class
+            },
+            name = POST_PROCESSING_EXECUTOR
+    )
+    static class DialogueServiceConfiguration {
+
+        @Bean
+        @ConditionalOnMissingBean(PersonDialogueService.class)
+        PersonDialogueService personDialogueService(
+                PersonRepository personRepository,
+                PersonModelContextAssembler contextAssembler,
+                PersonDialogueModel dialogueModel,
+                ObjectProvider<RecentConversationStore> conversationStoreProvider,
+                ObjectProvider<ConversationSummaryStore> summaryStoreProvider,
+                ObjectProvider<ConversationSummaryModel> summaryModelProvider,
+                ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
+                ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
+                ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
+                PersonCurrentStateProjector stateProjector,
+                @Qualifier(POST_PROCESSING_EXECUTOR) Executor postProcessingExecutor,
+                Clock clock,
+                PersonDialogueProperties properties
+        ) {
+            ConversationSummaryService summaryService = summaryService(
+                    summaryStoreProvider,
+                    summaryModelProvider,
+                    episodeStoreProvider,
+                    episodeModelProvider,
+                    properties
+            );
+            return new PersonDialogueService(
+                    personRepository,
+                    contextAssembler,
+                    dialogueModel,
+                    conversationStoreProvider.getIfAvailable(),
+                    summaryService,
+                    memoryRecorderProvider.getIfAvailable(),
+                    stateProjector,
+                    postProcessingExecutor,
+                    clock,
+                    properties.maxMemoryItems(),
+                    properties.maxConversationTurns(),
+                    properties.conversationSummaryBatchTurns()
+            );
+        }
     }
 
     private static ConversationSummaryService summaryService(
