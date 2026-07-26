@@ -7,23 +7,20 @@ import com.laishengkai.digitalperson.application.PersonActivityDecisionService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
+import com.laishengkai.digitalperson.infrastructure.spring.LateConditionalBeanRegistrar;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.DeferredImportSelector;
-import org.springframework.context.annotation.Import;
-import org.springframework.core.type.AnnotationMetadata;
 
 import java.time.Clock;
 
 /** Spring wiring for autonomous event lifecycle decisions. */
 @Configuration(proxyBeanMethods = false)
-@Import(PersonActivityDecisionConfiguration.PersonActivityDecisionServiceImportSelector.class)
 public class PersonActivityDecisionConfiguration {
 
     @Bean
@@ -47,47 +44,33 @@ public class PersonActivityDecisionConfiguration {
         return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
     }
 
-    /** Defers service conditions until the model and external ports are registered. */
-    public static final class PersonActivityDecisionServiceImportSelector
-            implements DeferredImportSelector {
-        @Override
-        public String[] selectImports(AnnotationMetadata importingClassMetadata) {
-            return new String[]{PersonActivityDecisionServiceConfiguration.class.getName()};
-        }
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    @ConditionalOnBean({
-            PersonRepository.class,
-            StateUpdater.class,
-            PersonActivityDecisionModel.class,
-            PersonActivityDecisionContextAssembler.class,
-            EventStateImpactEvaluator.class,
-            StateEvaluationContextAssembler.class,
-            Clock.class
-    })
-    static class PersonActivityDecisionServiceConfiguration {
-
-        @Bean
-        @ConditionalOnMissingBean(PersonActivityDecisionService.class)
-        PersonActivityDecisionService personActivityDecisionService(
-                PersonRepository personRepository,
-                StateUpdater stateUpdater,
-                PersonActivityDecisionModel decisionModel,
-                PersonActivityDecisionContextAssembler contextAssembler,
-                EventStateImpactEvaluator stateImpactEvaluator,
-                StateEvaluationContextAssembler evaluationContextAssembler,
-                Clock clock
-        ) {
-            return new PersonActivityDecisionService(
-                    personRepository,
-                    stateUpdater,
-                    decisionModel,
-                    contextAssembler,
-                    stateImpactEvaluator,
-                    evaluationContextAssembler,
-                    clock
-            );
-        }
+    /** Registers the service after model and external port definitions are available. */
+    @Bean
+    static BeanFactoryPostProcessor personActivityDecisionServiceRegistrar() {
+        return new LateConditionalBeanRegistrar(beanFactory ->
+                LateConditionalBeanRegistrar.registerIfPossible(
+                        beanFactory,
+                        "personActivityDecisionService",
+                        PersonActivityDecisionService.class,
+                        () -> new PersonActivityDecisionService(
+                                beanFactory.getBean(PersonRepository.class),
+                                beanFactory.getBean(StateUpdater.class),
+                                beanFactory.getBean(PersonActivityDecisionModel.class),
+                                beanFactory.getBean(
+                                        PersonActivityDecisionContextAssembler.class
+                                ),
+                                beanFactory.getBean(EventStateImpactEvaluator.class),
+                                beanFactory.getBean(StateEvaluationContextAssembler.class),
+                                beanFactory.getBean(Clock.class)
+                        ),
+                        PersonRepository.class,
+                        StateUpdater.class,
+                        PersonActivityDecisionModel.class,
+                        PersonActivityDecisionContextAssembler.class,
+                        EventStateImpactEvaluator.class,
+                        StateEvaluationContextAssembler.class,
+                        Clock.class
+                )
+        );
     }
 }
