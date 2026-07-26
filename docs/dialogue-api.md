@@ -171,10 +171,11 @@ curl -sS \
 
 ## 8. 近期对话现状
 
-项目已经有 provider-neutral 的 `RecentConversationGateway` 读取端口，但当前生产默认实现仍是 `NoOpRecentConversationGateway`，尚未建立正式写入端口和持久化表。因此：
+生产环境已通过 provider-neutral 的 `RecentConversationGateway` 与 `ConversationTurnRepository` 将原始 USER / PERSON 消息写入 MySQL，并在后续请求中读取最近若干轮上下文。滚动摘要和情节提取在原始消息持久化后异步执行：
 
-- 当前跨请求连续性主要来自 Mem0 长期记忆、人物状态和事件；
-- 尚不能把最近几轮原始对话可靠保存到 MySQL；
-- 不使用 JVM 内存列表冒充正式对话存储，避免重启丢失和多实例不一致。
+- 人物回复只有在原始两条消息成功写入后才返回 `conversationStatus=STORED`；
+- 摘要和情节提取失败不会阻止本轮回复，也不会删除原始对话；
+- 原始对话清理由保留策略负责，长期记忆仍由 Mem0 独立管理；
+- 多实例共享 MySQL，不依赖 JVM 内存列表维持连续性。
 
-下一阶段应增加独立的近期对话写入端口、MySQL 表、按人物分页读取和保留期清理，再替换默认 NoOp 实现。
+详细表结构、覆盖游标和清理边界见 `RECENT_CONVERSATION_PERSISTENCE.md`。
