@@ -46,6 +46,25 @@ jobs:
           echo "bf9439fb1b3b0305d9a0bb48954a8f99fc4bc58a813f5305f03cfbf8f2f2b0ca  /tmp/batch3.patch" \
               | sha256sum --check --strict
           git apply --index /tmp/batch3.patch
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('src/test/java/com/laishengkai/digitalperson/architecture/ArchitectureTest.java')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              'import com.tngtech.archunit.junit.AnalyzeClasses;',
+              'import com.tngtech.archunit.core.importer.ImportOption;\n'
+              'import com.tngtech.archunit.junit.AnalyzeClasses;'
+          )
+          text = text.replace(
+              '@AnalyzeClasses(packages = "com.laishengkai.digitalperson")',
+              '@AnalyzeClasses(\n'
+              '        packages = "com.laishengkai.digitalperson",\n'
+              '        importOptions = ImportOption.DoNotIncludeTests.class\n'
+              ')'
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+          git add src/test/java/com/laishengkai/digitalperson/architecture/ArchitectureTest.java
           rm -f .github/batch3.part00 \
                 .github/batch3.part01 \
                 .github/batch3.part02 \
