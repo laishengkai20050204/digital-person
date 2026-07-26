@@ -1,0 +1,355 @@
+diff --git a/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueService.java b/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueService.java
+index 1e6ac1d..e23c771 100644
+--- a/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueService.java
++++ b/src/main/java/com/laishengkai/digitalperson/application/PersonDialogueService.java
+@@ -23,6 +23,7 @@ import java.util.Set;
+ import java.util.concurrent.CompletableFuture;
+ import java.util.concurrent.CompletionException;
+ import java.util.concurrent.CompletionStage;
++import java.util.concurrent.Executor;
+ 
+ /** Coordinates context retrieval, direct reply generation and fail-open persistence. */
+ public final class PersonDialogueService {
+@@ -36,6 +37,8 @@ public final class PersonDialogueService {
+     private final RecentConversationStore conversationStore;
+     private final ConversationSummaryService summaryService;
+     private final DialogueMemoryRecorder memoryRecorder;
++    private final PersonCurrentStateProjector stateProjector;
++    private final Executor postProcessingExecutor;
+     private final Clock clock;
+     private final int maxMemoryItems;
+     private final int maxConversationTurns;
+@@ -101,6 +104,64 @@ public final class PersonDialogueService {
+             int maxMemoryItems,
+             int maxConversationTurns,
+             int conversationSummaryBatchTurns
++    ) {
++        this(
++                personRepository,
++                contextAssembler,
++                dialogueModel,
++                conversationStore,
++                summaryService,
++                memoryRecorder,
++                null,
++                clock,
++                maxMemoryItems,
++                maxConversationTurns,
++                conversationSummaryBatchTurns
++        );
++    }
++
++    public PersonDialogueService(
++            PersonRepository personRepository,
++            PersonModelContextAssembler contextAssembler,
++            PersonDialogueModel dialogueModel,
++            RecentConversationStore conversationStore,
++            ConversationSummaryService summaryService,
++            DialogueMemoryRecorder memoryRecorder,
++            PersonCurrentStateProjector stateProjector,
++            Clock clock,
++            int maxMemoryItems,
++            int maxConversationTurns,
++            int conversationSummaryBatchTurns
++    ) {
++        this(
++                personRepository,
++                contextAssembler,
++                dialogueModel,
++                conversationStore,
++                summaryService,
++                memoryRecorder,
++                stateProjector,
++                Runnable::run,
++                clock,
++                maxMemoryItems,
++                maxConversationTurns,
++                conversationSummaryBatchTurns
++        );
++    }
++
++    public PersonDialogueService(
++            PersonRepository personRepository,
++            PersonModelContextAssembler contextAssembler,
++            PersonDialogueModel dialogueModel,
++            RecentConversationStore conversationStore,
++            ConversationSummaryService summaryService,
++            DialogueMemoryRecorder memoryRecorder,
++            PersonCurrentStateProjector stateProjector,
++            Executor postProcessingExecutor,
++            Clock clock,
++            int maxMemoryItems,
++            int maxConversationTurns,
++            int conversationSummaryBatchTurns
+     ) {
+         this.personRepository = Objects.requireNonNull(
+                 personRepository,
+@@ -117,6 +178,11 @@ public final class PersonDialogueService {
+         this.conversationStore = conversationStore;
+         this.summaryService = summaryService;
+         this.memoryRecorder = memoryRecorder;
++        this.stateProjector = stateProjector;
++        this.postProcessingExecutor = Objects.requireNonNull(
++                postProcessingExecutor,
++                "postProcessingExecutor cannot be null"
++        );
+         this.clock = Objects.requireNonNull(clock, "clock cannot be null");
+         this.maxMemoryItems = positive(maxMemoryItems, "maxMemoryItems");
+         this.maxConversationTurns = positive(
+@@ -161,14 +227,26 @@ public final class PersonDialogueService {
+                         retrievalTurns
+                 );
+ 
++        final PersonCurrentStateProjector.Projection projection;
++        try {
++            projection = stateProjector == null
++                    ? new PersonCurrentStateProjector.Projection(
++                            person.getStateSnapshot(),
++                            person.getStateEvolutionContext()
++                    )
++                    : stateProjector.project(person, occurredAt);
++        } catch (RuntimeException error) {
++            return CompletableFuture.failedFuture(error);
++        }
++
+         final CompletionStage<com.laishengkai.digitalperson.modelcontext.PersonModelContextSnapshot>
+                 contextStage;
+         try {
+             contextStage = Objects.requireNonNull(
+                     contextAssembler.assemble(
+                             person,
+-                            person.getStateSnapshot(),
+-                            person.getStateEvolutionContext(),
++                            projection.state(),
++                            projection.evolutionContext(),
+                             contextRequest,
+                             occurredAt
+                     ),
+@@ -206,43 +284,31 @@ public final class PersonDialogueService {
+             DialogueResult result,
+             Instant occurredAt
+     ) {
+-        CompletionStage<ConversationOutcome> conversationStage = persistConversation(
+-                personId,
+-                userMessage,
+-                result,
+-                occurredAt
+-        );
+-        CompletionStage<MemoryOutcome> memoryStage = recordMemory(
++        return persistConversation(
+                 personId,
+                 userMessage,
+                 result,
+                 occurredAt
+-        );
+-        CompletionStage<Void> summaryStage = conversationStage.thenCompose(conversation -> {
+-            if (conversation.status() != PersonDialogueExchange.ConversationStatus.STORED
+-                    || summaryService == null) {
+-                return CompletableFuture.completedFuture(null);
++        ).thenApply(conversation -> {
++            MemoryOutcome memory = scheduleMemoryRecording(
++                    personId,
++                    userMessage,
++                    result,
++                    occurredAt
++            );
++            if (conversation.status() == PersonDialogueExchange.ConversationStatus.STORED) {
++                triggerSummary(personId, localTimeZone);
+             }
+-            return summaryService.summarizeIfNeeded(
++            return new PersonDialogueExchange(
+                     personId,
+-                    localTimeZone,
+-                    clock.instant()
++                    result,
++                    occurredAt,
++                    conversation.status(),
++                    conversation.persistedTurnCount(),
++                    memory.status(),
++                    memory.mutationCount()
+             );
+         });
+-
+-        CompletionStage<PersonDialogueExchange> exchangeStage = conversationStage.thenCombine(
+-                memoryStage,
+-                (conversation, memory) -> new PersonDialogueExchange(
+-                        personId,
+-                        result,
+-                        occurredAt,
+-                        conversation.status(),
+-                        conversation.persistedTurnCount(),
+-                        memory.status(),
+-                        memory.mutationCount()
+-                )
+-        );
+-        return exchangeStage.thenCombine(summaryStage, (exchange, ignored) -> exchange);
+     }
+ 
+     private CompletionStage<ConversationOutcome> persistConversation(
+@@ -297,16 +363,36 @@ public final class PersonDialogueService {
+         });
+     }
+ 
+-    private CompletionStage<MemoryOutcome> recordMemory(
++    private MemoryOutcome scheduleMemoryRecording(
+             PersonId personId,
+             String userMessage,
+             DialogueResult result,
+             Instant occurredAt
+     ) {
+         if (memoryRecorder == null) {
+-            return CompletableFuture.completedFuture(MemoryOutcome.disabled());
++            return MemoryOutcome.disabled();
+         }
+ 
++        try {
++            postProcessingExecutor.execute(() -> recordMemoryAsynchronously(
++                    personId,
++                    userMessage,
++                    result,
++                    occurredAt
++            ));
++            return MemoryOutcome.scheduled();
++        } catch (RuntimeException error) {
++            logMemoryFailure(personId, error);
++            return MemoryOutcome.failed();
++        }
++    }
++
++    private void recordMemoryAsynchronously(
++            PersonId personId,
++            String userMessage,
++            DialogueResult result,
++            Instant occurredAt
++    ) {
+         final CompletionStage<List<com.laishengkai.digitalperson.memory.MemoryMutation>> stage;
+         try {
+             stage = Objects.requireNonNull(
+@@ -315,16 +401,56 @@ public final class PersonDialogueService {
+             );
+         } catch (RuntimeException error) {
+             logMemoryFailure(personId, error);
+-            return CompletableFuture.completedFuture(MemoryOutcome.failed());
++            return;
+         }
+ 
+-        return stage.handle((mutations, failure) -> {
++        stage.whenComplete((mutations, failure) -> {
+             if (failure != null) {
+                 logMemoryFailure(personId, unwrap(failure));
+-                return MemoryOutcome.failed();
++                return;
++            }
++            int mutationCount = Objects.requireNonNullElse(mutations, List.of()).size();
++            LOGGER.info(
++                    "Dialogue memory recording completed asynchronously: personId={}, mutationCount={}",
++                    personId,
++                    mutationCount
++            );
++        });
++    }
++
++    private void triggerSummary(PersonId personId, ZoneId localTimeZone) {
++        if (summaryService == null) {
++            return;
++        }
++        try {
++            postProcessingExecutor.execute(() -> summarizeAsynchronously(
++                    personId,
++                    localTimeZone
++            ));
++        } catch (RuntimeException error) {
++            logSummaryFailure(personId, error);
++        }
++    }
++
++    private void summarizeAsynchronously(PersonId personId, ZoneId localTimeZone) {
++        final CompletionStage<Void> stage;
++        try {
++            stage = Objects.requireNonNull(
++                    summaryService.summarizeIfNeeded(
++                            personId,
++                            localTimeZone,
++                            clock.instant()
++                    ),
++                    "summaryService stage cannot be null"
++            );
++        } catch (RuntimeException error) {
++            logSummaryFailure(personId, error);
++            return;
++        }
++        stage.whenComplete((ignored, failure) -> {
++            if (failure != null) {
++                logSummaryFailure(personId, unwrap(failure));
+             }
+-            List<?> safeMutations = Objects.requireNonNullElse(mutations, List.of());
+-            return MemoryOutcome.processed(safeMutations.size());
+         });
+     }
+ 
+@@ -403,7 +529,15 @@ public final class PersonDialogueService {
+ 
+     private static void logMemoryFailure(PersonId personId, Throwable error) {
+         LOGGER.warn(
+-                "Dialogue memory recording failed; returning generated reply: personId={}",
++                "Dialogue memory recording failed after reply generation: personId={}",
++                personId,
++                error
++        );
++    }
++
++    private static void logSummaryFailure(PersonId personId, Throwable error) {
++        LOGGER.warn(
++                "Dialogue summary processing failed after reply generation: personId={}",
+                 personId,
+                 error
+         );
+@@ -439,8 +573,8 @@ public final class PersonDialogueService {
+             PersonDialogueExchange.MemoryStatus status,
+             int mutationCount
+     ) {
+-        private static MemoryOutcome processed(int count) {
+-            return new MemoryOutcome(PersonDialogueExchange.MemoryStatus.PROCESSED, count);
++        private static MemoryOutcome scheduled() {
++            return new MemoryOutcome(PersonDialogueExchange.MemoryStatus.SCHEDULED, 0);
+         }
+ 
+         private static MemoryOutcome disabled() {
+diff --git a/src/main/java/com/laishengkai/digitalperson/infrastructure/activity/PersonActivityDecisionConfiguration.java b/src/main/java/com/laishengkai/digitalperson/infrastructure/activity/PersonActivityDecisionConfiguration.java
+index 9809d65..59c84db 100644
+--- a/src/main/java/com/laishengkai/digitalperson/infrastructure/activity/PersonActivityDecisionConfiguration.java
++++ b/src/main/java/com/laishengkai/digitalperson/infrastructure/activity/PersonActivityDecisionConfiguration.java
+@@ -10,7 +10,7 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
+ import com.laishengkai.digitalperson.person.PersonRepository;
+ import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
+ import com.laishengkai.digitalperson.state.StateUpdater;
+-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
++import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+ import org.springframework.context.annotation.Bean;
+@@ -43,16 +43,15 @@ public class PersonActivityDecisionConfiguration {
+         return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
+     }
+ 
+-    /**
+-     * Creates the autonomous activity boundary for either the protected API or the
+-     * persistent scheduler. The decision is based only on configuration properties,
+-     * avoiding order-sensitive bean-presence checks during component scanning.
+-     */
++    /** Creates the autonomous activity boundary whenever all required ports exist. */
+     @Bean
+-    @ConditionalOnExpression(
+-            "'${digital-person.person-api.enabled:false}' == 'true' || "
+-                    + "'${digital-person.activity-scheduler.enabled:false}' == 'true'"
+-    )
++    @ConditionalOnBean({
++            PersonActivityDecisionModel.class,
++            PersonRepository.class,
++            PersonModelContextAssembler.class,
++            EventStateImpactEvaluator.class,
++            StateEvaluationContextAssembler.class
++    })
+     @ConditionalOnMissingBean(PersonActivityDecisionService.class)
+     PersonActivityDecisionService personActivityDecisionService(
+             PersonRepository personRepository,
