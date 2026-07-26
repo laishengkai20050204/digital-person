@@ -15,11 +15,15 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DeferredImportSelector;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.type.AnnotationMetadata;
 
 import java.time.Clock;
 
 /** Spring wiring for autonomous event lifecycle decisions. */
 @Configuration(proxyBeanMethods = false)
+@Import(PersonActivityDecisionConfiguration.ActivityServiceImportSelector.class)
 public class PersonActivityDecisionConfiguration {
 
     @Bean
@@ -43,33 +47,46 @@ public class PersonActivityDecisionConfiguration {
         return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
     }
 
-    /** Creates the autonomous activity boundary whenever all required ports exist. */
-    @Bean
-    @ConditionalOnBean({
-            PersonActivityDecisionModel.class,
-            PersonRepository.class,
-            PersonModelContextAssembler.class,
-            EventStateImpactEvaluator.class,
-            StateEvaluationContextAssembler.class
-    })
-    @ConditionalOnMissingBean(PersonActivityDecisionService.class)
-    PersonActivityDecisionService personActivityDecisionService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            PersonActivityDecisionModel activityDecisionModel,
-            PersonActivityDecisionContextAssembler activityContextAssembler,
-            EventStateImpactEvaluator effectEvaluator,
-            StateEvaluationContextAssembler effectContextAssembler,
-            Clock clock
-    ) {
-        return new PersonActivityDecisionService(
-                personRepository,
-                stateUpdater,
-                activityDecisionModel,
-                activityContextAssembler,
-                effectEvaluator,
-                effectContextAssembler,
-                clock
-        );
+    /** Defers port checks until model and external bean definitions are registered. */
+    public static final class ActivityServiceImportSelector
+            implements DeferredImportSelector {
+        @Override
+        public String[] selectImports(AnnotationMetadata importingClassMetadata) {
+            return new String[]{ActivityServiceConfiguration.class.getName()};
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class ActivityServiceConfiguration {
+
+        /** Creates the autonomous activity boundary whenever all required ports exist. */
+        @Bean
+        @ConditionalOnBean({
+                PersonActivityDecisionModel.class,
+                PersonRepository.class,
+                PersonModelContextAssembler.class,
+                EventStateImpactEvaluator.class,
+                StateEvaluationContextAssembler.class
+        })
+        @ConditionalOnMissingBean(PersonActivityDecisionService.class)
+        PersonActivityDecisionService personActivityDecisionService(
+                PersonRepository personRepository,
+                StateUpdater stateUpdater,
+                PersonActivityDecisionModel activityDecisionModel,
+                PersonActivityDecisionContextAssembler activityContextAssembler,
+                EventStateImpactEvaluator effectEvaluator,
+                StateEvaluationContextAssembler effectContextAssembler,
+                Clock clock
+        ) {
+            return new PersonActivityDecisionService(
+                    personRepository,
+                    stateUpdater,
+                    activityDecisionModel,
+                    activityContextAssembler,
+                    effectEvaluator,
+                    effectContextAssembler,
+                    clock
+            );
+        }
     }
 }
