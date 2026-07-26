@@ -1,3 +1,4 @@
+# One-time verifier for the third architecture-refactor batch.
 name: Apply architecture refactor batch 3
 
 on:
