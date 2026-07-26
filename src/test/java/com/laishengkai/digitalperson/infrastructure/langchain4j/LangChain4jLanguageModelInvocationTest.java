@@ -1,10 +1,12 @@
 package com.laishengkai.digitalperson.infrastructure.langchain4j;
 
+import com.laishengkai.digitalperson.async.CancellableStage;
 import com.laishengkai.digitalperson.dialogue.AssistantModelMessage;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
 import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
 import com.laishengkai.digitalperson.dialogue.ModelFinishReason;
 import com.laishengkai.digitalperson.dialogue.ModelInvocationOptions;
+import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import com.laishengkai.digitalperson.dialogue.ModelResponseFormat;
 import com.laishengkai.digitalperson.dialogue.ModelToolCall;
 import com.laishengkai.digitalperson.dialogue.ModelToolChoice;
@@ -22,10 +24,17 @@ import dev.langchain4j.model.output.TokenUsage;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LangChain4jLanguageModelInvocationTest {
 
@@ -109,4 +118,69 @@ class LangChain4jLanguageModelInvocationTest {
         assertEquals(5, response.usage().outputTokens());
         assertEquals(25, response.usage().totalTokens());
     }
+
+    @Test
+    void cancellationInterruptsTheBlockingProviderThread() throws Exception {
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        ChatModel chatModel = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                started.countDown();
+                try {
+                    new CountDownLatch(1).await();
+                    throw new AssertionError("blocking provider unexpectedly resumed");
+                } catch (InterruptedException error) {
+                    interrupted.countDown();
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("provider interrupted", error);
+                }
+            }
+        };
+        LangChain4jLanguageModel gateway = new LangChain4jLanguageModel(
+                chatModel,
+                "test-model",
+                "example.com",
+                command -> Thread.startVirtualThread(command)
+        );
+
+        var invocation = gateway.invoke(simpleRequest());
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        assertTrue(invocation.toCompletableFuture().cancel(true));
+        assertTrue(interrupted.await(2, TimeUnit.SECONDS));
+        ((CancellableStage) invocation).termination().toCompletableFuture().join();
+    }
+
+    @Test
+    void executorRejectionCompletesTheInvocationExceptionally() {
+        ChatModel chatModel = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                throw new AssertionError("provider must not be called");
+            }
+        };
+        LangChain4jLanguageModel gateway = new LangChain4jLanguageModel(
+                chatModel,
+                "test-model",
+                "example.com",
+                command -> {
+                    throw new RejectedExecutionException("closed");
+                }
+        );
+
+        CompletionException failure = assertThrows(
+                CompletionException.class,
+                () -> gateway.invoke(simpleRequest()).toCompletableFuture().join()
+        );
+        assertInstanceOf(LanguageModelException.class, failure.getCause());
+    }
+
+    private static LanguageModelRequest simpleRequest() {
+        return new LanguageModelRequest(
+                List.of(new UserModelMessage("hello")),
+                ModelInvocationOptions.defaults(),
+                List.of()
+        );
+    }
+
 }

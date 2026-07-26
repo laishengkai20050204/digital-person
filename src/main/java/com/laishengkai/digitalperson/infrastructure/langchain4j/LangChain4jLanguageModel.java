@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.infrastructure.langchain4j;
 
+import com.laishengkai.digitalperson.async.CancellableCompletableFuture;
 import com.laishengkai.digitalperson.dialogue.AssistantModelMessage;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
@@ -43,6 +44,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * LangChain4j implementation of the system-owned language-model gateway.
@@ -107,14 +109,44 @@ public final class LangChain4jLanguageModel implements LanguageModelGateway {
                 request,
                 "request cannot be null"
         );
-        CompletableFuture<LanguageModelResponse> result = new CompletableFuture<>();
-        executor.execute(() -> {
+        CompletableFuture<Void> termination = new CompletableFuture<>();
+        AtomicReference<Thread> runner = new AtomicReference<>();
+        CancellableCompletableFuture<LanguageModelResponse> result =
+                new CancellableCompletableFuture<>(
+                        termination,
+                        mayInterrupt -> {
+                            Thread thread = runner.get();
+                            if (mayInterrupt && thread != null) {
+                                thread.interrupt();
+                            }
+                        }
+                );
+        Runnable invocation = () -> {
+            Thread current = Thread.currentThread();
+            runner.set(current);
             try {
-                result.complete(invokeBlocking(safeRequest));
-            } catch (Throwable error) {
+                if (!result.isCancelled()) {
+                    result.complete(invokeBlocking(safeRequest));
+                }
+            } catch (RuntimeException error) {
                 result.completeExceptionally(error);
+            } catch (Error fatal) {
+                result.completeExceptionally(fatal);
+                throw fatal;
+            } finally {
+                runner.compareAndSet(current, null);
+                termination.complete(null);
             }
-        });
+        };
+        try {
+            executor.execute(invocation);
+        } catch (RuntimeException rejected) {
+            result.completeExceptionally(new LanguageModelException(
+                    "language model invocation could not be scheduled",
+                    rejected
+            ));
+            termination.complete(null);
+        }
         return result;
     }
 

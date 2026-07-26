@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.infrastructure.langchain4j;
 
+import com.laishengkai.digitalperson.async.CancellableCompletableFuture;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
@@ -85,4 +86,36 @@ class BoundedLanguageModelGatewayTest {
         assertSame(response, gateway.invoke(request).toCompletableFuture().join());
         assertEquals(1, gateway.availablePermits());
     }
+    @Test
+    void cancellationDoesNotReleaseCapacityBeforePhysicalTermination() {
+        LanguageModelRequest request = mock(LanguageModelRequest.class);
+        CompletableFuture<Void> physicalTermination = new CompletableFuture<>();
+        CancellableCompletableFuture<LanguageModelResponse> providerInvocation =
+                new CancellableCompletableFuture<>(
+                        physicalTermination,
+                        ignored -> {
+                        }
+                );
+        LanguageModelGateway delegate = ignored -> providerInvocation;
+        BoundedLanguageModelGateway gateway = new BoundedLanguageModelGateway(
+                delegate,
+                new LanguageModelConcurrencyProperties(1, Duration.ZERO)
+        );
+
+        CompletableFuture<LanguageModelResponse> first = gateway.invoke(request)
+                .toCompletableFuture();
+        assertTrue(first.cancel(true));
+        assertTrue(providerInvocation.isCancelled());
+        assertEquals(0, gateway.availablePermits());
+
+        CompletionException rejected = assertThrows(
+                CompletionException.class,
+                () -> gateway.invoke(request).toCompletableFuture().join()
+        );
+        assertInstanceOf(LanguageModelException.class, rejected.getCause());
+
+        physicalTermination.complete(null);
+        assertEquals(1, gateway.availablePermits());
+    }
+
 }

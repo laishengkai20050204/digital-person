@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.agent;
 
+import com.laishengkai.digitalperson.async.DeadlineGuard;
 import com.laishengkai.digitalperson.dialogue.AssistantModelMessage;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
@@ -24,8 +25,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Supplier;
 
 /** Default application-owned implementation of the bounded model/tool loop. */
 public final class DefaultAgentExecutor implements AgentExecutor {
@@ -186,7 +185,7 @@ public final class DefaultAgentExecutor implements AgentExecutor {
         }
 
         Duration timeout = min(modelTimeout, remaining);
-        return withTimeout(
+        return DeadlineGuard.within(
                 responseStage,
                 timeout,
                 () -> new AgentExecutionException("language model invocation timed out")
@@ -368,7 +367,7 @@ public final class DefaultAgentExecutor implements AgentExecutor {
             return failedStage(timeout);
         }
         Duration timeout = min(toolTimeout, remaining);
-        return withTimeout(
+        return DeadlineGuard.within(
                 resultStage,
                 timeout,
                 () -> new AgentExecutionException(
@@ -448,47 +447,6 @@ public final class DefaultAgentExecutor implements AgentExecutor {
             }
         }
         return Map.copyOf(toolsByName);
-    }
-
-    private static <T> CompletionStage<T> withTimeout(
-            CompletionStage<T> stage,
-            Duration timeout,
-            Supplier<? extends RuntimeException> timeoutException
-    ) {
-        CompletionStage<T> safeStage = Objects.requireNonNull(stage, "stage cannot be null");
-        Duration safeTimeout = requirePositive(timeout, "timeout");
-        CompletableFuture<T> source = safeStage.toCompletableFuture();
-        CompletableFuture<T> guarded = new CompletableFuture<>();
-        AtomicBoolean settled = new AtomicBoolean(false);
-        CompletableFuture.delayedExecutor(
-                safeTimeout.toNanos(),
-                TimeUnit.NANOSECONDS
-        ).execute(() -> {
-            RuntimeException failure = Objects.requireNonNull(
-                    timeoutException.get(),
-                    "timeoutException cannot return null"
-            );
-            if (settled.compareAndSet(false, true)) {
-                source.cancel(true);
-                guarded.completeExceptionally(failure);
-            }
-        });
-        source.whenComplete((value, error) -> {
-            if (!settled.compareAndSet(false, true)) {
-                return;
-            }
-            if (error == null) {
-                guarded.complete(value);
-            } else {
-                guarded.completeExceptionally(unwrap(error));
-            }
-        });
-        guarded.whenComplete((ignored, error) -> {
-            if (guarded.isCancelled()) {
-                source.cancel(true);
-            }
-        });
-        return guarded;
     }
 
     private static long deadlineAfter(long startedAtNanos, Duration timeout) {
