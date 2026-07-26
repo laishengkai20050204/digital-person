@@ -39,7 +39,7 @@ jobs:
           bash -n ops/ensure-mem0.sh
 
       - name: Build and test
-        run: mvn --batch-mode --no-transfer-progress clean verify
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
 
       - name: Configure SSH
         env:
