@@ -13,13 +13,18 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.DeferredImportSelector;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.type.AnnotationMetadata;
 
 import java.time.Clock;
 
 /** Spring wiring for provider-neutral person application services. */
 @Configuration(proxyBeanMethods = false)
-@Import(StateEvaluationContextConfiguration.class)
+@Import({
+        StateEvaluationContextConfiguration.class,
+        PersonApplicationConfiguration.PersonApplicationServiceImportSelector.class
+})
 public class PersonApplicationConfiguration {
 
     @Bean
@@ -40,37 +45,53 @@ public class PersonApplicationConfiguration {
         return new PersonCurrentStateProjector(stateUpdater);
     }
 
-    /** Directory capability exists only when both read and create persistence ports exist. */
-    @Bean
-    @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
-    @ConditionalOnMissingBean(PersonDirectoryService.class)
-    PersonDirectoryService personDirectoryService(
-            PersonRepository personRepository,
-            PersonCreationRepository creationRepository,
-            Clock clock
-    ) {
-        return new PersonDirectoryService(personRepository, creationRepository, clock);
+    /** Defers port-dependent services until all regular configuration classes are parsed. */
+    public static final class PersonApplicationServiceImportSelector
+            implements DeferredImportSelector {
+        @Override
+        public String[] selectImports(AnnotationMetadata importingClassMetadata) {
+            return new String[]{PersonApplicationServiceConfiguration.class.getName()};
+        }
     }
 
-    /** Core person-event capability is available to any adapter when its ports exist. */
-    @Bean
-    @ConditionalOnBean({
-            PersonRepository.class,
-            EventStateImpactEvaluator.class,
-            StateEvaluationContextAssembler.class
-    })
-    @ConditionalOnMissingBean(PersonEventCommandService.class)
-    PersonEventCommandService personEventCommandService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            EventStateImpactEvaluator evaluator,
-            StateEvaluationContextAssembler contextAssembler
-    ) {
-        return new PersonEventCommandService(
-                personRepository,
-                stateUpdater,
-                evaluator,
-                contextAssembler
-        );
+    @Configuration(proxyBeanMethods = false)
+    static class PersonApplicationServiceConfiguration {
+
+        @Bean
+        @ConditionalOnBean({
+                PersonRepository.class,
+                PersonCreationRepository.class,
+                Clock.class
+        })
+        @ConditionalOnMissingBean(PersonDirectoryService.class)
+        PersonDirectoryService personDirectoryService(
+                PersonRepository personRepository,
+                PersonCreationRepository creationRepository,
+                Clock clock
+        ) {
+            return new PersonDirectoryService(personRepository, creationRepository, clock);
+        }
+
+        @Bean
+        @ConditionalOnBean({
+                PersonRepository.class,
+                StateUpdater.class,
+                EventStateImpactEvaluator.class,
+                StateEvaluationContextAssembler.class
+        })
+        @ConditionalOnMissingBean(PersonEventCommandService.class)
+        PersonEventCommandService personEventCommandService(
+                PersonRepository personRepository,
+                StateUpdater stateUpdater,
+                EventStateImpactEvaluator stateImpactEvaluator,
+                StateEvaluationContextAssembler evaluationContextAssembler
+        ) {
+            return new PersonEventCommandService(
+                    personRepository,
+                    stateUpdater,
+                    stateImpactEvaluator,
+                    evaluationContextAssembler
+            );
+        }
     }
 }
