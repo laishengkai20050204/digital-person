@@ -76,18 +76,13 @@ echo "部署构建使用 JAVA_HOME：$JAVA_HOME"
 java -version
 javac -version
 
-for command_name in git mvn java javac curl flock; do
+for command_name in git java javac curl flock; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "服务器缺少命令：$command_name"
     exit 1
   fi
 done
 
-if ! mvn -version | grep -q "Java version: 21"; then
-  echo "Maven 未使用 Java 21，拒绝继续部署"
-  mvn -version || true
-  exit 1
-fi
 
 USES_SSH=false
 case "$REPOSITORY_URL" in
@@ -183,6 +178,17 @@ git --git-dir="$SOURCE_REPO" worktree add --detach "$BUILD_DIR" "$APP_SHA"
 
 cd "$BUILD_DIR"
 
+if [ ! -x ./mvnw ]; then
+  echo "仓库缺少可执行 Maven Wrapper：./mvnw"
+  exit 1
+fi
+
+if ! ./mvnw -version | grep -q "Java version: 21"; then
+  echo "Maven Wrapper 未使用 Java 21，拒绝继续部署"
+  ./mvnw -version || true
+  exit 1
+fi
+
 if [ -x ops/ensure-mem0.sh ]; then
   if ! bash ops/ensure-mem0.sh; then
     echo "Mem0 自动准备未成功；应用将按 MEM0_REQUIRED 配置决定是否降级" >&2
@@ -190,7 +196,7 @@ if [ -x ops/ensure-mem0.sh ]; then
 fi
 
 echo "在服务器本地编译生产 JAR"
-mvn \
+./mvnw \
   --batch-mode \
   --no-transfer-progress \
   -Dmaven.repo.local="$MAVEN_CACHE" \

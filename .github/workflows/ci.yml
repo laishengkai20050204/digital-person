@@ -34,7 +34,7 @@ jobs:
         run: bash ops/test-ensure-mem0-secret-handling.sh
 
       - name: Verify
-        run: set -o pipefail; mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven.log
+        run: set -o pipefail; ./mvnw --batch-mode --no-transfer-progress verify 2>&1 | tee maven.log
 
       - name: Upload Maven failure log
         if: failure()

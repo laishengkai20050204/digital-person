@@ -33,7 +33,7 @@ class ScheduledPersonCreationRepositoryTest {
                 PersonActivityScheduleRepository.class
         );
         TransactionTemplate transactions = immediateTransactions();
-        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
         when(delegate.insert(person)).thenReturn(true);
         when(schedules.ensureScheduled(
                 person.getId(),
@@ -61,7 +61,7 @@ class ScheduledPersonCreationRepositoryTest {
         PersonActivityScheduleRepository schedules = mock(
                 PersonActivityScheduleRepository.class
         );
-        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
         when(delegate.insert(person)).thenReturn(false);
 
         ScheduledPersonCreationRepository repository = new ScheduledPersonCreationRepository(

@@ -44,7 +44,11 @@ public final class Person {
 
     /** Creates a new aggregate with a generated id and baseline state. */
     public static Person create(PersonIdentity identity, Personality personality) {
-        return new Person(identity, personality);
+        return create(
+                identity,
+                personality,
+                new PersonState(new AffectState(0.0, 0.5, 0.0))
+        );
     }
 
     /** Reconstitutes a complete aggregate from persistence with an unspecified identity. */
@@ -88,32 +92,21 @@ public final class Person {
         );
     }
 
-    public Person(Personality personality) {
-        this(PersonIdentity.unspecified(), personality);
+    /** Creates a new aggregate with a caller-supplied initial state. */
+    public static Person create(
+            Personality personality,
+            PersonState state
+    ) {
+        return create(PersonIdentity.unspecified(), personality, state);
     }
 
-    public Person(PersonIdentity identity, Personality personality) {
-        this(
-                PersonId.random(),
-                identity,
-                personality,
-                new PersonState(new AffectState(0.0, 0.5, 0.0)),
-                new EventTimeline(),
-                new EventTimeline(),
-                StateEvolutionContext.initial()
-        );
-    }
-
-    public Person(Personality personality, PersonState state) {
-        this(PersonIdentity.unspecified(), personality, state);
-    }
-
-    public Person(
+    /** Creates a new aggregate with identity and a caller-supplied initial state. */
+    public static Person create(
             PersonIdentity identity,
             Personality personality,
             PersonState state
     ) {
-        this(
+        return new Person(
                 PersonId.random(),
                 identity,
                 personality,
@@ -124,69 +117,7 @@ public final class Person {
         );
     }
 
-    public Person(
-            Personality personality,
-            PersonState state,
-            EventTimeline personTimeline,
-            EventTimeline userTimeline
-    ) {
-        this(
-                PersonIdentity.unspecified(),
-                personality,
-                state,
-                personTimeline,
-                userTimeline
-        );
-    }
-
-    public Person(
-            PersonIdentity identity,
-            Personality personality,
-            PersonState state,
-            EventTimeline personTimeline,
-            EventTimeline userTimeline
-    ) {
-        this(
-                PersonId.random(),
-                identity,
-                personality,
-                state,
-                personTimeline,
-                userTimeline,
-                StateEvolutionContext.initial()
-        );
-    }
-
-    /**
-     * Compatibility constructor for persisted aggregates without stable identity data.
-     * New persistence code should prefer {@link #reconstitute(PersonId, Personality,
-     * PersonState, EventTimeline, EventTimeline, StateEvolutionContext)}.
-     */
-    public Person(
-            PersonId id,
-            Personality personality,
-            PersonState state,
-            EventTimeline personTimeline,
-            EventTimeline userTimeline,
-            StateEvolutionContext stateEvolutionContext
-    ) {
-        this(
-                id,
-                PersonIdentity.unspecified(),
-                personality,
-                state,
-                personTimeline,
-                userTimeline,
-                stateEvolutionContext
-        );
-    }
-
-    /**
-     * Compatibility constructor for complete persisted aggregates. New persistence
-     * code should prefer {@link #reconstitute(PersonId, PersonIdentity, Personality,
-     * PersonState, EventTimeline, EventTimeline, StateEvolutionContext)}.
-     */
-    public Person(
+    private Person(
             PersonId id,
             PersonIdentity identity,
             Personality personality,

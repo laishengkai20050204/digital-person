@@ -58,7 +58,7 @@ class PersonActivityDecisionServiceTest {
 
     @Test
     void appliesFinishThenStartEvaluatesNewEventAndSavesOnce() {
-        Person person = new Person(PERSONALITY, stateWithFatigue(0.2));
+        Person person = Person.create(PERSONALITY, stateWithFatigue(0.2));
         PersonEvent study = openEvent(ActivityType.STUDY, "修改课程设计", START);
         person.startPersonEvent(study, START);
         RegisteredStateEffect studyFatigue = new RegisteredStateEffect(
@@ -150,7 +150,7 @@ class PersonActivityDecisionServiceTest {
 
     @Test
     void sameChannelStartWithoutExplicitFinishUsesReplacedSemantics() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         PersonEvent study = openEvent(ActivityType.STUDY, "学习", START);
         person.startPersonEvent(study, START);
         person.commitStateUpdate(
@@ -193,7 +193,7 @@ class PersonActivityDecisionServiceTest {
 
     @Test
     void startsDifferentChannelsTogetherAndEvaluatesEveryNewEvent() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         AtomicInteger evaluations = new AtomicInteger();
         PersonActivityDecisionService service = new PersonActivityDecisionService(
@@ -249,7 +249,7 @@ class PersonActivityDecisionServiceTest {
 
     @Test
     void pendingEventIsEvaluatedBeforeActivityModelReceivesContext() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         PersonEvent rest = openEvent(ActivityType.REST, "休息", START);
         person.startPersonEvent(rest, START);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
@@ -287,7 +287,7 @@ class PersonActivityDecisionServiceTest {
 
     @Test
     void invalidFinishPlanFailsWithoutPersistingOrEvaluatingEffects() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         AtomicInteger effectEvaluations = new AtomicInteger();
         PersonActivityDecisionService service = new PersonActivityDecisionService(
@@ -323,7 +323,7 @@ class PersonActivityDecisionServiceTest {
 
     @Test
     void staleModelDecisionCannotOverwriteConcurrentAggregateChange() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         CompletableFuture<PersonActivityDecisionPlan> decision = new CompletableFuture<>();
         PersonActivityDecisionService service = new PersonActivityDecisionService(

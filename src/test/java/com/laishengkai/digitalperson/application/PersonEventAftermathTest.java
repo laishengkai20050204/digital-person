@@ -36,7 +36,7 @@ class PersonEventAftermathTest {
 
     @Test
     void finishedCommunicationReleasesEventBoundEffectButKeepsFixedEffectsDuringMusic() {
-        Person person = new Person(new Personality(0.5, 0.7, 0.4, 0.8, 0.6, 0.9));
+        Person person = Person.create(new Personality(0.5, 0.7, 0.4, 0.8, 0.6, 0.9));
         Repository repository = new Repository(person);
         EventStateImpactEvaluator evaluator = context -> {
             if (context.newEvent().activityType().equals("CHAT")) {

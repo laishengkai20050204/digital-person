@@ -37,7 +37,7 @@ class DefaultPersonModelContextAssemblerTest {
 
     @Test
     void assemblesSharedTemporalAndEventTiming() {
-        Person person = new Person(
+        Person person = Person.create(
                 new PersonIdentity(
                         "沈知夏",
                         LocalDate.parse("2006-04-18"),
@@ -117,7 +117,7 @@ class DefaultPersonModelContextAssemblerTest {
 
     @Test
     void excludesNewEventAndKeepsStateQueryFocused() {
-        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
         PersonEvent study = new PersonEvent(
                 ActivityType.STUDY,
                 "准备考试",
@@ -171,7 +171,7 @@ class DefaultPersonModelContextAssemblerTest {
     }
     @Test
     void boundsMemoryConversationAndRelevanceQueryByCharacters() {
-        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
         AtomicReference<PersonMemoryQuery> receivedQuery = new AtomicReference<>();
         DefaultPersonModelContextAssembler assembler =
                 new DefaultPersonModelContextAssembler(

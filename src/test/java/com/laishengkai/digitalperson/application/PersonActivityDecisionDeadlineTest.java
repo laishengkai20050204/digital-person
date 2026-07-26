@@ -48,7 +48,7 @@ class PersonActivityDecisionDeadlineTest {
                 StateEvaluationContextAssembler.class
         );
         MutableClock clock = new MutableClock(NOW);
-        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
         PersonId personId = person.getId();
         CompletableFuture<PersonActivityDecisionPlan> modelResult = new CompletableFuture<>();
 
@@ -99,7 +99,7 @@ class PersonActivityDecisionDeadlineTest {
         StateEvaluationContextAssembler effectAssembler = mock(
                 StateEvaluationContextAssembler.class
         );
-        Person person = new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
         PersonId personId = person.getId();
         CompletableFuture<PersonActivityDecisionPlan> modelResult = new CompletableFuture<>();
         Instant decisionTime = Instant.now();

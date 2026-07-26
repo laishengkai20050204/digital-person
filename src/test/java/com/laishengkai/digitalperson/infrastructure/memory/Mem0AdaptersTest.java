@@ -166,6 +166,7 @@ class Mem0AdaptersTest {
                 null,
                 null,
                 null,
+                null,
                 null
         );
 
@@ -224,6 +225,70 @@ class Mem0AdaptersTest {
         assertThat(failure.getMessage()).doesNotContain("private-memory-content");
     }
 
+
+    @Test
+    void rejectsResponsesThatExceedTheConfiguredLimit() {
+        server.removeContext("/search");
+        server.createContext("/search", exchange -> respond(
+                exchange,
+                200,
+                "{\"results\":[{\"memory\":\"" + "x".repeat(512) + "\"}]}"
+        ));
+
+        Throwable failure;
+        try {
+            client(false, 128).search(new PersonMemoryQuery(
+                    PersonId.random(),
+                    "test",
+                    Set.of(),
+                    5
+            )).toCompletableFuture().join();
+            throw new AssertionError("expected oversized response to fail");
+        } catch (CompletionException error) {
+            failure = unwrap(error);
+        }
+
+        assertThat(failure.getMessage()).contains("maxResponseBytes=128");
+    }
+
+    @Test
+    void rejectsNonJsonResponsesBeforeParsing() {
+        server.removeContext("/search");
+        server.createContext("/search", exchange -> respond(
+                exchange,
+                200,
+                "text/plain",
+                "{\"results\":[]}"
+        ));
+
+        Throwable failure;
+        try {
+            client(false).search(new PersonMemoryQuery(
+                    PersonId.random(),
+                    "test",
+                    Set.of(),
+                    5
+            )).toCompletableFuture().join();
+            throw new AssertionError("expected unsupported content type to fail");
+        } catch (CompletionException error) {
+            failure = unwrap(error);
+        }
+
+        assertThat(failure.getMessage()).contains("unsupported Content-Type");
+    }
+
+    @Test
+    void doesNotFollowHealthCheckRedirects() {
+        server.removeContext("/auth/setup-status");
+        server.createContext("/auth/setup-status", exchange -> {
+            exchange.getResponseHeaders().set("Location", "/search");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+
+        assertThat(client(false).probe().toCompletableFuture().join()).isFalse();
+    }
+
     @Test
     void probesTheOpenSetupStatusEndpoint() {
         assertThat(client(false).probe().toCompletableFuture().join()).isTrue();
@@ -238,6 +303,10 @@ class Mem0AdaptersTest {
     }
 
     private Mem0HttpClient client(boolean retrievalEnabled) {
+        return client(retrievalEnabled, Mem0Properties.DEFAULT_MAX_RESPONSE_BYTES);
+    }
+
+    private Mem0HttpClient client(boolean retrievalEnabled, int maxResponseBytes) {
         URI baseUrl = URI.create(
                 "http://127.0.0.1:" + server.getAddress().getPort()
         );
@@ -251,6 +320,7 @@ class Mem0AdaptersTest {
                 "mem0-test-key",
                 Duration.ofSeconds(1),
                 Duration.ofSeconds(3),
+                maxResponseBytes,
                 "/auth/setup-status"
         );
         return new Mem0HttpClient(properties, JsonMapper.builder().build());
@@ -268,8 +338,17 @@ class Mem0AdaptersTest {
             int status,
             String body
     ) throws IOException {
+        respond(exchange, status, "application/json", body);
+    }
+
+    private static void respond(
+            HttpExchange exchange,
+            int status,
+            String contentType,
+            String body
+    ) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.getResponseHeaders().set("Content-Type", contentType);
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
         exchange.close();

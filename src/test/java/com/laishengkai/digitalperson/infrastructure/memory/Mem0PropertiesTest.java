@@ -24,6 +24,7 @@ class Mem0PropertiesTest {
                 "never-log-this-key",
                 null,
                 null,
+                null,
                 null
         );
 
@@ -33,6 +34,7 @@ class Mem0PropertiesTest {
         assertTrue(properties.extractionInstructions().contains("不要记住或不要保存"));
         assertTrue(properties.baseUrl().toString().contains("127.0.0.1:8888"));
         assertTrue(properties.healthPath().startsWith("/"));
+        assertEquals(Mem0Properties.DEFAULT_MAX_RESPONSE_BYTES, properties.maxResponseBytes());
         assertTrue(properties.toString().contains("<redacted>"));
         assertFalse(properties.toString().contains("never-log-this-key"));
     }
@@ -49,6 +51,7 @@ class Mem0PropertiesTest {
                 "",
                 null,
                 null,
+                null,
                 null
         );
 
@@ -56,6 +59,23 @@ class Mem0PropertiesTest {
         assertTrue(properties.extractionInstructions().contains("只保存与学习计划有关"));
         assertTrue(properties.extractionInstructions().contains("API Key"));
         assertTrue(properties.extractionInstructions().contains("附加提取要求"));
+    }
+
+    @Test
+    void rejectsUnsafeResponseSizeConfiguration() {
+        assertThrows(IllegalArgumentException.class, () -> new Mem0Properties(
+                true,
+                false,
+                false,
+                0.30,
+                null,
+                URI.create("http://127.0.0.1:8888"),
+                "",
+                Duration.ofSeconds(1),
+                Duration.ofSeconds(1),
+                0,
+                "/auth/setup-status"
+        ));
     }
 
     @Test
@@ -70,6 +90,7 @@ class Mem0PropertiesTest {
                 "",
                 Duration.ofSeconds(1),
                 Duration.ofSeconds(1),
+                null,
                 "/auth/setup-status"
         ));
     }

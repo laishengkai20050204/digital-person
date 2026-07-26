@@ -116,7 +116,7 @@ class JdbcPersonRepositoryMySqlTest {
 
     @Test
     void staleVersionCannotOverwriteACommittedAggregate() {
-        Person person = new Person(neutralPersonality());
+        Person person = Person.create(neutralPersonality());
         assertTrue(repository.insert(person));
 
         VersionedPerson first = repository.findById(person.getId()).orElseThrow();
@@ -144,7 +144,7 @@ class JdbcPersonRepositoryMySqlTest {
 
     @Test
     void concurrentCompareAndSetAllowsExactlyOneWinner() throws Exception {
-        Person person = new Person(neutralPersonality());
+        Person person = Person.create(neutralPersonality());
         assertTrue(repository.insert(person));
         VersionedPerson left = repository.findById(person.getId()).orElseThrow();
         VersionedPerson right = repository.findById(person.getId()).orElseThrow();
@@ -203,7 +203,7 @@ class JdbcPersonRepositoryMySqlTest {
     }
 
     private static Person personWithActiveEvent() {
-        Person person = new Person(neutralPersonality());
+        Person person = Person.create(neutralPersonality());
         PersonEvent music = new PersonEvent(
                 ActivityType.LISTEN_MUSIC,
                 "听音乐",

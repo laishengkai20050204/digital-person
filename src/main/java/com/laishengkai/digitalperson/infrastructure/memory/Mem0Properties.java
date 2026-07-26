@@ -18,6 +18,7 @@ public record Mem0Properties(
         String apiKey,
         Duration connectTimeout,
         Duration requestTimeout,
+        Integer maxResponseBytes,
         String healthPath
 ) {
     static final double DEFAULT_MINIMUM_RELEVANCE = 0.30;
@@ -37,6 +38,8 @@ public record Mem0Properties(
     private static final URI DEFAULT_BASE_URL = URI.create("http://127.0.0.1:8888");
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    static final int DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
+    private static final int MAX_CONFIGURED_RESPONSE_BYTES = 16 * 1_048_576;
     private static final String DEFAULT_HEALTH_PATH = "/auth/setup-status";
 
     public Mem0Properties {
@@ -52,6 +55,7 @@ public record Mem0Properties(
                 requestTimeout == null ? DEFAULT_REQUEST_TIMEOUT : requestTimeout,
                 "requestTimeout"
         );
+        maxResponseBytes = responseBytes(maxResponseBytes);
         healthPath = normalizePath(
                 healthPath == null ? DEFAULT_HEALTH_PATH : healthPath
         );
@@ -87,6 +91,8 @@ public record Mem0Properties(
                 + connectTimeout
                 + ", requestTimeout="
                 + requestTimeout
+                + ", maxResponseBytes="
+                + maxResponseBytes
                 + ", healthPath="
                 + healthPath
                 + "]";
@@ -110,6 +116,17 @@ public record Mem0Properties(
             throw new IllegalArgumentException(fieldName + " must be positive");
         }
         return duration;
+    }
+
+    private static int responseBytes(Integer value) {
+        int normalized = value == null ? DEFAULT_MAX_RESPONSE_BYTES : value;
+        if (normalized <= 0 || normalized > MAX_CONFIGURED_RESPONSE_BYTES) {
+            throw new IllegalArgumentException(
+                    "maxResponseBytes must be between 1 and "
+                            + MAX_CONFIGURED_RESPONSE_BYTES
+            );
+        }
+        return normalized;
     }
 
     private static double probability(Double value, String fieldName) {

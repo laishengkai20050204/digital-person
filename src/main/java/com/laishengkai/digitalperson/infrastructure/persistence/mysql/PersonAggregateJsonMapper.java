@@ -246,7 +246,7 @@ final class PersonAggregateJsonMapper {
                 ? restoreUnifiedEvolution(source.stateEvolution(), personTimeline)
                 : migrateLegacyEvolution(source.stateEvolution(), personTimeline);
 
-        return new Person(
+        return Person.reconstitute(
                 PersonId.parse(source.personId()),
                 identity,
                 personality,

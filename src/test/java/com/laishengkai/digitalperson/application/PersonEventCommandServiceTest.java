@@ -47,7 +47,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void replacementSettlesOldEffectAndInstallsNewEffectAtomically() {
-        Person person = new Person(PERSONALITY, stateWithValence(0.7));
+        Person person = Person.create(PERSONALITY, stateWithValence(0.7));
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
@@ -92,7 +92,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void finishSettlesThroughEndTimeThenRemovesEventBoundEffect() {
-        Person person = new Person(PERSONALITY, stateWithValence(0.7));
+        Person person = Person.create(PERSONALITY, stateWithValence(0.7));
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
@@ -122,7 +122,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void historicalRecordDoesNotReplayStateOrInvokeEvaluator() {
-        Person person = new Person(PERSONALITY, stateWithHunger(0.7));
+        Person person = Person.create(PERSONALITY, stateWithHunger(0.7));
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         AtomicInteger evaluationCount = new AtomicInteger();
         PersonEventCommandService service = service(repository, context -> {
@@ -157,7 +157,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void staleStartEvaluationCannotCommitAfterConcurrentVersionChange() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         CompletableFuture<EventStateImpact> evaluation = new CompletableFuture<>();
         PersonEventCommandService service = service(repository, context -> evaluation);
@@ -184,7 +184,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void realtimeStartRejectsPastStartTime() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
         PersonEventCommandService service = service(
                 repository,
@@ -205,7 +205,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void realtimeStartAutomaticallyEvaluatesPendingEventBeforeReplacement() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         PersonEvent untracked = openEvent(ActivityType.EAT, "绕过服务的事件", START);
         person.startPersonEvent(untracked, START);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);
@@ -250,7 +250,7 @@ class PersonEventCommandServiceTest {
 
     @Test
     void finishFailsClosedWhenPendingEventEvaluationFails() {
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         PersonEvent untracked = openEvent(ActivityType.EAT, "绕过服务的事件", START);
         person.startPersonEvent(untracked, START);
         VersionedInMemoryRepository repository = new VersionedInMemoryRepository(person);

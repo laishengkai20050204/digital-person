@@ -226,6 +226,6 @@ class JdbcPersonActivityScheduleRepositoryMySqlTest {
     }
 
     private static Person person() {
-        return new Person(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        return Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
     }
 }

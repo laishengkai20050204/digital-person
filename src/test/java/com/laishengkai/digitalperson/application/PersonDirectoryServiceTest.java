@@ -60,7 +60,7 @@ class PersonDirectoryServiceTest {
     @Test
     void readsCompleteDetailsAndStateWithoutReturningAggregate() {
         InMemoryRepository repository = new InMemoryRepository();
-        Person person = new Person(PERSONALITY);
+        Person person = Person.create(PERSONALITY);
         assertTrue(repository.insert(person));
         PersonDirectoryService service = new PersonDirectoryService(repository, repository);
 
