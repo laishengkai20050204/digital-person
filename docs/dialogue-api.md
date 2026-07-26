@@ -32,8 +32,10 @@ Content-Type: application/json
     "当然记得，你最喜欢科幻片。"
   ],
   "occurredAt": "2026-07-25T01:00:00Z",
-  "memoryStatus": "PROCESSED",
-  "memoryMutationCount": 1
+  "conversationStatus": "STORED",
+  "persistedConversationTurnCount": 2,
+  "memoryStatus": "SCHEDULED",
+  "memoryMutationCount": 0
 }
 ```
 
@@ -105,11 +107,13 @@ LanguageModelGateway
     ↓
 生成一条直接人物回复
     ↓
-DialogueMemoryRecorder
+原始 USER / PERSON 消息写入 MySQL
     ↓
-Mem0 infer=true 提取、更新或删除长期记忆
+返回 HTTP 响应（Mem0 后处理已调度）
     ↓
-返回 HTTP 响应
+专用虚拟线程异步执行
+    ├── DialogueMemoryRecorder → Mem0 infer=true
+    └── 滚动摘要与情节提取
 ```
 
 当前不会先调用额外模型生成 Mem0 查询参数。原始用户消息和事件上下文由 Java 组成相关性查询，再调用 Mem0 向量检索。
@@ -119,16 +123,18 @@ Mem0 infer=true 提取、更新或删除长期记忆
 响应中的 `memoryStatus`：
 
 ```text
-PROCESSED
+SCHEDULED
 DISABLED
 FAILED
+PROCESSED
 ```
 
-- `PROCESSED`：Mem0 已完成本轮处理；`memoryMutationCount` 可以是 `0`，表示模型认为没有需要新增、更新或删除的长期记忆。
+- `SCHEDULED`：长期记忆任务已交给专用后处理执行器；HTTP 响应不会等待 Mem0 完成，因此 `memoryMutationCount` 固定为 `0`。最终 mutation 数量或失败原因只写入服务日志。
 - `DISABLED`：当前未启用 Mem0 写入。
-- `FAILED`：回复已经生成，但 Mem0 写入失败；服务采用 fail-open，仍返回人物回复。
+- `FAILED`：长期记忆任务未能进入后处理执行器，例如执行器已经关闭；人物回复仍按 fail-open 返回。
+- `PROCESSED`：保留给同步或旧版适配器的兼容状态，正式 HTTP 对话链路通常不再返回该值。
 
-Mem0 错误不会把用户对话正文或供应商响应正文暴露给客户端。
+Mem0 在任务开始后的异步失败不会反向改变已经返回的响应，也不会把用户对话正文或供应商响应正文暴露给客户端。
 
 ## 6. 测试命令
 

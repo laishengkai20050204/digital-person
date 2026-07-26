@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.infrastructure.spring;
 
+import com.laishengkai.digitalperson.application.PersonCurrentStateProjector;
 import com.laishengkai.digitalperson.application.PersonDirectoryService;
 import com.laishengkai.digitalperson.application.PersonEventCommandService;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
@@ -10,7 +11,6 @@ import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -34,6 +34,12 @@ public class PersonApplicationConfiguration {
         return new StateUpdater();
     }
 
+    @Bean
+    @ConditionalOnMissingBean
+    PersonCurrentStateProjector personCurrentStateProjector(StateUpdater stateUpdater) {
+        return new PersonCurrentStateProjector(stateUpdater);
+    }
+
     /** Directory capability exists only when both read and create persistence ports exist. */
     @Bean
     @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
@@ -46,17 +52,13 @@ public class PersonApplicationConfiguration {
         return new PersonDirectoryService(personRepository, creationRepository, clock);
     }
 
-    /**
-     * Core person-event application services are owned here, not by the web adapter.
-     * Property-based registration avoids the previous duplicate, order-sensitive web
-     * fallback while keeping the protected API disabled by default.
-     */
+    /** Core person-event capability is available to any adapter when its ports exist. */
     @Bean
-    @ConditionalOnProperty(
-            prefix = "digital-person.person-api",
-            name = "enabled",
-            havingValue = "true"
-    )
+    @ConditionalOnBean({
+            PersonRepository.class,
+            EventStateImpactEvaluator.class,
+            StateEvaluationContextAssembler.class
+    })
     @ConditionalOnMissingBean(PersonEventCommandService.class)
     PersonEventCommandService personEventCommandService(
             PersonRepository personRepository,

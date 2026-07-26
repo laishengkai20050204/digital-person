@@ -9,19 +9,21 @@
   ↓
 原始 USER / PERSON 消息写入 MySQL
   ↓
+返回用户响应并将记忆任务交给专用后处理执行器
+  ↓
 DialogueMemoryRetentionPolicy 检查当前用户消息
   ├─ 可进入长期记忆：交给 Mem0 infer=true
-  └─ 明确不应长期保存：跳过 Mem0，返回 0 个 mutation
+  └─ 明确不应长期保存：跳过 Mem0，记录 0 个 mutation
 ```
 
 被过滤时，对外结果仍为：
 
 ```text
-memoryStatus = PROCESSED
+memoryStatus = SCHEDULED
 memoryMutationCount = 0
 ```
 
-这表示记忆链路已经正常完成判断，不代表 Mem0 故障。
+响应只表示任务已经调度，不等待过滤判断或 Mem0 完成。被过滤后的 0 个 mutation 会记录在服务日志中，不会回写已经返回的 HTTP 响应。
 
 ## Java 侧硬过滤
 

@@ -2,6 +2,7 @@ package com.laishengkai.digitalperson.infrastructure.dialogue;
 
 import com.laishengkai.digitalperson.application.ConversationSummaryService;
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
+import com.laishengkai.digitalperson.application.PersonCurrentStateProjector;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.conversation.ConversationEpisodeStore;
@@ -13,6 +14,8 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -21,21 +24,30 @@ import org.springframework.context.annotation.Configuration;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-/** Spring wiring for the token-protected direct person dialogue API. */
+/** Spring wiring for provider-neutral direct person dialogue capability. */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(
         prefix = "digital-person.llm",
         name = "enabled",
         havingValue = "true"
 )
-@ConditionalOnProperty(
-        prefix = "digital-person.person-api",
-        name = "enabled",
-        havingValue = "true"
-)
 @EnableConfigurationProperties(PersonDialogueProperties.class)
 public class PersonDialogueConfiguration {
+
+    public static final String POST_PROCESSING_EXECUTOR =
+            "personDialoguePostProcessingExecutor";
+
+    @Bean(name = POST_PROCESSING_EXECUTOR, destroyMethod = "close")
+    @ConditionalOnMissingBean(name = POST_PROCESSING_EXECUTOR)
+    ExecutorService personDialoguePostProcessingExecutor() {
+        return Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual().name("person-dialogue-post-", 0).factory()
+        );
+    }
 
     @Bean
     @ConditionalOnMissingBean(PersonDialogueModel.class)
@@ -92,6 +104,7 @@ public class PersonDialogueConfiguration {
     }
 
     @Bean
+    @ConditionalOnBean(PersonRepository.class)
     @ConditionalOnMissingBean(PersonDialogueService.class)
     PersonDialogueService personDialogueService(
             PersonRepository personRepository,
@@ -103,6 +116,9 @@ public class PersonDialogueConfiguration {
             ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
             ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
             ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
+            PersonCurrentStateProjector stateProjector,
+            @Qualifier(POST_PROCESSING_EXECUTOR) Executor postProcessingExecutor,
+            Clock clock,
             PersonDialogueProperties properties
     ) {
         ConversationSummaryService summaryService = summaryService(
@@ -119,7 +135,9 @@ public class PersonDialogueConfiguration {
                 conversationStoreProvider.getIfAvailable(),
                 summaryService,
                 memoryRecorderProvider.getIfAvailable(),
-                Clock.systemUTC(),
+                stateProjector,
+                postProcessingExecutor,
+                clock,
                 properties.maxMemoryItems(),
                 properties.maxConversationTurns(),
                 properties.conversationSummaryBatchTurns()
