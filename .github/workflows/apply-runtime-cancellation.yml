@@ -1,0 +1,75 @@
+name: Apply runtime cancellation refactor
+
+on:
+  push:
+    branches:
+      - fix/runtime-boundaries-final
+    paths:
+      - ".automation/runtime-cancellation.patch.b64.*"
+      - ".github/workflows/apply-runtime-cancellation.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Reconstruct and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .automation/runtime-cancellation.patch.b64.* \
+            | base64 --decode \
+            > /tmp/runtime-cancellation.patch
+          git apply --check /tmp/runtime-cancellation.patch
+          git apply /tmp/runtime-cancellation.patch
+          git diff --check
+
+      - name: Validate deployment scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n ops/deploy-from-git.sh
+          bash -n ops/ensure-mem0.sh
+          bash -n ops/test-ensure-mem0-secret-handling.sh
+
+      - name: Verify Mem0 secret handling
+        run: bash ops/test-ensure-mem0-secret-handling.sh
+
+      - name: Verify
+        shell: bash
+        run: |
+          set -o pipefail
+          mvn --batch-mode --no-transfer-progress verify 2>&1 | tee maven.log
+
+      - name: Commit verified changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .automation/runtime-cancellation.patch.b64.*
+          rmdir .automation 2>/dev/null || true
+          rm -f .github/workflows/apply-runtime-cancellation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix model cancellation and unify deadlines"
+          git push origin HEAD:fix/runtime-boundaries-final
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-cancellation-maven-log
+          path: maven.log
+          if-no-files-found: ignore
+          retention-days: 7
