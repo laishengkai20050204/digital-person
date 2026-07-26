@@ -208,15 +208,12 @@ public final class LanguageModelPersonActivityDecisionModel
     }
 
     private static FinishActivityCommand toFinishCommand(CommandItem item) {
-        requireAbsent(item.activityType(), "activityType", "FINISH");
-        requireAbsent(item.title(), "title", "FINISH");
-        requireAbsent(item.location(), "location", "FINISH");
-        if (item.participants() != null) {
-            throw new PersonActivityDecisionException(
-                    "participants is not allowed for FINISH"
-            );
-        }
-        requireAbsent(item.notes(), "notes", "FINISH");
+        /*
+         * Some model providers materialize optional properties from the shared START/FINISH
+         * tool schema even when action=FINISH. FINISH semantics are defined exclusively by
+         * eventId and reason, so known START-only properties are intentionally ignored here.
+         * Unknown properties remain rejected by FAIL_ON_UNKNOWN_PROPERTIES.
+         */
         EventEndReason reason = parseEndReason(item.reason());
         return new FinishActivityCommand(
                 EventId.parse(requireText(item.eventId(), "eventId")),
@@ -312,9 +309,10 @@ public final class LanguageModelPersonActivityDecisionModel
                 后开始。每个计划同一 eventId 最多 FINISH 一次、每个渠道最多 START 一次。
 
                 FINISH 只能引用 activeEvents 中 owner=PERSON 且仍开放的 eventId。reason 只能是 COMPLETED
-                或 INTERRUPTED；不得提交 REPLACED。START 不提交 eventId、startTime 或 endTime，这些由
-                Java 在统一 commandTime 生成。title、location、participants、notes 只描述直接事实，
-                不得写建议、人物台词、推理过程或虚构信息。
+                或 INTERRUPTED；不得提交 REPLACED。FINISH 应只提交 action、eventId、reason；若提供器仍补齐
+                activityType、title、location、participants 或 notes，Java 会忽略这些 START 专用字段。
+                START 不提交 eventId、startTime 或 endTime，这些由 Java 在统一 commandTime 生成。
+                title、location、participants、notes 只描述直接事实，不得写建议、人物台词、推理过程或虚构信息。
 
                 nextReviewMinutes 表示下一次重新判断活动的建议间隔，范围 1 到 360 分钟。必须与活动可能的
                 自然结束时间和当前不确定性匹配：若活动可能在 30 分钟内结束，或已接近用餐、休息、睡眠
