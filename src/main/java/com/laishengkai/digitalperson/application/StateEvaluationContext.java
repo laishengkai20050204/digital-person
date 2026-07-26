@@ -1,4 +1,4 @@
-package com.laishengkai.digitalperson.state;
+package com.laishengkai.digitalperson.application;
 
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.experience.PersonEventSnapshot;
@@ -7,6 +7,8 @@ import com.laishengkai.digitalperson.modelcontext.TemporalContextSnapshot;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonIdentitySnapshot;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
+import com.laishengkai.digitalperson.state.ActiveStateEffectSnapshot;
+import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 
 import java.time.Instant;
 import java.time.ZoneId;

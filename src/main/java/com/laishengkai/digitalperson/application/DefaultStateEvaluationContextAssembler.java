@@ -7,7 +7,6 @@ import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.modelcontext.PersonModelContextSnapshot;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 
 import java.time.Duration;

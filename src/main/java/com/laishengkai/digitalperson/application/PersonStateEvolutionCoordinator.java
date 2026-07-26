@@ -6,11 +6,9 @@ import com.laishengkai.digitalperson.experience.PersonEvent;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.state.EventEffectRegistration;
 import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
 import com.laishengkai.digitalperson.state.RegisteredStateEffect;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateUpdatePreparation;
 import com.laishengkai.digitalperson.state.StateUpdater;
@@ -92,7 +90,7 @@ public final class PersonStateEvolutionCoordinator {
         Consumer<String> guard = requireCheckpoint(checkpoint);
         guard.accept("state preparation");
         return stateUpdater.prepareWithNaturalEvolution(
-                safePerson.getId(),
+                safePerson.getId().toString(),
                 safePerson.getIdentity().timeZone(),
                 safeState,
                 safePerson.getCurrentPersonEvents(now),
@@ -166,7 +164,7 @@ public final class PersonStateEvolutionCoordinator {
 
         LOGGER.info(
                 "Automatically evaluating pending person events: personId={}, pendingEventIds={}",
-                safePerson.getId(),
+                safePerson.getId().toString(),
                 safePreparation.eventsToEvaluate().stream()
                         .map(PersonEvent::getId)
                         .toList()

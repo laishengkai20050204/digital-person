@@ -2,7 +2,7 @@ package com.laishengkai.digitalperson.infrastructure.state;
 
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.infrastructure.langchain4j.LanguageModelConfiguration;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
+import com.laishengkai.digitalperson.application.EventStateImpactEvaluator;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 

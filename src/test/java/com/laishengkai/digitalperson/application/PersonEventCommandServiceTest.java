@@ -15,7 +15,6 @@ import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PhysicalState;
 import com.laishengkai.digitalperson.state.SocialState;
 import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateTransition;
 import com.laishengkai.digitalperson.state.StateUpdater;

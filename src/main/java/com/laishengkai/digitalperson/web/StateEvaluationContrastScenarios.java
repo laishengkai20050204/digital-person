@@ -8,7 +8,7 @@ import com.laishengkai.digitalperson.memory.PersonMemoryContext;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.personality.PersonalitySnapshot;
 import com.laishengkai.digitalperson.state.PersonStateSnapshot;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
+import com.laishengkai.digitalperson.application.StateEvaluationContext;
 
 import java.time.Instant;
 import java.util.List;

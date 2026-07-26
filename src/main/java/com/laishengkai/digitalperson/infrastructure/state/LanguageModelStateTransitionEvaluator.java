@@ -12,9 +12,9 @@ import com.laishengkai.digitalperson.dialogue.ModelToolChoice;
 import com.laishengkai.digitalperson.dialogue.SystemModelMessage;
 import com.laishengkai.digitalperson.dialogue.UserModelMessage;
 import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
+import com.laishengkai.digitalperson.application.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
+import com.laishengkai.digitalperson.application.StateEvaluationContext;
 
 import java.util.Arrays;
 import java.util.List;
