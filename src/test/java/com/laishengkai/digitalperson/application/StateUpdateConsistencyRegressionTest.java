@@ -13,7 +13,6 @@ import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.AffectState;
 import com.laishengkai.digitalperson.state.CognitiveState;
 import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.PersonState;
 import com.laishengkai.digitalperson.state.PhysicalState;
 import com.laishengkai.digitalperson.state.SocialState;

@@ -8,16 +8,12 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
 import com.laishengkai.digitalperson.dialogue.ModelMessage;
 import com.laishengkai.digitalperson.dialogue.ModelToolCall;
 import com.laishengkai.digitalperson.dialogue.ModelUsage;
-import com.laishengkai.digitalperson.dialogue.ToolResultModelMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -42,9 +38,9 @@ public final class DefaultAgentExecutor implements AgentExecutor {
 
     private final LanguageModelGateway languageModelGateway;
     private final Duration modelTimeout;
-    private final Duration toolTimeout;
     private final Duration executionTimeout;
-    private final int maxToolResultCharacters;
+    private final AgentToolCallValidator toolCallValidator;
+    private final AgentToolRunner toolRunner;
 
     public DefaultAgentExecutor(LanguageModelGateway languageModelGateway) {
         this(
@@ -67,15 +63,21 @@ public final class DefaultAgentExecutor implements AgentExecutor {
                 languageModelGateway,
                 "languageModelGateway cannot be null"
         );
-        this.modelTimeout = requirePositive(modelTimeout, "modelTimeout");
-        this.toolTimeout = requirePositive(toolTimeout, "toolTimeout");
-        this.executionTimeout = requirePositive(executionTimeout, "executionTimeout");
-        if (maxToolResultCharacters <= 0) {
-            throw new IllegalArgumentException(
-                    "maxToolResultCharacters must be positive"
-            );
-        }
-        this.maxToolResultCharacters = maxToolResultCharacters;
+        this.modelTimeout = AgentExecutionBudget.requirePositive(
+                modelTimeout,
+                "modelTimeout"
+        );
+        this.executionTimeout = AgentExecutionBudget.requirePositive(
+                executionTimeout,
+                "executionTimeout"
+        );
+        this.toolCallValidator = new AgentToolCallValidator(
+                MAX_TOOL_ARGUMENT_CHARACTERS
+        );
+        this.toolRunner = new AgentToolRunner(
+                toolTimeout,
+                maxToolResultCharacters
+        );
     }
 
     @Override
@@ -84,16 +86,16 @@ public final class DefaultAgentExecutor implements AgentExecutor {
                 request,
                 "request cannot be null"
         );
-        Map<String, AgentTool> toolsByName = indexTools(safeRequest.tools());
+        AgentToolRegistry registry = AgentToolRegistry.from(safeRequest.tools());
         String executionId = UUID.randomUUID().toString();
         long startedAtNanos = System.nanoTime();
-        long deadlineNanos = deadlineAfter(startedAtNanos, executionTimeout);
+        AgentExecutionBudget budget = AgentExecutionBudget.start(executionTimeout);
 
         LOGGER.debug(
                 "Starting agent execution: executionId={}, initialMessageCount={}, toolCount={}, maxModelInvocations={}, executionTimeoutMs={}",
                 executionId,
                 safeRequest.messages().size(),
-                toolsByName.size(),
+                registry.size(),
                 safeRequest.maxModelInvocations(),
                 executionTimeout.toMillis()
         );
@@ -101,13 +103,13 @@ public final class DefaultAgentExecutor implements AgentExecutor {
         CompletionStage<AgentResult> result = invokeModel(
                 executionId,
                 safeRequest,
-                toolsByName,
+                registry,
                 new ArrayList<>(safeRequest.messages()),
                 0,
                 0,
                 ModelUsage.unknown(),
                 Set.of(),
-                deadlineNanos
+                budget
         );
 
         return result.whenComplete((agentResult, error) -> {
@@ -134,26 +136,26 @@ public final class DefaultAgentExecutor implements AgentExecutor {
     private CompletionStage<AgentResult> invokeModel(
             String executionId,
             AgentRequest request,
-            Map<String, AgentTool> toolsByName,
+            AgentToolRegistry registry,
             List<ModelMessage> messages,
             int completedModelInvocations,
             int completedToolExecutions,
             ModelUsage accumulatedUsage,
             Set<String> completedToolCallIds,
-            long deadlineNanos
+            AgentExecutionBudget budget
     ) {
         if (completedModelInvocations >= request.maxModelInvocations()) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "agent exceeded maxModelInvocations="
                             + request.maxModelInvocations()
             ));
         }
 
-        Duration remaining;
+        final Duration timeout;
         try {
-            remaining = remaining(deadlineNanos, "agent execution timed out");
-        } catch (AgentExecutionException timeout) {
-            return failedStage(timeout);
+            timeout = budget.cap(modelTimeout);
+        } catch (AgentExecutionException expired) {
+            return CompletableFuture.failedFuture(expired);
         }
 
         int invocationNumber = completedModelInvocations + 1;
@@ -173,18 +175,17 @@ public final class DefaultAgentExecutor implements AgentExecutor {
         try {
             responseStage = languageModelGateway.invoke(modelRequest);
         } catch (RuntimeException error) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "language model gateway failed before returning a stage",
                     error
             ));
         }
         if (responseStage == null) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "language model gateway returned a null stage"
             ));
         }
 
-        Duration timeout = min(modelTimeout, remaining);
         return DeadlineGuard.within(
                 responseStage,
                 timeout,
@@ -192,13 +193,13 @@ public final class DefaultAgentExecutor implements AgentExecutor {
         ).thenCompose(response -> handleModelResponse(
                 executionId,
                 request,
-                toolsByName,
+                registry,
                 messages,
                 invocationNumber,
                 completedToolExecutions,
                 accumulatedUsage,
                 completedToolCallIds,
-                deadlineNanos,
+                budget,
                 response
         ));
     }
@@ -206,17 +207,17 @@ public final class DefaultAgentExecutor implements AgentExecutor {
     private CompletionStage<AgentResult> handleModelResponse(
             String executionId,
             AgentRequest request,
-            Map<String, AgentTool> toolsByName,
+            AgentToolRegistry registry,
             List<ModelMessage> previousMessages,
             int completedModelInvocations,
             int completedToolExecutions,
             ModelUsage accumulatedUsage,
             Set<String> completedToolCallIds,
-            long deadlineNanos,
+            AgentExecutionBudget budget,
             LanguageModelResponse response
     ) {
         if (response == null) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "language model gateway returned a null response"
             ));
         }
@@ -224,21 +225,23 @@ public final class DefaultAgentExecutor implements AgentExecutor {
         List<ModelMessage> messages = new ArrayList<>(previousMessages);
         AssistantModelMessage assistantMessage = response.message();
         messages.add(assistantMessage);
-        ModelUsage totalUsage = addUsage(accumulatedUsage, response.usage());
+        ModelUsage totalUsage = AgentUsageAccumulator.add(
+                accumulatedUsage,
+                response.usage()
+        );
         List<ModelToolCall> toolCalls = assistantMessage.toolCalls();
 
         if (toolCalls.size() > MAX_TOOL_CALLS_PER_INVOCATION) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "model requested too many tools in one invocation"
             ));
         }
         if (completedToolExecutions + toolCalls.size() > MAX_TOTAL_TOOL_EXECUTIONS) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "agent exceeded max total tool executions="
                             + MAX_TOTAL_TOOL_EXECUTIONS
             ));
         }
-
         if (toolCalls.isEmpty()) {
             return CompletableFuture.completedFuture(new AgentResult(
                     response,
@@ -248,268 +251,42 @@ public final class DefaultAgentExecutor implements AgentExecutor {
                     totalUsage
             ));
         }
-
         if (completedModelInvocations >= request.maxModelInvocations()) {
-            return failedStage(new AgentExecutionException(
+            return CompletableFuture.failedFuture(new AgentExecutionException(
                     "model requested tools on the final permitted invocation"
             ));
         }
 
-        Set<String> nextCompletedToolCallIds = new HashSet<>(completedToolCallIds);
-        AgentExecutionException validationError = validateToolCalls(
-                toolCalls,
-                toolsByName,
-                nextCompletedToolCallIds
-        );
-        if (validationError != null) {
-            return failedStage(validationError);
+        final Set<String> nextCompletedToolCallIds;
+        try {
+            nextCompletedToolCallIds = toolCallValidator.validate(
+                    toolCalls,
+                    registry,
+                    completedToolCallIds
+            );
+        } catch (AgentExecutionException invalid) {
+            return CompletableFuture.failedFuture(invalid);
         }
 
-        return executeTools(
+        return toolRunner.execute(
                 executionId,
                 toolCalls,
-                toolsByName,
-                deadlineNanos
+                registry,
+                budget
         ).thenCompose(results -> {
             messages.addAll(results);
             return invokeModel(
                     executionId,
                     request,
-                    toolsByName,
+                    registry,
                     messages,
                     completedModelInvocations,
                     completedToolExecutions + toolCalls.size(),
                     totalUsage,
-                    Set.copyOf(nextCompletedToolCallIds),
-                    deadlineNanos
+                    nextCompletedToolCallIds,
+                    budget
             );
         });
-    }
-
-    private CompletionStage<List<ToolResultModelMessage>> executeTools(
-            String executionId,
-            List<ModelToolCall> toolCalls,
-            Map<String, AgentTool> toolsByName,
-            long deadlineNanos
-    ) {
-        boolean parallelSafe = toolCalls.stream()
-                .map(call -> toolsByName.get(call.name()))
-                .allMatch(tool -> Objects.requireNonNull(
-                        tool.executionPolicy(),
-                        "tool executionPolicy cannot be null"
-                ) == AgentToolExecutionPolicy.PARALLEL_SAFE);
-        if (!parallelSafe) {
-            CompletionStage<List<ToolResultModelMessage>> sequence =
-                    CompletableFuture.completedFuture(List.of());
-            for (ModelToolCall toolCall : toolCalls) {
-                sequence = sequence.thenCompose(previous -> executeTool(
-                        executionId,
-                        toolsByName.get(toolCall.name()),
-                        toolCall,
-                        deadlineNanos
-                ).thenApply(result -> {
-                    List<ToolResultModelMessage> next = new ArrayList<>(previous);
-                    next.add(result);
-                    return List.copyOf(next);
-                }));
-            }
-            return sequence;
-        }
-
-        List<CompletableFuture<ToolResultModelMessage>> resultFutures =
-                new ArrayList<>(toolCalls.size());
-        for (ModelToolCall toolCall : toolCalls) {
-            resultFutures.add(executeTool(
-                    executionId,
-                    toolsByName.get(toolCall.name()),
-                    toolCall,
-                    deadlineNanos
-            ).toCompletableFuture());
-        }
-        return CompletableFuture.allOf(
-                resultFutures.toArray(CompletableFuture[]::new)
-        ).thenApply(ignored -> resultFutures.stream()
-                .map(CompletableFuture::join)
-                .toList());
-    }
-
-    private CompletionStage<ToolResultModelMessage> executeTool(
-            String executionId,
-            AgentTool tool,
-            ModelToolCall toolCall,
-            long deadlineNanos
-    ) {
-        LOGGER.debug(
-                "Executing agent tool: executionId={}, toolCallIdPresent={}, toolName={}, argumentsLength={}, executionPolicy={}",
-                executionId,
-                !toolCall.id().isEmpty(),
-                toolCall.name(),
-                toolCall.argumentsJson().length(),
-                tool.executionPolicy()
-        );
-
-        CompletionStage<String> resultStage;
-        try {
-            resultStage = tool.execute(toolCall.argumentsJson());
-        } catch (RuntimeException error) {
-            return failedStage(toolFailure(toolCall.name(), error));
-        }
-        if (resultStage == null) {
-            return failedStage(new AgentExecutionException(
-                    "tool returned a null stage: " + toolCall.name()
-            ));
-        }
-
-        Duration remaining;
-        try {
-            remaining = remaining(deadlineNanos, "agent execution timed out");
-        } catch (AgentExecutionException timeout) {
-            return failedStage(timeout);
-        }
-        Duration timeout = min(toolTimeout, remaining);
-        return DeadlineGuard.within(
-                resultStage,
-                timeout,
-                () -> new AgentExecutionException(
-                        "tool execution timed out: " + toolCall.name()
-                )
-        ).handle((result, error) -> {
-            if (error != null) {
-                throw toolFailure(toolCall.name(), unwrap(error));
-            }
-            if (result == null) {
-                throw new AgentExecutionException(
-                        "tool returned a null result: " + toolCall.name()
-                );
-            }
-            if (result.length() > maxToolResultCharacters) {
-                throw new AgentExecutionException(
-                        "tool result exceeded maxToolResultCharacters="
-                                + maxToolResultCharacters
-                                + ": "
-                                + toolCall.name()
-                );
-            }
-            return new ToolResultModelMessage(
-                    toolCall.id(),
-                    toolCall.name(),
-                    result
-            );
-        });
-    }
-
-    private static AgentExecutionException validateToolCalls(
-            List<ModelToolCall> toolCalls,
-            Map<String, AgentTool> toolsByName,
-            Set<String> completedToolCallIds
-    ) {
-        Set<String> idsInResponse = new HashSet<>();
-        for (ModelToolCall toolCall : toolCalls) {
-            if (toolCall.id().isEmpty()) {
-                return new AgentExecutionException(
-                        "model tool call is missing an id: " + toolCall.name()
-                );
-            }
-            if (!idsInResponse.add(toolCall.id())) {
-                return new AgentExecutionException(
-                        "model returned duplicate tool call id"
-                );
-            }
-            if (completedToolCallIds.contains(toolCall.id())) {
-                return new AgentExecutionException(
-                        "model reused a tool call id from an earlier invocation"
-                );
-            }
-            if (!toolsByName.containsKey(toolCall.name())) {
-                return new AgentExecutionException(
-                        "model requested an unavailable tool: " + toolCall.name()
-                );
-            }
-            if (toolCall.argumentsJson().length() > MAX_TOOL_ARGUMENT_CHARACTERS) {
-                return new AgentExecutionException(
-                        "tool arguments exceeded max characters: " + toolCall.name()
-                );
-            }
-        }
-        completedToolCallIds.addAll(idsInResponse);
-        return null;
-    }
-
-    private static Map<String, AgentTool> indexTools(List<AgentTool> tools) {
-        Map<String, AgentTool> toolsByName = new HashMap<>();
-        for (AgentTool tool : tools) {
-            String name = tool.specification().name();
-            AgentTool previous = toolsByName.put(name, tool);
-            if (previous != null) {
-                throw new IllegalArgumentException(
-                        "duplicate agent tool name: " + name
-                );
-            }
-        }
-        return Map.copyOf(toolsByName);
-    }
-
-    private static long deadlineAfter(long startedAtNanos, Duration timeout) {
-        try {
-            return Math.addExact(startedAtNanos, timeout.toNanos());
-        } catch (ArithmeticException overflow) {
-            return Long.MAX_VALUE;
-        }
-    }
-
-    private static Duration remaining(long deadlineNanos, String message) {
-        long remainingNanos = deadlineNanos - System.nanoTime();
-        if (remainingNanos <= 0L) {
-            throw new AgentExecutionException(message);
-        }
-        return Duration.ofNanos(remainingNanos);
-    }
-
-    private static Duration min(Duration left, Duration right) {
-        return left.compareTo(right) <= 0 ? left : right;
-    }
-
-    private static Duration requirePositive(Duration value, String fieldName) {
-        Duration duration = Objects.requireNonNull(
-                value,
-                fieldName + " cannot be null"
-        );
-        if (duration.isZero() || duration.isNegative()) {
-            throw new IllegalArgumentException(fieldName + " must be positive");
-        }
-        duration.toNanos();
-        return duration;
-    }
-
-    private static ModelUsage addUsage(ModelUsage left, ModelUsage right) {
-        return new ModelUsage(
-                addNullable(left.inputTokens(), right.inputTokens()),
-                addNullable(left.outputTokens(), right.outputTokens()),
-                addNullable(left.totalTokens(), right.totalTokens())
-        );
-    }
-
-    private static Integer addNullable(Integer left, Integer right) {
-        if (left == null && right == null) {
-            return null;
-        }
-        return Objects.requireNonNullElse(left, 0)
-                + Objects.requireNonNullElse(right, 0);
-    }
-
-    private static AgentExecutionException toolFailure(
-            String toolName,
-            Throwable error
-    ) {
-        if (error instanceof AgentExecutionException agentError
-                && agentError.getMessage() != null
-                && agentError.getMessage().startsWith("tool execution timed out:")) {
-            return agentError;
-        }
-        return new AgentExecutionException(
-                "tool execution failed: " + toolName,
-                error
-        );
     }
 
     private static Throwable unwrap(Throwable error) {
@@ -518,10 +295,6 @@ public final class DefaultAgentExecutor implements AgentExecutor {
             current = current.getCause();
         }
         return current;
-    }
-
-    private static <T> CompletionStage<T> failedStage(Throwable error) {
-        return CompletableFuture.failedFuture(error);
     }
 
     private static long elapsedMillis(long startedAtNanos) {

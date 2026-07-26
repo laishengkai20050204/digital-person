@@ -39,7 +39,7 @@ public final class PersonCurrentStateProjector {
         );
         PersonState workingState = source.getState();
         StateUpdatePreparation preparation = stateUpdater.prepareWithNaturalEvolution(
-                source.getId(),
+                source.getId().toString(),
                 source.getIdentity().timeZone(),
                 workingState,
                 source.getCurrentPersonEvents(now),
@@ -51,7 +51,7 @@ public final class PersonCurrentStateProjector {
         if (!preparation.eventsToEvaluate().isEmpty()) {
             LOGGER.debug(
                     "Current-state projection omitted unevaluated event effects: personId={}, pendingChannels={}",
-                    source.getId(),
+                    source.getId().toString(),
                     preparation.pendingEvents().keySet()
             );
         }

@@ -79,7 +79,7 @@ class StateUpdaterNaturalEvolutionTest {
         PersonState state = state(0.6, 0.2, 0.3, 0.2, 0.75);
 
         UPDATER.prepareWithNaturalEvolution(
-                PERSON_ID,
+                PERSON_ID.toString(),
                 SHANGHAI,
                 state,
                 List.of(breakfast),
@@ -115,7 +115,7 @@ class StateUpdaterNaturalEvolutionTest {
         PersonState partitioned = oneShot.copy();
 
         UPDATER.prepareWithNaturalEvolution(
-                PERSON_ID,
+                PERSON_ID.toString(),
                 SHANGHAI,
                 oneShot,
                 List.of(),
@@ -129,7 +129,7 @@ class StateUpdaterNaturalEvolutionTest {
         for (int step = 1; step <= 4; step++) {
             Instant stepEnd = start.plus(Duration.ofMinutes(15L * step));
             context = UPDATER.prepareWithNaturalEvolution(
-                    PERSON_ID,
+                    PERSON_ID.toString(),
                     SHANGHAI,
                     partitioned,
                     List.of(),
@@ -171,7 +171,7 @@ class StateUpdaterNaturalEvolutionTest {
                 .filter(event -> event.contains(end.minusNanos(1)))
                 .toList();
         UPDATER.prepareWithNaturalEvolution(
-                PERSON_ID,
+                PERSON_ID.toString(),
                 SHANGHAI,
                 state,
                 current,

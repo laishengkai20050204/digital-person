@@ -4,7 +4,7 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
 import com.laishengkai.digitalperson.dialogue.LanguageModelResponse;
 import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
+import com.laishengkai.digitalperson.application.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 
 import java.util.List;

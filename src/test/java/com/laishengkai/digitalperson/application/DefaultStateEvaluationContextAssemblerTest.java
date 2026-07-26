@@ -17,7 +17,6 @@ import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
 import com.laishengkai.digitalperson.state.StateEffectType;
-import com.laishengkai.digitalperson.state.StateEvaluationContext;
 import com.laishengkai.digitalperson.state.StateEvolutionContext;
 import com.laishengkai.digitalperson.state.StateTransition;
 import org.junit.jupiter.api.Test;

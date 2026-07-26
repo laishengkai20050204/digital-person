@@ -4,7 +4,6 @@ import com.laishengkai.digitalperson.experience.ActivityChannel;
 import com.laishengkai.digitalperson.experience.ActivityType;
 import com.laishengkai.digitalperson.experience.EventId;
 import com.laishengkai.digitalperson.experience.PersonEvent;
-import com.laishengkai.digitalperson.person.PersonId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,7 +83,7 @@ public final class StateUpdater {
      * evolution before model-produced event effects.
      */
     public StateUpdatePreparation prepareWithNaturalEvolution(
-            PersonId personId,
+            String personKey,
             ZoneId timeZone,
             PersonState state,
             List<PersonEvent> currentEvents,
@@ -94,7 +93,7 @@ public final class StateUpdater {
             Map<EventId, Instant> eventEndTimes
     ) {
         NaturalInput naturalInput = new NaturalInput(
-                Objects.requireNonNull(personId, "personId cannot be null"),
+                Objects.requireNonNull(personKey, "personKey cannot be null"),
                 Objects.requireNonNull(timeZone, "timeZone cannot be null"),
                 List.copyOf(Objects.requireNonNull(
                         personEvents,
@@ -364,7 +363,7 @@ public final class StateUpdater {
 
         LOGGER.debug(
                 "Settled combined natural and event state evolution: personId={}, elapsedMs={}, boundaryCount={}, appliedIntervalCount={}",
-                input.personId(),
+                input.personKey(),
                 Duration.between(lastUpdatedAt, now).toMillis(),
                 boundaries.size(),
                 appliedIntervalCount
@@ -503,7 +502,7 @@ public final class StateUpdater {
             double baseTarget,
             double baseRate
     ) {
-        String seedPrefix = input.personId() + "|" + localDate + "|" + dimension.name();
+        String seedPrefix = input.personKey() + "|" + localDate + "|" + dimension.name();
         double targetOffset = (stableUnit(seedPrefix + "|target") - 0.5) * 0.06;
         double rateMultiplier = 0.90 + stableUnit(seedPrefix + "|rate") * 0.20;
         double target = dimension.clamp(baseTarget + targetOffset);
@@ -846,7 +845,7 @@ public final class StateUpdater {
     }
 
     private record NaturalInput(
-            PersonId personId,
+            String personKey,
             ZoneId timeZone,
             List<PersonEvent> personEvents
     ) {

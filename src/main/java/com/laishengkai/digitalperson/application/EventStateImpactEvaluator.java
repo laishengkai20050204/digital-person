@@ -1,4 +1,6 @@
-package com.laishengkai.digitalperson.state;
+package com.laishengkai.digitalperson.application;
+
+import com.laishengkai.digitalperson.state.EventStateImpact;
 
 import java.util.concurrent.CompletionStage;
 

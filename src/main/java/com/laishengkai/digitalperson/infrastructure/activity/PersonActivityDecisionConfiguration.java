@@ -9,7 +9,7 @@ import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.infrastructure.spring.LateConditionalBeanRegistrar;
 import com.laishengkai.digitalperson.person.PersonRepository;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
+import com.laishengkai.digitalperson.application.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;

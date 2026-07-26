@@ -10,7 +10,6 @@ import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.EventStateImpact;
-import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEffectDraft;
 import com.laishengkai.digitalperson.state.StateEffectEndPolicy;
