@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - agent/architecture-refactor-batch3
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
