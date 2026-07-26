@@ -1,0 +1,296 @@
+diff --git a/src/main/java/com/laishengkai/digitalperson/infrastructure/dialogue/PersonDialogueConfiguration.java b/src/main/java/com/laishengkai/digitalperson/infrastructure/dialogue/PersonDialogueConfiguration.java
+index d2a01d0..3fa45f1 100644
+--- a/src/main/java/com/laishengkai/digitalperson/infrastructure/dialogue/PersonDialogueConfiguration.java
++++ b/src/main/java/com/laishengkai/digitalperson/infrastructure/dialogue/PersonDialogueConfiguration.java
+@@ -2,6 +2,7 @@ package com.laishengkai.digitalperson.infrastructure.dialogue;
+ 
+ import com.laishengkai.digitalperson.application.ConversationSummaryService;
+ import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
++import com.laishengkai.digitalperson.application.PersonCurrentStateProjector;
+ import com.laishengkai.digitalperson.application.PersonDialogueService;
+ import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
+ import com.laishengkai.digitalperson.conversation.ConversationEpisodeStore;
+@@ -13,6 +14,8 @@ import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
+ import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
+ import com.laishengkai.digitalperson.person.PersonRepository;
+ import org.springframework.beans.factory.ObjectProvider;
++import org.springframework.beans.factory.annotation.Qualifier;
++import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+ import org.springframework.boot.context.properties.EnableConfigurationProperties;
+@@ -21,22 +24,31 @@ import org.springframework.context.annotation.Configuration;
+ import tools.jackson.databind.json.JsonMapper;
+ 
+ import java.time.Clock;
++import java.util.concurrent.Executor;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.Executors;
+ 
+-/** Spring wiring for the token-protected direct person dialogue API. */
++/** Spring wiring for provider-neutral direct person dialogue capability. */
+ @Configuration(proxyBeanMethods = false)
+ @ConditionalOnProperty(
+         prefix = "digital-person.llm",
+         name = "enabled",
+         havingValue = "true"
+ )
+-@ConditionalOnProperty(
+-        prefix = "digital-person.person-api",
+-        name = "enabled",
+-        havingValue = "true"
+-)
+ @EnableConfigurationProperties(PersonDialogueProperties.class)
+ public class PersonDialogueConfiguration {
+ 
++    public static final String POST_PROCESSING_EXECUTOR =
++            "personDialoguePostProcessingExecutor";
++
++    @Bean(name = POST_PROCESSING_EXECUTOR, destroyMethod = "close")
++    @ConditionalOnMissingBean(name = POST_PROCESSING_EXECUTOR)
++    ExecutorService personDialoguePostProcessingExecutor() {
++        return Executors.newThreadPerTaskExecutor(
++                Thread.ofVirtual().name("person-dialogue-post-", 0).factory()
++        );
++    }
++
+     @Bean
+     @ConditionalOnMissingBean(PersonDialogueModel.class)
+     PersonDialogueModel personDialogueModel(
+@@ -92,6 +104,7 @@ public class PersonDialogueConfiguration {
+     }
+ 
+     @Bean
++    @ConditionalOnBean(PersonRepository.class)
+     @ConditionalOnMissingBean(PersonDialogueService.class)
+     PersonDialogueService personDialogueService(
+             PersonRepository personRepository,
+@@ -103,6 +116,9 @@ public class PersonDialogueConfiguration {
+             ObjectProvider<ConversationEpisodeStore> episodeStoreProvider,
+             ObjectProvider<ConversationEpisodeModel> episodeModelProvider,
+             ObjectProvider<DialogueMemoryRecorder> memoryRecorderProvider,
++            PersonCurrentStateProjector stateProjector,
++            @Qualifier(POST_PROCESSING_EXECUTOR) Executor postProcessingExecutor,
++            Clock clock,
+             PersonDialogueProperties properties
+     ) {
+         ConversationSummaryService summaryService = summaryService(
+@@ -119,7 +135,9 @@ public class PersonDialogueConfiguration {
+                 conversationStoreProvider.getIfAvailable(),
+                 summaryService,
+                 memoryRecorderProvider.getIfAvailable(),
+-                Clock.systemUTC(),
++                stateProjector,
++                postProcessingExecutor,
++                clock,
+                 properties.maxMemoryItems(),
+                 properties.maxConversationTurns(),
+                 properties.conversationSummaryBatchTurns()
+diff --git a/src/main/java/com/laishengkai/digitalperson/infrastructure/persistence/mysql/JdbcPersonActivityScheduleRepository.java b/src/main/java/com/laishengkai/digitalperson/infrastructure/persistence/mysql/JdbcPersonActivityScheduleRepository.java
+index 497c703..423e6f6 100644
+--- a/src/main/java/com/laishengkai/digitalperson/infrastructure/persistence/mysql/JdbcPersonActivityScheduleRepository.java
++++ b/src/main/java/com/laishengkai/digitalperson/infrastructure/persistence/mysql/JdbcPersonActivityScheduleRepository.java
+@@ -86,6 +86,9 @@ public final class JdbcPersonActivityScheduleRepository
+                 updated_at = ?
+             WHERE person_id = ?
+               AND lease_token = ?
++              AND enabled = TRUE
++              AND lease_until IS NOT NULL
++              AND lease_until > ?
+             """;
+ 
+     private static final String COMPLETE_FAILURE_SQL = """
+@@ -99,6 +102,9 @@ public final class JdbcPersonActivityScheduleRepository
+                 updated_at = ?
+             WHERE person_id = ?
+               AND lease_token = ?
++              AND enabled = TRUE
++              AND lease_until IS NOT NULL
++              AND lease_until > ?
+             """;
+ 
+     private static final String RESCHEDULE_SQL = """
+@@ -110,6 +116,9 @@ public final class JdbcPersonActivityScheduleRepository
+                 updated_at = ?
+             WHERE person_id = ?
+               AND lease_token = ?
++              AND enabled = TRUE
++              AND lease_until IS NOT NULL
++              AND lease_until > ?
+             """;
+ 
+     private final JdbcTemplate jdbcTemplate;
+@@ -263,7 +272,8 @@ public final class JdbcPersonActivityScheduleRepository
+                         Timestamp.from(completion),
+                         Timestamp.from(completion),
+                         claim.personId().toString(),
+-                        claim.leaseToken().toString()
++                        claim.leaseToken().toString(),
++                        Timestamp.from(completion)
+                 ),
+                 "activity schedule success completion"
+         );
+@@ -291,7 +301,8 @@ public final class JdbcPersonActivityScheduleRepository
+                         Timestamp.from(completion),
+                         Timestamp.from(completion),
+                         claim.personId().toString(),
+-                        claim.leaseToken().toString()
++                        claim.leaseToken().toString(),
++                        Timestamp.from(completion)
+                 ),
+                 "activity schedule failure completion"
+         );
+@@ -316,7 +327,8 @@ public final class JdbcPersonActivityScheduleRepository
+                         Timestamp.from(completion),
+                         Timestamp.from(completion),
+                         claim.personId().toString(),
+-                        claim.leaseToken().toString()
++                        claim.leaseToken().toString(),
++                        Timestamp.from(completion)
+                 ),
+                 "activity schedule conflict reschedule"
+         );
+diff --git a/src/main/java/com/laishengkai/digitalperson/infrastructure/scheduling/PersonActivityLeaseHeartbeat.java b/src/main/java/com/laishengkai/digitalperson/infrastructure/scheduling/PersonActivityLeaseHeartbeat.java
+index 3a3b15d..1e113c8 100644
+--- a/src/main/java/com/laishengkai/digitalperson/infrastructure/scheduling/PersonActivityLeaseHeartbeat.java
++++ b/src/main/java/com/laishengkai/digitalperson/infrastructure/scheduling/PersonActivityLeaseHeartbeat.java
+@@ -90,6 +90,7 @@ public final class PersonActivityLeaseHeartbeat {
+                     newLeaseUntil
+             );
+         } catch (RuntimeException error) {
++            leaseOwned.set(false);
+             LOGGER.error(
+                     "Activity schedule lease heartbeat failed: personId={}, leaseToken={}",
+                     lease.personId(),
+diff --git a/src/main/java/com/laishengkai/digitalperson/infrastructure/spring/PersonApplicationConfiguration.java b/src/main/java/com/laishengkai/digitalperson/infrastructure/spring/PersonApplicationConfiguration.java
+index a5fb75c..b917cfb 100644
+--- a/src/main/java/com/laishengkai/digitalperson/infrastructure/spring/PersonApplicationConfiguration.java
++++ b/src/main/java/com/laishengkai/digitalperson/infrastructure/spring/PersonApplicationConfiguration.java
+@@ -1,5 +1,6 @@
+ package com.laishengkai.digitalperson.infrastructure.spring;
+ 
++import com.laishengkai.digitalperson.application.PersonCurrentStateProjector;
+ import com.laishengkai.digitalperson.application.PersonDirectoryService;
+ import com.laishengkai.digitalperson.application.PersonEventCommandService;
+ import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
+@@ -10,7 +11,6 @@ import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
+ import com.laishengkai.digitalperson.state.StateUpdater;
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+ import org.springframework.context.annotation.Bean;
+ import org.springframework.context.annotation.Configuration;
+ import org.springframework.context.annotation.Import;
+@@ -34,6 +34,12 @@ public class PersonApplicationConfiguration {
+         return new StateUpdater();
+     }
+ 
++    @Bean
++    @ConditionalOnMissingBean
++    PersonCurrentStateProjector personCurrentStateProjector(StateUpdater stateUpdater) {
++        return new PersonCurrentStateProjector(stateUpdater);
++    }
++
+     /** Directory capability exists only when both read and create persistence ports exist. */
+     @Bean
+     @ConditionalOnBean({PersonRepository.class, PersonCreationRepository.class})
+@@ -46,17 +52,13 @@ public class PersonApplicationConfiguration {
+         return new PersonDirectoryService(personRepository, creationRepository, clock);
+     }
+ 
+-    /**
+-     * Core person-event application services are owned here, not by the web adapter.
+-     * Property-based registration avoids the previous duplicate, order-sensitive web
+-     * fallback while keeping the protected API disabled by default.
+-     */
++    /** Core person-event capability is available to any adapter when its ports exist. */
+     @Bean
+-    @ConditionalOnProperty(
+-            prefix = "digital-person.person-api",
+-            name = "enabled",
+-            havingValue = "true"
+-    )
++    @ConditionalOnBean({
++            PersonRepository.class,
++            EventStateImpactEvaluator.class,
++            StateEvaluationContextAssembler.class
++    })
+     @ConditionalOnMissingBean(PersonEventCommandService.class)
+     PersonEventCommandService personEventCommandService(
+             PersonRepository personRepository,
+diff --git a/src/test/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutorTest.java b/src/test/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutorTest.java
+index 486471c..3eaeffe 100644
+--- a/src/test/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutorTest.java
++++ b/src/test/java/com/laishengkai/digitalperson/agent/DefaultAgentExecutorTest.java
+@@ -409,6 +409,11 @@ class DefaultAgentExecutorTest {
+                 error
+         );
+         assertEquals("tool execution failed: lookup", agentError.getMessage());
++        IllegalStateException cause = assertInstanceOf(
++                IllegalStateException.class,
++                agentError.getCause()
++        );
++        assertEquals("secret provider detail", cause.getMessage());
+     }
+ 
+     private static LanguageModelResponse response(
+diff --git a/src/test/java/com/laishengkai/digitalperson/application/PersonCurrentStateProjectorTest.java b/src/test/java/com/laishengkai/digitalperson/application/PersonCurrentStateProjectorTest.java
+new file mode 100644
+index 0000000..aa4a491
+--- /dev/null
++++ b/src/test/java/com/laishengkai/digitalperson/application/PersonCurrentStateProjectorTest.java
+@@ -0,0 +1,41 @@
++package com.laishengkai.digitalperson.application;
++
++import com.laishengkai.digitalperson.experience.EventTimeline;
++import com.laishengkai.digitalperson.person.Person;
++import com.laishengkai.digitalperson.person.PersonId;
++import com.laishengkai.digitalperson.personality.Personality;
++import com.laishengkai.digitalperson.state.PersonState;
++import com.laishengkai.digitalperson.state.StateEvolutionContext;
++import com.laishengkai.digitalperson.state.StateUpdater;
++import org.junit.jupiter.api.Test;
++
++import java.time.Instant;
++import java.util.Map;
++import java.util.Set;
++
++import static org.assertj.core.api.Assertions.assertThat;
++
++class PersonCurrentStateProjectorTest {
++
++    @Test
++    void advancesAWorkingCopyToTheDialogueTimeWithoutMutatingTheAggregate() {
++        Instant previousUpdate = Instant.parse("2026-07-25T00:00:00Z");
++        Instant now = previousUpdate.plusSeconds(6 * 60 * 60);
++        Person person = Person.reconstitute(
++                PersonId.random(),
++                new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
++                PersonState.baseline(),
++                new EventTimeline(),
++                new EventTimeline(),
++                new StateEvolutionContext(previousUpdate, Map.of(), Set.of())
++        );
++
++        PersonCurrentStateProjector.Projection projection =
++                new PersonCurrentStateProjector(new StateUpdater()).project(person, now);
++
++        assertThat(projection.evolutionContext().lastUpdatedAt()).isEqualTo(now);
++        assertThat(person.getStateEvolutionContext().lastUpdatedAt())
++                .isEqualTo(previousUpdate);
++        assertThat(person.getStateSnapshot()).isNotSameAs(projection.state());
++    }
++}
+diff --git a/src/test/java/com/laishengkai/digitalperson/application/PersonDialogueMemoryFilteringTest.java b/src/test/java/com/laishengkai/digitalperson/application/PersonDialogueMemoryFilteringTest.java
+index 4188a77..2c0bf34 100644
+--- a/src/test/java/com/laishengkai/digitalperson/application/PersonDialogueMemoryFilteringTest.java
++++ b/src/test/java/com/laishengkai/digitalperson/application/PersonDialogueMemoryFilteringTest.java
+@@ -71,7 +71,7 @@ class PersonDialogueMemoryFilteringTest {
+ 
+         assertThat(exchange.result().replies()).containsExactly("测试收到。");
+         assertThat(exchange.memoryStatus())
+-                .isEqualTo(PersonDialogueExchange.MemoryStatus.PROCESSED);
++                .isEqualTo(PersonDialogueExchange.MemoryStatus.SCHEDULED);
+         assertThat(exchange.memoryMutationCount()).isZero();
+     }
+ }
