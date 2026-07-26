@@ -6,7 +6,7 @@ import com.laishengkai.digitalperson.memory.MemoryMessageRole;
 import com.laishengkai.digitalperson.memory.MemoryMutation;
 import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
-import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
+import com.laishengkai.digitalperson.memory.SemanticMemorySource;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
 import com.laishengkai.digitalperson.memory.PersonMemoryWriteRequest;
@@ -45,13 +45,13 @@ import java.util.concurrent.CompletionStage;
 @EnableConfigurationProperties(MemoryTestApiProperties.class)
 public final class MemoryTestController {
     private final PersonMemoryStore memoryStore;
-    private final PersonMemoryGateway memoryGateway;
+    private final SemanticMemorySource memoryGateway;
     private final InternalTokenGuard tokenGuard;
 
     @Autowired
     public MemoryTestController(
             @Qualifier("mem0PersonMemoryStore") ObjectProvider<PersonMemoryStore> memoryStoreProvider,
-            @Qualifier("mem0PersonMemoryGateway") ObjectProvider<PersonMemoryGateway> memoryGatewayProvider,
+            @Qualifier("mem0PersonMemoryGateway") ObjectProvider<SemanticMemorySource> memoryGatewayProvider,
             MemoryTestApiProperties properties
     ) {
         this(
@@ -63,7 +63,7 @@ public final class MemoryTestController {
 
     MemoryTestController(
             PersonMemoryStore memoryStore,
-            PersonMemoryGateway memoryGateway,
+            SemanticMemorySource memoryGateway,
             MemoryTestApiProperties properties
     ) {
         this.memoryStore = memoryStore;
@@ -141,7 +141,7 @@ public final class MemoryTestController {
         return memoryStore;
     }
 
-    private PersonMemoryGateway requiredGateway() {
+    private SemanticMemorySource requiredGateway() {
         if (memoryGateway == null) {
             throw new MemoryTestUnavailableException(
                     "Mem0 retrieval is unavailable; enable digital-person.memory.mem0.retrieval-enabled"

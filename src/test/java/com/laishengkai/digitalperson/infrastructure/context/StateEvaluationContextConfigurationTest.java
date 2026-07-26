@@ -4,8 +4,8 @@ import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.conversation.NoOpRecentConversationGateway;
-import com.laishengkai.digitalperson.infrastructure.memory.NoOpPersonMemoryGateway;
 import com.laishengkai.digitalperson.infrastructure.spring.PersonApplicationConfiguration;
+import com.laishengkai.digitalperson.memory.HybridPersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.MemoryAvailability;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
@@ -35,7 +35,7 @@ class StateEvaluationContextConfigurationTest {
             assertThat(context).hasSingleBean(RecentConversationGateway.class);
             assertThat(context).hasSingleBean(StateEvaluationContextAssembler.class);
             assertThat(context.getBean(PersonMemoryGateway.class))
-                    .isInstanceOf(NoOpPersonMemoryGateway.class);
+                    .isInstanceOf(HybridPersonMemoryGateway.class);
             assertThat(context.getBean(RecentConversationGateway.class))
                     .isInstanceOf(NoOpRecentConversationGateway.class);
 

@@ -3,7 +3,7 @@ package com.laishengkai.digitalperson.infrastructure.memory;
 import com.laishengkai.digitalperson.memory.MemoryItem;
 import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
-import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
+import com.laishengkai.digitalperson.memory.SemanticMemorySource;
 import com.laishengkai.digitalperson.memory.PersonMemoryQuery;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 
 /** Mem0-backed retrieval adapter with fail-open behavior. */
-public final class Mem0PersonMemoryGateway implements PersonMemoryGateway {
+public final class Mem0PersonMemoryGateway implements SemanticMemorySource {
     private static final Logger LOGGER = LoggerFactory.getLogger(
             Mem0PersonMemoryGateway.class
     );

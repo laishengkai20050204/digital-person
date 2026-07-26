@@ -6,21 +6,17 @@ import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.conversation.NoOpRecentConversationGateway;
-import com.laishengkai.digitalperson.infrastructure.memory.NoOpPersonMemoryGateway;
+import com.laishengkai.digitalperson.infrastructure.memory.MemoryGatewayConfiguration;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 /** Default context retrieval wiring; real providers can replace every bean. */
 @Configuration(proxyBeanMethods = false)
+@Import(MemoryGatewayConfiguration.class)
 public class StateEvaluationContextConfiguration {
-
-    @Bean
-    @ConditionalOnMissingBean(PersonMemoryGateway.class)
-    PersonMemoryGateway personMemoryGateway() {
-        return new NoOpPersonMemoryGateway();
-    }
 
     @Bean
     @ConditionalOnMissingBean(RecentConversationGateway.class)

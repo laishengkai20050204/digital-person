@@ -327,10 +327,10 @@ GitHub Actions 使用固定版本的 Maven Wrapper 和 Java 21 执行编译、Sp
 
 ## 下一步
 
-当前事件 API、活动调度、租约心跳、Agent 执行边界和 Mem0 读写适配已经落地。下一阶段重点是：
+当前事件 API、活动调度、租约心跳、Agent 执行边界、Mem0 语义记忆和 MySQL 结构化记忆检索已经落地。下一阶段重点是：
 
 1. 完成正式对话编排，并在对话成功后调用已提供的 `DialogueMemoryRecorder` 异步提取长期记忆
 2. 持久化最近原始对话，为 `RecentConversationGateway` 提供真实数据源
-3. 增加记忆写入失败补偿、质量评估和可观测性
+3. 增加对话到结构化事实的受控提取、冲突合并、写入失败补偿和质量评估
 4. 增加调度管理 API、Prometheus 指标和按人物成本预算
 5. 验证底层模型供应商对 `CompletableFuture.cancel(true)` 的主动取消支持

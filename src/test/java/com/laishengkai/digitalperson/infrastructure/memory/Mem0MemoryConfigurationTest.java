@@ -2,7 +2,9 @@ package com.laishengkai.digitalperson.infrastructure.memory;
 
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.infrastructure.context.StateEvaluationContextConfiguration;
+import com.laishengkai.digitalperson.memory.HybridPersonMemoryGateway;
 import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
+import com.laishengkai.digitalperson.memory.SemanticMemorySource;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -28,7 +30,8 @@ class Mem0MemoryConfigurationTest {
                     assertThat(context).hasSingleBean(DialogueMemoryRecorder.class);
                     assertThat(context).hasSingleBean(PersonMemoryGateway.class);
                     assertThat(context.getBean(PersonMemoryGateway.class))
-                            .isInstanceOf(NoOpPersonMemoryGateway.class);
+                            .isInstanceOf(HybridPersonMemoryGateway.class);
+                    assertThat(context).doesNotHaveBean(SemanticMemorySource.class);
                 });
     }
 
@@ -44,6 +47,9 @@ class Mem0MemoryConfigurationTest {
                     assertThat(context).hasSingleBean(DialogueMemoryRecorder.class);
                     assertThat(context).hasSingleBean(PersonMemoryGateway.class);
                     assertThat(context.getBean(PersonMemoryGateway.class))
+                            .isInstanceOf(HybridPersonMemoryGateway.class);
+                    assertThat(context).hasSingleBean(SemanticMemorySource.class);
+                    assertThat(context.getBean(SemanticMemorySource.class))
                             .isInstanceOf(Mem0PersonMemoryGateway.class);
                 });
     }
@@ -59,9 +65,11 @@ class Mem0MemoryConfigurationTest {
                         "digital-person.memory.mem0.retrieval-enabled=true"
                 )
                 .run(context -> {
-                    assertThat(context.getBeansOfType(PersonMemoryGateway.class))
-                            .containsKeys("personMemoryGateway", "mem0PersonMemoryGateway");
+                    assertThat(context).hasSingleBean(PersonMemoryGateway.class);
                     assertThat(context.getBean(PersonMemoryGateway.class))
+                            .isInstanceOf(HybridPersonMemoryGateway.class);
+                    assertThat(context).hasSingleBean(SemanticMemorySource.class);
+                    assertThat(context.getBean(SemanticMemorySource.class))
                             .isInstanceOf(Mem0PersonMemoryGateway.class);
                 });
     }

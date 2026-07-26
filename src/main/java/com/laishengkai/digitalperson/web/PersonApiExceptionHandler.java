@@ -23,7 +23,8 @@ import java.util.concurrent.CompletionException;
         PersonEventController.class,
         PersonActivityDecisionController.class,
         PersonDialogueController.class,
-        MemoryTestController.class
+        MemoryTestController.class,
+        StructuredMemoryTestController.class
 })
 public final class PersonApiExceptionHandler {
 

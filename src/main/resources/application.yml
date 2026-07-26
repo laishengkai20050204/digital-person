@@ -64,6 +64,10 @@ digital-person:
     batch-size: ${ACTIVITY_SCHEDULER_BATCH_SIZE:10}
     max-in-flight: ${ACTIVITY_SCHEDULER_MAX_IN_FLIGHT:4}
   memory:
+    structured:
+      enabled: ${STRUCTURED_MEMORY_ENABLED:false}
+      minimum-entity-similarity: ${STRUCTURED_MEMORY_MINIMUM_ENTITY_SIMILARITY:0.60}
+      maximum-entity-candidates: ${STRUCTURED_MEMORY_MAXIMUM_ENTITY_CANDIDATES:300}
     mem0:
       enabled: ${MEM0_ENABLED:false}
       required: ${MEM0_REQUIRED:false}

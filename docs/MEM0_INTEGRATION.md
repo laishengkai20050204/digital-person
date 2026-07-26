@@ -10,7 +10,7 @@
 - `Mem0PersonMemoryStore`：实现对话写入和单条删除；
 - `DialogueMemoryRecorder`：把一轮用户消息与人物回复转换为受限的记忆提取请求；
 - Mem0 不可用时，默认以无记忆模式继续运行；
-- `MEM0_RETRIEVAL_ENABLED=false` 时仍使用 `NoOpPersonMemoryGateway`。
+- `MEM0_RETRIEVAL_ENABLED=false` 时语义来源关闭；主 `HybridPersonMemoryGateway` 仍可读取已启用的结构化来源。
 
 ## 部署原则
 
@@ -172,7 +172,7 @@ MEM0_RETRIEVAL_ENABLED=false
 暂不把 Mem0 搜索结果送入人物上下文。
 
 MEM0_RETRIEVAL_ENABLED=true
-用 Mem0PersonMemoryGateway 替换 NoOpPersonMemoryGateway。
+注册 Mem0 语义来源，并由 HybridPersonMemoryGateway 与结构化来源合并。
 
 MEM0_REQUIRED=false
 Mem0 故障时应用继续运行，健康组件保持整体 UP 并标记 available=false。

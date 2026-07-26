@@ -6,8 +6,12 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import com.laishengkai.digitalperson.conversation.RecentConversationGateway;
 import com.laishengkai.digitalperson.infrastructure.conversation.SummaryAwareRecentConversationGateway;
+import com.laishengkai.digitalperson.infrastructure.memory.StructuredMemoryProperties;
+import com.laishengkai.digitalperson.infrastructure.memory.StructuredPersonMemoryGateway;
 import com.laishengkai.digitalperson.infrastructure.scheduling.ActivitySchedulerProperties;
 import com.laishengkai.digitalperson.infrastructure.scheduling.PersonActivityScheduleRepository;
+import com.laishengkai.digitalperson.memory.StructuredMemoryQueryPlanner;
+import com.laishengkai.digitalperson.memory.StructuredMemorySource;
 import com.laishengkai.digitalperson.person.PersonCreationRepository;
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -28,7 +32,8 @@ import java.time.Clock;
 @EnableConfigurationProperties({
         MySqlPersonPersistenceProperties.class,
         MySqlRecentConversationProperties.class,
-        ActivitySchedulerProperties.class
+        ActivitySchedulerProperties.class,
+        StructuredMemoryProperties.class
 })
 @ConditionalOnProperty(
         prefix = "digital-person.persistence.mysql",
@@ -137,6 +142,45 @@ public class MySqlPersonPersistenceConfiguration {
                 repository,
                 episodeRepository,
                 properties.episodeMaxItems()
+        );
+    }
+
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.memory.structured",
+            name = "enabled",
+            havingValue = "true"
+    )
+    JdbcStructuredMemoryRepository jdbcStructuredMemoryRepository(
+            @Qualifier("personJdbcTemplate") JdbcTemplate jdbcTemplate,
+            @Qualifier("personTransactionTemplate") TransactionTemplate transactionTemplate,
+            StructuredMemoryProperties properties
+    ) {
+        return new JdbcStructuredMemoryRepository(
+                jdbcTemplate,
+                transactionTemplate,
+                properties
+        );
+    }
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.memory.structured",
+            name = "enabled",
+            havingValue = "true"
+    )
+    StructuredMemorySource structuredMemorySource(
+            JdbcStructuredMemoryRepository repository,
+            StructuredMemoryQueryPlanner queryPlanner,
+            StructuredMemoryProperties properties,
+            Clock clock
+    ) {
+        return new StructuredPersonMemoryGateway(
+                repository,
+                queryPlanner,
+                properties,
+                clock
         );
     }
 
