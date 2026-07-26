@@ -1,0 +1,76 @@
+name: Apply architecture refactor batch 3
+
+on:
+  push:
+    branches:
+      - agent/architecture-refactor-batch3
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/architecture-refactor-batch3
+          fetch-depth: 0
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Apply architecture refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/batch3.part00 \
+              .github/batch3.part01 \
+              .github/batch3.part02 \
+              .github/batch3.part03 \
+              .github/batch3.part04 \
+              > /tmp/batch3.patch.gz.b64
+          base64 --decode /tmp/batch3.patch.gz.b64 \
+              | gzip --decompress \
+              > /tmp/batch3.patch
+          echo "bf9439fb1b3b0305d9a0bb48954a8f99fc4bc58a813f5305f03cfbf8f2f2b0ca  /tmp/batch3.patch" \
+              | sha256sum --check --strict
+          git apply --index /tmp/batch3.patch
+          rm -f .github/batch3.part00 \
+                .github/batch3.part01 \
+                .github/batch3.part02 \
+                .github/batch3.part03 \
+                .github/batch3.part04
+          chmod +x mvnw
+
+      - name: Verify architecture refactor
+        shell: bash
+        run: |
+          set -o pipefail
+          ./mvnw --batch-mode --no-transfer-progress verify 2>&1 | tee batch3-maven.log
+
+      - name: Upload verification failure log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-refactor-batch3-verify-log
+          path: batch3-maven.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Commit verified architecture refactor
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f batch3-maven.log
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "Refactor agent and activity architecture"
+          git push origin HEAD:agent/architecture-refactor-batch3
