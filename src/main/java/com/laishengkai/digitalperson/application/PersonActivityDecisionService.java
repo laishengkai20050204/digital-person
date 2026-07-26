@@ -1,5 +1,6 @@
 package com.laishengkai.digitalperson.application;
 
+import com.laishengkai.digitalperson.async.DeadlineGuard;
 import com.laishengkai.digitalperson.activity.FinishActivityCommand;
 import com.laishengkai.digitalperson.activity.PersonActivityDecisionContext;
 import com.laishengkai.digitalperson.activity.PersonActivityDecisionModel;
@@ -29,10 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -427,76 +426,15 @@ public final class PersonActivityDecisionService {
             Instant deadline,
             String phase
     ) {
-        CompletionStage<T> safeStage = Objects.requireNonNull(
+        return DeadlineGuard.before(
                 stage,
-                "stage cannot be null"
+                deadline,
+                clock,
+                () -> new PersonActivityDecisionDeadlineExceededException(
+                        deadline,
+                        phase
+                )
         );
-        ensureBeforeDeadline(deadline, phase);
-        CompletableFuture<T> source = safeStage.toCompletableFuture();
-        if (Instant.MAX.equals(deadline)) {
-            return source.thenApply(value -> {
-                ensureBeforeDeadline(deadline, phase);
-                return value;
-            });
-        }
-
-        Duration remaining = Duration.between(clock.instant(), deadline);
-        if (remaining.isNegative() || remaining.isZero()) {
-            source.cancel(true);
-            return CompletableFuture.failedFuture(
-                    new PersonActivityDecisionDeadlineExceededException(deadline, phase)
-            );
-        }
-
-        CompletableFuture<T> guarded = new CompletableFuture<>();
-        AtomicBoolean settled = new AtomicBoolean();
-        long delayNanos;
-        try {
-            delayNanos = Math.max(1L, remaining.toNanos());
-        } catch (ArithmeticException overflow) {
-            delayNanos = Long.MAX_VALUE;
-        }
-        CompletableFuture.delayedExecutor(delayNanos, TimeUnit.NANOSECONDS)
-                .execute(() -> {
-                    PersonActivityDecisionDeadlineExceededException timeout =
-                            new PersonActivityDecisionDeadlineExceededException(
-                                    deadline,
-                                    phase
-                            );
-                    if (settled.compareAndSet(false, true)) {
-                        source.cancel(true);
-                        guarded.completeExceptionally(timeout);
-                    }
-                });
-        source.whenComplete((value, error) -> {
-            if (!settled.compareAndSet(false, true)) {
-                return;
-            }
-            if (error != null) {
-                guarded.completeExceptionally(unwrapCompletionFailure(error));
-                return;
-            }
-            try {
-                ensureBeforeDeadline(deadline, phase);
-                guarded.complete(value);
-            } catch (RuntimeException timeout) {
-                guarded.completeExceptionally(timeout);
-            }
-        });
-        guarded.whenComplete((ignored, error) -> {
-            if (guarded.isCancelled() && settled.compareAndSet(false, true)) {
-                source.cancel(true);
-            }
-        });
-        return guarded;
-    }
-
-    private static Throwable unwrapCompletionFailure(Throwable error) {
-        Throwable current = Objects.requireNonNull(error, "error cannot be null");
-        while (current instanceof CompletionException && current.getCause() != null) {
-            current = current.getCause();
-        }
-        return current;
     }
 
     private static void validateFinishCommands(

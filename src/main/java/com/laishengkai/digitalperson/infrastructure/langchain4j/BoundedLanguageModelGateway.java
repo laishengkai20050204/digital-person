@@ -1,5 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.langchain4j;
 
+import com.laishengkai.digitalperson.async.CancellableCompletableFuture;
+import com.laishengkai.digitalperson.async.CancellableStage;
 import com.laishengkai.digitalperson.dialogue.LanguageModelException;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.LanguageModelRequest;
@@ -13,6 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Applies one process-wide bulkhead before requests reach the configured model provider. */
 public final class BoundedLanguageModelGateway implements LanguageModelGateway {
@@ -99,9 +102,29 @@ public final class BoundedLanguageModelGateway implements LanguageModelGateway {
                     ));
         }
 
-        CompletableFuture<LanguageModelResponse> result = new CompletableFuture<>();
+        AtomicBoolean permitReleased = new AtomicBoolean();
+        CompletionStage<Void> termination = CancellableStage.terminationOf(invocation);
+        termination.whenComplete((ignored, terminationError) -> {
+            if (permitReleased.compareAndSet(false, true)) {
+                permits.release();
+            }
+            if (terminationError != null) {
+                LOGGER.warn(
+                        "Language model invocation termination tracking failed",
+                        terminationError
+                );
+            }
+        });
+
+        CancellableCompletableFuture<LanguageModelResponse> result =
+                new CancellableCompletableFuture<>(
+                        termination,
+                        mayInterrupt -> CancellableStage.cancel(
+                                invocation,
+                                mayInterrupt
+                        )
+                );
         invocation.whenComplete((response, error) -> {
-            permits.release();
             if (error == null) {
                 result.complete(response);
             } else {

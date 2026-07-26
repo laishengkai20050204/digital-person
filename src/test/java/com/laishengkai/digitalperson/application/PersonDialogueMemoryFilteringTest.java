@@ -71,7 +71,7 @@ class PersonDialogueMemoryFilteringTest {
 
         assertThat(exchange.result().replies()).containsExactly("测试收到。");
         assertThat(exchange.memoryStatus())
-                .isEqualTo(PersonDialogueExchange.MemoryStatus.PROCESSED);
+                .isEqualTo(PersonDialogueExchange.MemoryStatus.SCHEDULED);
         assertThat(exchange.memoryMutationCount()).isZero();
     }
 }

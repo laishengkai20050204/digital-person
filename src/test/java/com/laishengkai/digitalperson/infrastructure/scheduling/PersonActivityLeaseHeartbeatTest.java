@@ -95,6 +95,38 @@ class PersonActivityLeaseHeartbeatTest {
         handle.close();
     }
 
+
+    @Test
+    void marksTheHandleLostWhenLeaseRenewalThrows() {
+        PersonActivityScheduleRepository repository = mock(
+                PersonActivityScheduleRepository.class
+        );
+        TaskScheduler taskScheduler = mock(TaskScheduler.class);
+        ScheduledFuture<?> future = mock(ScheduledFuture.class);
+        PersonActivityScheduleLease lease = lease();
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+
+        doReturn(future).when(taskScheduler).scheduleAtFixedRate(
+                task.capture(),
+                any(Instant.class),
+                eq(Duration.ofMinutes(2))
+        );
+        when(repository.renewLease(any(), any(), any()))
+                .thenThrow(new IllegalStateException("database unavailable"));
+
+        PersonActivityLeaseHeartbeat heartbeat = new PersonActivityLeaseHeartbeat(
+                repository,
+                properties(),
+                CLOCK,
+                taskScheduler
+        );
+        PersonActivityLeaseHeartbeat.LeaseHandle handle = heartbeat.start(lease);
+        task.getValue().run();
+
+        assertFalse(handle.leaseOwned());
+        handle.close();
+    }
+
     private static PersonActivityScheduleLease lease() {
         return new PersonActivityScheduleLease(
                 PersonId.random(),
