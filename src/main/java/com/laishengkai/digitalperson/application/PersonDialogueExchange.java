@@ -59,7 +59,10 @@ public record PersonDialogueExchange(
     }
 
     public enum MemoryStatus {
+        /** Recording completed before the exchange was returned (legacy/synchronous adapters). */
         PROCESSED,
+        /** Recording was accepted and continues outside the user-response critical path. */
+        SCHEDULED,
         DISABLED,
         FAILED
     }

@@ -90,6 +90,7 @@ public final class PersonActivityLeaseHeartbeat {
                     newLeaseUntil
             );
         } catch (RuntimeException error) {
+            leaseOwned.set(false);
             LOGGER.error(
                     "Activity schedule lease heartbeat failed: personId={}, leaseToken={}",
                     lease.personId(),

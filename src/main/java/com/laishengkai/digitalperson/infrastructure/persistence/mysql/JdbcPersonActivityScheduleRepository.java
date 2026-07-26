@@ -86,6 +86,9 @@ public final class JdbcPersonActivityScheduleRepository
                 updated_at = ?
             WHERE person_id = ?
               AND lease_token = ?
+              AND enabled = TRUE
+              AND lease_until IS NOT NULL
+              AND lease_until > ?
             """;
 
     private static final String COMPLETE_FAILURE_SQL = """
@@ -99,6 +102,9 @@ public final class JdbcPersonActivityScheduleRepository
                 updated_at = ?
             WHERE person_id = ?
               AND lease_token = ?
+              AND enabled = TRUE
+              AND lease_until IS NOT NULL
+              AND lease_until > ?
             """;
 
     private static final String RESCHEDULE_SQL = """
@@ -110,6 +116,9 @@ public final class JdbcPersonActivityScheduleRepository
                 updated_at = ?
             WHERE person_id = ?
               AND lease_token = ?
+              AND enabled = TRUE
+              AND lease_until IS NOT NULL
+              AND lease_until > ?
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -263,7 +272,8 @@ public final class JdbcPersonActivityScheduleRepository
                         Timestamp.from(completion),
                         Timestamp.from(completion),
                         claim.personId().toString(),
-                        claim.leaseToken().toString()
+                        claim.leaseToken().toString(),
+                        Timestamp.from(completion)
                 ),
                 "activity schedule success completion"
         );
@@ -291,7 +301,8 @@ public final class JdbcPersonActivityScheduleRepository
                         Timestamp.from(completion),
                         Timestamp.from(completion),
                         claim.personId().toString(),
-                        claim.leaseToken().toString()
+                        claim.leaseToken().toString(),
+                        Timestamp.from(completion)
                 ),
                 "activity schedule failure completion"
         );
@@ -316,7 +327,8 @@ public final class JdbcPersonActivityScheduleRepository
                         Timestamp.from(completion),
                         Timestamp.from(completion),
                         claim.personId().toString(),
-                        claim.leaseToken().toString()
+                        claim.leaseToken().toString(),
+                        Timestamp.from(completion)
                 ),
                 "activity schedule conflict reschedule"
         );

@@ -7,10 +7,11 @@ import com.laishengkai.digitalperson.application.PersonActivityDecisionService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
+import com.laishengkai.digitalperson.infrastructure.spring.LateConditionalBeanRegistrar;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.state.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -43,34 +44,33 @@ public class PersonActivityDecisionConfiguration {
         return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
     }
 
-    /**
-     * Creates the autonomous activity boundary for either the protected API or the
-     * persistent scheduler. The decision is based only on configuration properties,
-     * avoiding order-sensitive bean-presence checks during component scanning.
-     */
+    /** Registers the service after model and external port definitions are available. */
     @Bean
-    @ConditionalOnExpression(
-            "'${digital-person.person-api.enabled:false}' == 'true' || "
-                    + "'${digital-person.activity-scheduler.enabled:false}' == 'true'"
-    )
-    @ConditionalOnMissingBean(PersonActivityDecisionService.class)
-    PersonActivityDecisionService personActivityDecisionService(
-            PersonRepository personRepository,
-            StateUpdater stateUpdater,
-            PersonActivityDecisionModel activityDecisionModel,
-            PersonActivityDecisionContextAssembler activityContextAssembler,
-            EventStateImpactEvaluator effectEvaluator,
-            StateEvaluationContextAssembler effectContextAssembler,
-            Clock clock
-    ) {
-        return new PersonActivityDecisionService(
-                personRepository,
-                stateUpdater,
-                activityDecisionModel,
-                activityContextAssembler,
-                effectEvaluator,
-                effectContextAssembler,
-                clock
+    static BeanDefinitionRegistryPostProcessor personActivityDecisionServiceRegistrar() {
+        return new LateConditionalBeanRegistrar(beanFactory ->
+                LateConditionalBeanRegistrar.registerIfPossible(
+                        beanFactory,
+                        "personActivityDecisionService",
+                        PersonActivityDecisionService.class,
+                        () -> new PersonActivityDecisionService(
+                                beanFactory.getBean(PersonRepository.class),
+                                beanFactory.getBean(StateUpdater.class),
+                                beanFactory.getBean(PersonActivityDecisionModel.class),
+                                beanFactory.getBean(
+                                        PersonActivityDecisionContextAssembler.class
+                                ),
+                                beanFactory.getBean(EventStateImpactEvaluator.class),
+                                beanFactory.getBean(StateEvaluationContextAssembler.class),
+                                beanFactory.getBean(Clock.class)
+                        ),
+                        PersonRepository.class,
+                        StateUpdater.class,
+                        PersonActivityDecisionModel.class,
+                        PersonActivityDecisionContextAssembler.class,
+                        EventStateImpactEvaluator.class,
+                        StateEvaluationContextAssembler.class,
+                        Clock.class
+                )
         );
     }
 }
