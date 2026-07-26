@@ -390,9 +390,9 @@ docker compose up -d --build mem0
 
 项目使用 Spring Boot 4.1 和 Jackson 3。Mem0 适配器已迁移到 `tools.jackson.databind.json.JsonMapper`，避免要求 Jackson 2 `ObjectMapper` Bean。
 
-### `PersonMemoryGateway` 出现两个 Bean
+### `PersonMemoryGateway` 与多个记忆来源
 
-检索开启后，默认 No-Op 网关与 Mem0 网关可能同时注册。Mem0 网关已标记为 `@Primary`，确保 `MEM0_RETRIEVAL_ENABLED=true` 时选择真实 Mem0 实现。
+应用现在始终只暴露一个主 `HybridPersonMemoryGateway`。Mem0 作为 `SemanticMemorySource` 注册，MySQL 结构化事实作为 `StructuredMemorySource` 注册；主网关负责合并、去重和数量限制，因此不再依赖多个 `PersonMemoryGateway` Bean 之间的 `@Primary` 竞争。
 
 ## 11. 运维建议
 

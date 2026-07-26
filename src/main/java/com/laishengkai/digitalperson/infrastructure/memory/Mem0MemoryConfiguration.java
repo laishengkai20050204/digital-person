@@ -1,7 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
-import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
+import com.laishengkai.digitalperson.memory.SemanticMemorySource;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -9,7 +9,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Spring wiring for the optional self-hosted Mem0 adapter. */
@@ -54,13 +53,12 @@ public class Mem0MemoryConfiguration {
     }
 
     @Bean
-    @Primary
     @ConditionalOnProperty(
             prefix = "digital-person.memory.mem0",
             name = {"enabled", "retrieval-enabled"},
             havingValue = "true"
     )
-    PersonMemoryGateway mem0PersonMemoryGateway(
+    SemanticMemorySource mem0PersonMemoryGateway(
             Mem0HttpClient client,
             Mem0Properties properties
     ) {

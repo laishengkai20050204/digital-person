@@ -11,5 +11,8 @@ public enum MemorySection {
     EPISODIC,
     USER_PROFILE,
     ROUTINE,
+    SCHEDULE,
+    EMOTIONAL_PATTERN,
+    WORKING_MEMORY,
     CONVERSATION_SUMMARY
 }

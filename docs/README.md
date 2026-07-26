@@ -20,6 +20,11 @@
   - 最近 N 条读取、应用重启恢复和每人物保留上限
   - MySQL 原始对话与 Mem0 长期记忆的职责边界
   - `conversationStatus` 验收与生产排障命令
+- [结构化事实记忆与混合检索](./STRUCTURED_MEMORY.md)
+  - 规范实体、别名和类型化事实
+  - 错字容忍的实体解析与 UUID 精确查询
+  - 受限查询规划器和参数化 SQL 边界
+  - MySQL 结构化记忆与 Mem0 语义记忆的融合
 - [Spring 装配、人物调度创建与诊断边界](./RUNTIME_WIRING_AND_DIAGNOSTICS.md)
   - 核心应用服务与 Web 适配器的 Bean 所有权
   - 人物聚合与首轮调度记录的同事务创建

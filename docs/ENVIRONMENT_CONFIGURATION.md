@@ -158,6 +158,19 @@ sudo stat -c '%U:%G %a %n' /etc/person-ai/person-ai.env
 root:deploy 640 /etc/person-ai/person-ai.env
 ```
 
+## 结构化记忆配置
+
+结构化事实、实体和别名保存在 Digital Person 的 MySQL 主库中。启用前必须先启用 MySQL 持久化：
+
+```bash
+MYSQL_PERSISTENCE_ENABLED=true
+STRUCTURED_MEMORY_ENABLED=true
+STRUCTURED_MEMORY_MINIMUM_ENTITY_SIMILARITY=0.60
+STRUCTURED_MEMORY_MAXIMUM_ENTITY_CANDIDATES=300
+```
+
+`STRUCTURED_MEMORY_ENABLED=false` 时，Flyway 仍会创建兼容表，但结构化来源不会注入模型上下文。Mem0 与结构化记忆开关互相独立。
+
 ## Mem0 专用部署配置
 
 Mem0 的 Docker 部署和模型提供商配置单独保存在：

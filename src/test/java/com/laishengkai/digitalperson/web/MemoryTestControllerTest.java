@@ -5,7 +5,7 @@ import com.laishengkai.digitalperson.memory.MemoryItem;
 import com.laishengkai.digitalperson.memory.MemoryMutation;
 import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.PersonMemoryContext;
-import com.laishengkai.digitalperson.memory.PersonMemoryGateway;
+import com.laishengkai.digitalperson.memory.SemanticMemorySource;
 import com.laishengkai.digitalperson.memory.PersonMemoryStore;
 import com.laishengkai.digitalperson.memory.PersonMemoryWriteRequest;
 import com.laishengkai.digitalperson.person.PersonId;
@@ -46,7 +46,7 @@ class MemoryTestControllerTest {
                 return CompletableFuture.completedFuture(null);
             }
         };
-        PersonMemoryGateway gateway = query -> CompletableFuture.completedFuture(
+        SemanticMemorySource gateway = query -> CompletableFuture.completedFuture(
                 new PersonMemoryContext(
                         MemoryAvailability.AVAILABLE,
                         List.of(new MemoryItem(
@@ -127,7 +127,7 @@ class MemoryTestControllerTest {
     void reportsWhichMem0CapabilityIsNotEnabled() {
         MemoryTestController controller = new MemoryTestController(
                 (PersonMemoryStore) null,
-                (PersonMemoryGateway) null,
+                (SemanticMemorySource) null,
                 new MemoryTestApiProperties(true, TOKEN)
         );
         PersonId personId = PersonId.random();
