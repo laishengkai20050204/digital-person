@@ -53,7 +53,12 @@ final class Mem0HttpClient {
     }
 
     CompletionStage<JsonNode> search(PersonMemoryQuery query) {
+        return search(query, properties.minimumRelevance());
+    }
+
+    CompletionStage<JsonNode> search(PersonMemoryQuery query, double threshold) {
         Objects.requireNonNull(query, "query cannot be null");
+        double normalizedThreshold = probability(threshold, "threshold");
         ObjectNode payload = jsonMapper.createObjectNode();
         payload.put(
                 "query",
@@ -62,7 +67,7 @@ final class Mem0HttpClient {
                         : query.relevanceQuery()
         );
         payload.put("top_k", query.maxItems());
-        payload.put("threshold", properties.minimumRelevance());
+        payload.put("threshold", normalizedThreshold);
         payload.putObject("filters")
                 .put("agent_id", query.personId().toString());
         return sendJson(
@@ -188,18 +193,12 @@ final class Mem0HttpClient {
 
     private static Throwable unwrap(Throwable failure) {
         Throwable current = Objects.requireNonNull(failure, "failure cannot be null");
-        while (current instanceof CompletionException && current.getCause() != null) {
+        while ((current instanceof CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)
+                && current.getCause() != null) {
             current = current.getCause();
         }
         return current;
-    }
-
-    private static String requireOperation(String value) {
-        String operation = requireText(value, "operation");
-        if (!operation.matches("[a-z]+")) {
-            throw new IllegalArgumentException("operation contains unsafe characters");
-        }
-        return operation;
     }
 
     private JsonNode parseResponse(HttpResponse<byte[]> response) {
@@ -264,5 +263,20 @@ final class Mem0HttpClient {
             throw new IllegalArgumentException(fieldName + " contains unsafe characters");
         }
         return normalized;
+    }
+
+    private static String requireOperation(String value) {
+        String normalized = Objects.requireNonNull(value, "operation cannot be null").strip();
+        if (!normalized.matches("[a-z]+")) {
+            throw new IllegalArgumentException("operation must contain lowercase letters only");
+        }
+        return normalized;
+    }
+
+    private static double probability(double value, String fieldName) {
+        if (!Double.isFinite(value) || value < 0.0 || value > 1.0) {
+            throw new IllegalArgumentException(fieldName + " must be between 0.0 and 1.0");
+        }
+        return value;
     }
 }
