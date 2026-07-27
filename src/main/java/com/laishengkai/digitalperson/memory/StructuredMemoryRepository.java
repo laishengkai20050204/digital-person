@@ -16,4 +16,17 @@ public interface StructuredMemoryRepository {
     CompletionStage<Void> addAlias(StructuredMemoryAliasDraft draft);
 
     CompletionStage<StructuredMemoryFact> upsertFact(StructuredMemoryFactDraft draft);
+
+    default CompletionStage<StructuredMemoryFactWriteResult> upsertFactEvidence(
+            StructuredMemoryFactDraft draft,
+            long sourceStartTurnId,
+            long sourceEndTurnId,
+            StructuredMemoryFactConflictMode conflictMode
+    ) {
+        return java.util.concurrent.CompletableFuture.failedFuture(
+                new UnsupportedOperationException(
+                        "evidence-aware structured-memory writes are unavailable"
+                )
+        );
+    }
 }

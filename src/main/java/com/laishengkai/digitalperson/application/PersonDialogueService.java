@@ -37,6 +37,7 @@ public final class PersonDialogueService {
     private final RecentConversationStore conversationStore;
     private final ConversationSummaryService summaryService;
     private final DialogueMemoryRecorder memoryRecorder;
+    private final StructuredMemoryExtractionService structuredMemoryExtractionService;
     private final PersonCurrentStateProjector stateProjector;
     private final Executor postProcessingExecutor;
     private final Clock clock;
@@ -163,6 +164,38 @@ public final class PersonDialogueService {
             int maxConversationTurns,
             int conversationSummaryBatchTurns
     ) {
+        this(
+                personRepository,
+                contextAssembler,
+                dialogueModel,
+                conversationStore,
+                summaryService,
+                memoryRecorder,
+                null,
+                stateProjector,
+                postProcessingExecutor,
+                clock,
+                maxMemoryItems,
+                maxConversationTurns,
+                conversationSummaryBatchTurns
+        );
+    }
+
+    public PersonDialogueService(
+            PersonRepository personRepository,
+            PersonModelContextAssembler contextAssembler,
+            PersonDialogueModel dialogueModel,
+            RecentConversationStore conversationStore,
+            ConversationSummaryService summaryService,
+            DialogueMemoryRecorder memoryRecorder,
+            StructuredMemoryExtractionService structuredMemoryExtractionService,
+            PersonCurrentStateProjector stateProjector,
+            Executor postProcessingExecutor,
+            Clock clock,
+            int maxMemoryItems,
+            int maxConversationTurns,
+            int conversationSummaryBatchTurns
+    ) {
         this.personRepository = Objects.requireNonNull(
                 personRepository,
                 "personRepository cannot be null"
@@ -178,6 +211,7 @@ public final class PersonDialogueService {
         this.conversationStore = conversationStore;
         this.summaryService = summaryService;
         this.memoryRecorder = memoryRecorder;
+        this.structuredMemoryExtractionService = structuredMemoryExtractionService;
         this.stateProjector = stateProjector;
         this.postProcessingExecutor = Objects.requireNonNull(
                 postProcessingExecutor,
@@ -298,6 +332,7 @@ public final class PersonDialogueService {
             );
             if (conversation.status() == PersonDialogueExchange.ConversationStatus.STORED) {
                 triggerSummary(personId, localTimeZone);
+                triggerStructuredMemoryExtraction(personId, localTimeZone);
             }
             return new PersonDialogueExchange(
                     personId,
@@ -418,6 +453,48 @@ public final class PersonDialogueService {
         });
     }
 
+    private void triggerStructuredMemoryExtraction(
+            PersonId personId,
+            ZoneId localTimeZone
+    ) {
+        if (structuredMemoryExtractionService == null) {
+            return;
+        }
+        try {
+            postProcessingExecutor.execute(() -> extractStructuredMemoryAsynchronously(
+                    personId,
+                    localTimeZone
+            ));
+        } catch (RuntimeException error) {
+            logStructuredMemoryExtractionFailure(personId, error);
+        }
+    }
+
+    private void extractStructuredMemoryAsynchronously(
+            PersonId personId,
+            ZoneId localTimeZone
+    ) {
+        final CompletionStage<Void> stage;
+        try {
+            stage = Objects.requireNonNull(
+                    structuredMemoryExtractionService.extractIfNeeded(
+                            personId,
+                            localTimeZone,
+                            clock.instant()
+                    ),
+                    "structuredMemoryExtractionService stage cannot be null"
+            );
+        } catch (RuntimeException error) {
+            logStructuredMemoryExtractionFailure(personId, error);
+            return;
+        }
+        stage.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                logStructuredMemoryExtractionFailure(personId, unwrap(failure));
+            }
+        });
+    }
+
     private void triggerSummary(PersonId personId, ZoneId localTimeZone) {
         if (summaryService == null) {
             return;
@@ -530,6 +607,17 @@ public final class PersonDialogueService {
     private static void logMemoryFailure(PersonId personId, Throwable error) {
         LOGGER.warn(
                 "Dialogue memory recording failed after reply generation: personId={}",
+                personId,
+                error
+        );
+    }
+
+    private static void logStructuredMemoryExtractionFailure(
+            PersonId personId,
+            Throwable error
+    ) {
+        LOGGER.warn(
+                "Structured-memory extraction failed after reply generation: personId={}",
                 personId,
                 error
         );

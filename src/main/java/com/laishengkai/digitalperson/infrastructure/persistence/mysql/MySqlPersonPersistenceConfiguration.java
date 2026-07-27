@@ -10,6 +10,7 @@ import com.laishengkai.digitalperson.infrastructure.memory.StructuredMemoryPrope
 import com.laishengkai.digitalperson.infrastructure.memory.StructuredPersonMemoryGateway;
 import com.laishengkai.digitalperson.infrastructure.scheduling.ActivitySchedulerProperties;
 import com.laishengkai.digitalperson.infrastructure.scheduling.PersonActivityScheduleRepository;
+import com.laishengkai.digitalperson.conversation.StructuredMemoryExtractionStore;
 import com.laishengkai.digitalperson.memory.StructuredMemoryQueryPlanner;
 import com.laishengkai.digitalperson.memory.StructuredMemorySource;
 import com.laishengkai.digitalperson.person.PersonCreationRepository;
@@ -145,6 +146,18 @@ public class MySqlPersonPersistenceConfiguration {
         );
     }
 
+
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.memory.extraction",
+            name = "enabled",
+            havingValue = "true"
+    )
+    StructuredMemoryExtractionStore structuredMemoryExtractionStore(
+            @Qualifier("personJdbcTemplate") JdbcTemplate jdbcTemplate
+    ) {
+        return new JdbcStructuredMemoryExtractionStore(jdbcTemplate);
+    }
 
     @Bean
     @ConditionalOnProperty(

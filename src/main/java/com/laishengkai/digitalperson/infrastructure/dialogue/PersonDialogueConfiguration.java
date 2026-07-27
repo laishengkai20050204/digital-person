@@ -4,15 +4,20 @@ import com.laishengkai.digitalperson.application.ConversationSummaryService;
 import com.laishengkai.digitalperson.application.DialogueMemoryRecorder;
 import com.laishengkai.digitalperson.application.PersonCurrentStateProjector;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
+import com.laishengkai.digitalperson.application.StructuredMemoryExtractionService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.conversation.ConversationEpisodeStore;
 import com.laishengkai.digitalperson.conversation.ConversationSummaryStore;
 import com.laishengkai.digitalperson.conversation.RecentConversationStore;
+import com.laishengkai.digitalperson.conversation.StructuredMemoryExtractionStore;
 import com.laishengkai.digitalperson.dialogue.ConversationEpisodeModel;
 import com.laishengkai.digitalperson.dialogue.ConversationSummaryModel;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
 import com.laishengkai.digitalperson.dialogue.PersonDialogueModel;
+import com.laishengkai.digitalperson.dialogue.StructuredMemoryExtractionModel;
+import com.laishengkai.digitalperson.infrastructure.memory.StructuredMemoryExtractionProperties;
 import com.laishengkai.digitalperson.infrastructure.spring.LateConditionalBeanRegistrar;
+import com.laishengkai.digitalperson.memory.StructuredMemoryRepository;
 import com.laishengkai.digitalperson.person.PersonRepository;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
@@ -35,7 +40,10 @@ import java.util.concurrent.Executors;
         name = "enabled",
         havingValue = "true"
 )
-@EnableConfigurationProperties(PersonDialogueProperties.class)
+@EnableConfigurationProperties({
+        PersonDialogueProperties.class,
+        StructuredMemoryExtractionProperties.class
+})
 public class PersonDialogueConfiguration {
 
     public static final String POST_PROCESSING_EXECUTOR =
@@ -103,6 +111,25 @@ public class PersonDialogueConfiguration {
         );
     }
 
+    @Bean
+    @ConditionalOnProperty(
+            prefix = "digital-person.memory.extraction",
+            name = "enabled",
+            havingValue = "true"
+    )
+    @ConditionalOnMissingBean(StructuredMemoryExtractionModel.class)
+    StructuredMemoryExtractionModel structuredMemoryExtractionModel(
+            LanguageModelGateway languageModelGateway,
+            JsonMapper jsonMapper,
+            StructuredMemoryExtractionProperties properties
+    ) {
+        return new LanguageModelStructuredMemoryExtractionModel(
+                languageModelGateway,
+                jsonMapper,
+                properties
+        );
+    }
+
     /** Registers the service after repository and optional provider definitions are known. */
     @Bean
     static BeanFactoryPostProcessor personDialogueServiceRegistrar() {
@@ -137,6 +164,20 @@ public class PersonDialogueConfiguration {
                                 summaryService,
                                 beanFactory.getBeanProvider(DialogueMemoryRecorder.class)
                                         .getIfAvailable(),
+                                structuredMemoryExtractionService(
+                                        beanFactory.getBeanProvider(
+                                                StructuredMemoryExtractionStore.class
+                                        ),
+                                        beanFactory.getBeanProvider(
+                                                StructuredMemoryExtractionModel.class
+                                        ),
+                                        beanFactory.getBeanProvider(
+                                                StructuredMemoryRepository.class
+                                        ),
+                                        beanFactory.getBean(
+                                                StructuredMemoryExtractionProperties.class
+                                        )
+                                ),
                                 beanFactory.getBean(PersonCurrentStateProjector.class),
                                 beanFactory.getBean(
                                         POST_PROCESSING_EXECUTOR,
@@ -156,6 +197,34 @@ public class PersonDialogueConfiguration {
                     PersonDialogueProperties.class
             );
         });
+    }
+
+    private static StructuredMemoryExtractionService structuredMemoryExtractionService(
+            ObjectProvider<StructuredMemoryExtractionStore> storeProvider,
+            ObjectProvider<StructuredMemoryExtractionModel> modelProvider,
+            ObjectProvider<StructuredMemoryRepository> repositoryProvider,
+            StructuredMemoryExtractionProperties properties
+    ) {
+        if (!properties.enabled()) {
+            return null;
+        }
+        StructuredMemoryExtractionStore store = storeProvider.getIfAvailable();
+        StructuredMemoryExtractionModel model = modelProvider.getIfAvailable();
+        StructuredMemoryRepository repository = repositoryProvider.getIfAvailable();
+        if (store == null || model == null || repository == null) {
+            return null;
+        }
+        return new StructuredMemoryExtractionService(
+                store,
+                model,
+                repository,
+                properties.recentTurnsToKeep(),
+                properties.batchTurns(),
+                properties.maximumEntities(),
+                properties.maximumFacts(),
+                properties.minimumConfidence(),
+                properties.minimumImportance()
+        );
     }
 
     private static ConversationSummaryService summaryService(

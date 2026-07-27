@@ -11,7 +11,9 @@ import com.laishengkai.digitalperson.memory.MemoryTextSimilarity;
 import com.laishengkai.digitalperson.memory.StructuredMemoryAliasDraft;
 import com.laishengkai.digitalperson.memory.StructuredMemoryEntityDraft;
 import com.laishengkai.digitalperson.memory.StructuredMemoryFact;
+import com.laishengkai.digitalperson.memory.StructuredMemoryFactConflictMode;
 import com.laishengkai.digitalperson.memory.StructuredMemoryFactDraft;
+import com.laishengkai.digitalperson.memory.StructuredMemoryFactWriteResult;
 import com.laishengkai.digitalperson.memory.StructuredMemoryMatch;
 import com.laishengkai.digitalperson.memory.StructuredMemoryQuery;
 import com.laishengkai.digitalperson.memory.StructuredMemoryRepository;
@@ -130,6 +132,69 @@ public final class JdbcStructuredMemoryRepository implements StructuredMemoryRep
                 valid_until = VALUES(valid_until),
                 last_confirmed_at = GREATEST(last_confirmed_at, VALUES(last_confirmed_at)),
                 updated_at = VALUES(updated_at)
+            """;
+
+
+    private static final String INSERT_EXTRACTED_FACT_SQL = """
+            INSERT INTO person_memory_fact (
+                fact_id,
+                fact_key,
+                person_id,
+                memory_section,
+                domain,
+                subject_entity_id,
+                predicate,
+                object_entity_id,
+                text_value,
+                statement_text,
+                confidence,
+                importance,
+                evidence_count,
+                valid_from,
+                valid_until,
+                last_confirmed_at,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            """;
+
+    private static final String INSERT_FACT_EVIDENCE_SQL = """
+            INSERT INTO person_memory_fact_evidence (
+                fact_id,
+                source_start_turn_id,
+                source_end_turn_id,
+                observed_at,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """;
+
+    private static final String REFRESH_FACT_FROM_EVIDENCE_SQL = """
+            UPDATE person_memory_fact
+            SET statement_text = ?,
+                text_value = ?,
+                confidence = GREATEST(confidence, ?),
+                importance = GREATEST(importance, ?),
+                evidence_count = evidence_count + 1,
+                valid_from = COALESCE(?, valid_from),
+                valid_until = ?,
+                last_confirmed_at = GREATEST(last_confirmed_at, ?),
+                updated_at = ?
+            WHERE fact_id = ?
+            """;
+
+    private static final String SUPERSEDE_CONFLICTING_FACTS_SQL = """
+            UPDATE person_memory_fact
+            SET valid_until = ?,
+                updated_at = ?
+            WHERE person_id = ?
+              AND memory_section = ?
+              AND domain = ?
+              AND subject_entity_id <=> ?
+              AND predicate = ?
+              AND object_entity_id <=> ?
+              AND fact_key <> ?
+              AND (valid_until IS NULL OR valid_until > ?)
+              AND (valid_from IS NULL OR valid_from < ?)
             """;
 
     private static final String FIND_FACT_BY_KEY_SQL = """
@@ -393,6 +458,177 @@ public final class JdbcStructuredMemoryRepository implements StructuredMemoryRep
                     error
             ));
         }
+    }
+
+
+    @Override
+    public CompletionStage<StructuredMemoryFactWriteResult> upsertFactEvidence(
+            StructuredMemoryFactDraft draft,
+            long sourceStartTurnId,
+            long sourceEndTurnId,
+            StructuredMemoryFactConflictMode conflictMode
+    ) {
+        StructuredMemoryFactDraft request = Objects.requireNonNull(
+                draft,
+                "draft cannot be null"
+        );
+        StructuredMemoryFactConflictMode requestedConflictMode = Objects.requireNonNull(
+                conflictMode,
+                "conflictMode cannot be null"
+        );
+        if (sourceStartTurnId <= 0 || sourceEndTurnId < sourceStartTurnId) {
+            throw new IllegalArgumentException("invalid structured-memory evidence range");
+        }
+        try {
+            StructuredMemoryFactWriteResult result = transactionTemplate.execute(status -> {
+                validateEntityOwnership(request.personId(), request.subjectEntityId());
+                validateEntityOwnership(request.personId(), request.objectEntityId());
+                String factKey = factKey(request);
+                StructuredMemoryFact fact = findFactByKey(request.personId(), factKey);
+                boolean created = false;
+                if (fact == null) {
+                    try {
+                        insertExtractedFact(request, factKey);
+                        created = true;
+                    } catch (DuplicateKeyException concurrentInsert) {
+                        // Another extractor inserted the same semantic fact. Evidence insertion below
+                        // decides whether this source batch is new.
+                    }
+                    fact = Objects.requireNonNull(findFactByKey(request.personId(), factKey));
+                }
+
+                boolean evidenceAdded = insertEvidence(
+                        fact.factId(),
+                        sourceStartTurnId,
+                        sourceEndTurnId,
+                        request.observedAt()
+                );
+                if (evidenceAdded && !created) {
+                    refreshFactFromEvidence(fact.factId(), request);
+                }
+
+                int superseded = 0;
+                if (evidenceAdded
+                        && requestedConflictMode
+                        == StructuredMemoryFactConflictMode.SUPERSEDE_EXISTING) {
+                    superseded = supersedeConflictingFacts(request, factKey);
+                }
+                StructuredMemoryFact stored = Objects.requireNonNull(
+                        findFactByKey(request.personId(), factKey)
+                );
+                return new StructuredMemoryFactWriteResult(
+                        stored,
+                        evidenceAdded,
+                        superseded
+                );
+            });
+            return CompletableFuture.completedFuture(Objects.requireNonNull(result));
+        } catch (RuntimeException error) {
+            return CompletableFuture.failedFuture(new PersonPersistenceException(
+                    "could not upsert extracted structured-memory fact evidence",
+                    error
+            ));
+        }
+    }
+
+    private void insertExtractedFact(
+            StructuredMemoryFactDraft request,
+            String factKey
+    ) {
+        Instant now = request.observedAt();
+        jdbcTemplate.update(
+                INSERT_EXTRACTED_FACT_SQL,
+                UUID.randomUUID().toString(),
+                factKey,
+                request.personId().toString(),
+                request.section().name(),
+                request.domain(),
+                nullable(request.subjectEntityId()),
+                request.predicate(),
+                nullable(request.objectEntityId()),
+                request.textValue(),
+                request.statement(),
+                BigDecimal.valueOf(request.confidence()),
+                BigDecimal.valueOf(request.importance()),
+                timestamp(request.validFrom()),
+                timestamp(request.validUntil()),
+                Timestamp.from(now),
+                Timestamp.from(now),
+                Timestamp.from(now)
+        );
+    }
+
+    private boolean insertEvidence(
+            String factId,
+            long sourceStartTurnId,
+            long sourceEndTurnId,
+            Instant observedAt
+    ) {
+        try {
+            return jdbcTemplate.update(
+                    INSERT_FACT_EVIDENCE_SQL,
+                    factId,
+                    sourceStartTurnId,
+                    sourceEndTurnId,
+                    Timestamp.from(observedAt),
+                    Timestamp.from(observedAt)
+            ) == 1;
+        } catch (DuplicateKeyException duplicateEvidence) {
+            return false;
+        }
+    }
+
+    private void refreshFactFromEvidence(
+            String factId,
+            StructuredMemoryFactDraft request
+    ) {
+        int updated = jdbcTemplate.update(
+                REFRESH_FACT_FROM_EVIDENCE_SQL,
+                request.statement(),
+                request.textValue(),
+                BigDecimal.valueOf(request.confidence()),
+                BigDecimal.valueOf(request.importance()),
+                timestamp(request.validFrom()),
+                timestamp(request.validUntil()),
+                Timestamp.from(request.observedAt()),
+                Timestamp.from(request.observedAt()),
+                factId
+        );
+        if (updated != 1) {
+            throw new PersonPersistenceException(
+                    "extracted fact refresh did not modify exactly one row"
+            );
+        }
+    }
+
+    private int supersedeConflictingFacts(
+            StructuredMemoryFactDraft request,
+            String factKey
+    ) {
+        Timestamp observedAt = Timestamp.from(request.observedAt());
+        return jdbcTemplate.update(
+                SUPERSEDE_CONFLICTING_FACTS_SQL,
+                observedAt,
+                observedAt,
+                request.personId().toString(),
+                request.section().name(),
+                request.domain(),
+                nullable(request.subjectEntityId()),
+                request.predicate(),
+                nullable(request.objectEntityId()),
+                factKey,
+                observedAt,
+                observedAt
+        );
+    }
+
+    private StructuredMemoryFact findFactByKey(PersonId personId, String factKey) {
+        return jdbcTemplate.query(
+                FIND_FACT_BY_KEY_SQL,
+                resultSet -> resultSet.next() ? mapFact(resultSet) : null,
+                personId.toString(),
+                factKey
+        );
     }
 
     private SqlAndParameters factSearchSql(

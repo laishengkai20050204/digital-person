@@ -10,7 +10,9 @@ import com.laishengkai.digitalperson.memory.MemorySection;
 import com.laishengkai.digitalperson.memory.StructuredMemoryAliasDraft;
 import com.laishengkai.digitalperson.memory.StructuredMemoryEntityDraft;
 import com.laishengkai.digitalperson.memory.StructuredMemoryFact;
+import com.laishengkai.digitalperson.memory.StructuredMemoryFactConflictMode;
 import com.laishengkai.digitalperson.memory.StructuredMemoryFactDraft;
+import com.laishengkai.digitalperson.memory.StructuredMemoryFactWriteResult;
 import com.laishengkai.digitalperson.memory.StructuredMemoryQuery;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.personality.Personality;
@@ -160,6 +162,93 @@ class JdbcStructuredMemoryRepositoryMySqlTest {
                             .isEqualTo("林晓雨是用户最近认识的游戏搭子");
                     assertThat(match.relevance()).isBetween(0.0, 1.0);
                 });
+    }
+
+    @Test
+    void deduplicatesEvidenceRangesAndSupersedesConservativeFactSlots() {
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        assertTrue(personRepository.insert(person));
+        StructuredMemoryFactDraft nanjing = new StructuredMemoryFactDraft(
+                person.getId(),
+                MemorySection.USER_PROFILE,
+                "PERSONAL",
+                "",
+                "CURRENT_CITY",
+                "",
+                "南京",
+                "用户当前居住在南京",
+                0.92,
+                0.80,
+                NOW.minusSeconds(86_400),
+                null,
+                NOW
+        );
+
+        StructuredMemoryFactWriteResult first = repository.upsertFactEvidence(
+                nanjing,
+                1,
+                8,
+                StructuredMemoryFactConflictMode.KEEP_EXISTING
+        ).toCompletableFuture().join();
+        StructuredMemoryFactWriteResult retry = repository.upsertFactEvidence(
+                nanjing,
+                1,
+                8,
+                StructuredMemoryFactConflictMode.KEEP_EXISTING
+        ).toCompletableFuture().join();
+        StructuredMemoryFactWriteResult newEvidence = repository.upsertFactEvidence(
+                nanjing,
+                9,
+                16,
+                StructuredMemoryFactConflictMode.KEEP_EXISTING
+        ).toCompletableFuture().join();
+
+        assertThat(first.evidenceAdded()).isTrue();
+        assertThat(retry.evidenceAdded()).isFalse();
+        assertThat(retry.fact().evidenceCount()).isEqualTo(1);
+        assertThat(newEvidence.fact().evidenceCount()).isEqualTo(2);
+
+        Instant movedAt = NOW.plusSeconds(60);
+        StructuredMemoryFactDraft shanghai = new StructuredMemoryFactDraft(
+                person.getId(),
+                MemorySection.USER_PROFILE,
+                "PERSONAL",
+                "",
+                "CURRENT_CITY",
+                "",
+                "上海",
+                "用户当前居住在上海",
+                0.95,
+                0.85,
+                movedAt,
+                null,
+                movedAt
+        );
+        StructuredMemoryFactWriteResult moved = repository.upsertFactEvidence(
+                shanghai,
+                17,
+                24,
+                StructuredMemoryFactConflictMode.SUPERSEDE_EXISTING
+        ).toCompletableFuture().join();
+
+        assertThat(moved.supersededFactCount()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT valid_until FROM person_memory_fact WHERE fact_id = ?",
+                java.sql.Timestamp.class,
+                first.fact().factId()
+        ).toInstant()).isEqualTo(movedAt);
+        assertThat(repository.search(new StructuredMemoryQuery(
+                person.getId(),
+                Set.of(MemorySection.USER_PROFILE),
+                Set.of("PERSONAL"),
+                Set.of(),
+                Set.of("CURRENT_CITY"),
+                movedAt.plusSeconds(1),
+                "用户现在住在哪里",
+                10
+        )).toCompletableFuture().join())
+                .singleElement()
+                .satisfies(match -> assertThat(match.fact().textValue()).isEqualTo("上海"));
     }
 
     @Test
