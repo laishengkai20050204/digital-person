@@ -31,7 +31,7 @@ jobs:
           from pathlib import Path
           source = Path('.github/workflows/apply-structured-memory-tool-submission.yml').read_text()
           payload = source.split("<<'PATCH_B64'\n", 1)[1].split('\nPATCH_B64\n', 1)[0]
-          Path('/tmp/structured-memory-tool-submission.patch.gz.b64').write_text(payload + '\n')
+          Path('/tmp/structured-memory-tool-submission.patch.gz.b64').write_text(payload)
           PY
           echo '58901339eabaed5395fd2f8b745343bcacd8262554b4839f1f5ec0764b9d51f4  /tmp/structured-memory-tool-submission.patch.gz.b64' | sha256sum -c -
           base64 --decode /tmp/structured-memory-tool-submission.patch.gz.b64 | gzip --decompress > /tmp/structured-memory-tool-submission.patch
