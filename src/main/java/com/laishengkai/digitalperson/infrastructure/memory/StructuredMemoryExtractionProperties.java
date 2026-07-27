@@ -23,7 +23,7 @@ public record StructuredMemoryExtractionProperties(
     private static final int DEFAULT_MAXIMUM_FACTS = 12;
     private static final double DEFAULT_MINIMUM_CONFIDENCE = 0.70;
     private static final double DEFAULT_MINIMUM_IMPORTANCE = 0.35;
-    private static final int DEFAULT_MAX_OUTPUT_TOKENS = 1_400;
+    private static final int DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
     private static final double DEFAULT_TEMPERATURE = 0.1;
 
     @ConstructorBinding
