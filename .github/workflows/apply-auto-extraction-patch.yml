@@ -33,8 +33,21 @@ jobs:
         run: |
           set -euxo pipefail
           test -f .github/auto-extract-payload/READY
-          wc -c .github/auto-extract-payload/chunks/part-*
-          cat .github/auto-extract-payload/chunks/part-* > /tmp/payload.b64
+          wc -c \
+            .github/auto-extract-payload/chunks/part-000 \
+            .github/auto-extract-payload/chunks/part-001 \
+            .github/auto-extract-payload/chunks/fix-002-0 \
+            .github/auto-extract-payload/chunks/fix-002-1 \
+            .github/auto-extract-payload/chunks/part-003 \
+            .github/auto-extract-payload/chunks/part-004
+          cat \
+            .github/auto-extract-payload/chunks/part-000 \
+            .github/auto-extract-payload/chunks/part-001 \
+            .github/auto-extract-payload/chunks/fix-002-0 \
+            .github/auto-extract-payload/chunks/fix-002-1 \
+            .github/auto-extract-payload/chunks/part-003 \
+            .github/auto-extract-payload/chunks/part-004 \
+            > /tmp/payload.b64
           wc -c /tmp/payload.b64
           sha256sum /tmp/payload.b64
           echo 'db4e82c3d8b77f0e9508374a5b810026b530a964347b9c196619162e98f911c3  /tmp/payload.b64' | sha256sum -c -
