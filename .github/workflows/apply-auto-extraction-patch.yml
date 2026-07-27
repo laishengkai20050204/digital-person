@@ -27,33 +27,17 @@ jobs:
           show-progress: false
           persist-credentials: true
 
-      - name: Reassemble, diagnose and validate patch
-        id: patch
+      - name: Reassemble and validate patch
         shell: bash
         run: |
           set -euxo pipefail
           test -f .github/auto-extract-payload/READY
-          wc -c \
-            .github/auto-extract-payload/chunks/part-000 \
-            .github/auto-extract-payload/chunks/part-001 \
-            .github/auto-extract-payload/chunks/fix-002-0 \
-            .github/auto-extract-payload/chunks/fix-002-1 \
-            .github/auto-extract-payload/chunks/part-003 \
-            .github/auto-extract-payload/chunks/part-004
-          cat \
-            .github/auto-extract-payload/chunks/part-000 \
-            .github/auto-extract-payload/chunks/part-001 \
-            .github/auto-extract-payload/chunks/fix-002-0 \
-            .github/auto-extract-payload/chunks/fix-002-1 \
-            .github/auto-extract-payload/chunks/part-003 \
-            .github/auto-extract-payload/chunks/part-004 \
-            > /tmp/payload.b64
-          wc -c /tmp/payload.b64
-          sha256sum /tmp/payload.b64
+          test "$(find .github/auto-extract-payload/small -type f -name 'part-*' | wc -l)" -eq 16
+          cat .github/auto-extract-payload/small/part-* > /tmp/payload.b64
+          test "$(wc -c < /tmp/payload.b64)" -eq 31156
           echo 'db4e82c3d8b77f0e9508374a5b810026b530a964347b9c196619162e98f911c3  /tmp/payload.b64' | sha256sum -c -
           base64 --decode /tmp/payload.b64 | gzip --decompress > /tmp/change.patch
-          wc -c /tmp/change.patch
-          sha256sum /tmp/change.patch
+          test "$(wc -c < /tmp/change.patch)" -eq 129120
           echo '73b2c6f01105c71e1e4fd350f114ec68c352104335e9bbcde1eb689015891c31  /tmp/change.patch' | sha256sum -c -
           git apply --check /tmp/change.patch
           git apply /tmp/change.patch
