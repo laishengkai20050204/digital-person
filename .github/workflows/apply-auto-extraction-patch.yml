@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: automatic-structured-memory-extraction-patch
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply-and-verify:
