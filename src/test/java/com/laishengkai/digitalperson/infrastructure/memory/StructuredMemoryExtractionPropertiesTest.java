@@ -19,6 +19,7 @@ class StructuredMemoryExtractionPropertiesTest {
         assertThat(properties.batchTurns()).isEqualTo(8);
         assertThat(properties.minimumConfidence()).isEqualTo(0.70);
         assertThat(properties.minimumImportance()).isEqualTo(0.35);
+        assertThat(properties.maxOutputTokens()).isEqualTo(4096);
     }
 
     @Test
