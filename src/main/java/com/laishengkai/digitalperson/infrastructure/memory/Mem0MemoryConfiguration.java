@@ -38,8 +38,11 @@ public class Mem0MemoryConfiguration {
             name = "enabled",
             havingValue = "true"
     )
-    PersonMemoryStore mem0PersonMemoryStore(Mem0HttpClient client) {
-        return new Mem0PersonMemoryStore(client);
+    PersonMemoryStore mem0PersonMemoryStore(
+            Mem0HttpClient client,
+            Mem0Properties properties
+    ) {
+        return new Mem0PersonMemoryStore(client, properties);
     }
 
     @Bean
