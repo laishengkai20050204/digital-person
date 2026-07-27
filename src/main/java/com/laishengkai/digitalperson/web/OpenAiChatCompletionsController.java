@@ -3,7 +3,6 @@ package com.laishengkai.digitalperson.web;
 import com.laishengkai.digitalperson.application.PersonDialogueExchange;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.person.PersonId;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -21,7 +20,6 @@ import java.util.concurrent.CompletionStage;
 /** Minimal OpenAI Chat Completions adapter for OpenClaw's WeChat channel. */
 @RestController
 @RequestMapping("/v1/chat/completions")
-@ConditionalOnBean(PersonDialogueService.class)
 @ConditionalOnProperty(
         prefix = "digital-person.openai-compat",
         name = "enabled",
