@@ -10,6 +10,7 @@ import com.laishengkai.digitalperson.conversation.ConversationSummarySnapshot;
 import com.laishengkai.digitalperson.conversation.ConversationSummaryWorkItem;
 import com.laishengkai.digitalperson.conversation.ConversationTurnSnapshot;
 import com.laishengkai.digitalperson.conversation.RecentConversationQuery;
+import com.laishengkai.digitalperson.conversation.StructuredMemoryExtractionWorkItem;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.personality.Personality;
 import org.flywaydb.core.Flyway;
@@ -241,6 +242,70 @@ class JdbcRecentConversationRepositoryMySqlTest {
         assertThat(secondSummary.summarizedTurnCount()).isEqualTo(16);
         assertThat(secondSummary.content())
                 .isEqualTo("前十六条消息已经被合并成新的滚动摘要。");
+    }
+
+    @Test
+    void preparesStableStructuredMemoryBatchesAndAdvancesAnOptimisticCursor() {
+        Person person = Person.create(new Personality(0.5, 0.5, 0.5, 0.5, 0.5, 0.5));
+        assertTrue(personRepository.insert(person));
+        JdbcRecentConversationRepository conversationRepository =
+                new JdbcRecentConversationRepository(
+                        jdbcTemplate,
+                        transactionTemplate,
+                        100
+                );
+        conversationRepository.append(person.getId(), numberedTurns(1, 10))
+                .toCompletableFuture()
+                .join();
+        JdbcStructuredMemoryExtractionStore extractionStore =
+                new JdbcStructuredMemoryExtractionStore(jdbcTemplate);
+
+        StructuredMemoryExtractionWorkItem first = extractionStore.findWork(
+                person.getId(),
+                2,
+                8
+        ).toCompletableFuture().join().orElseThrow();
+        assertThat(first.turns())
+                .extracting(ConversationTurnSnapshot::text)
+                .containsExactly(
+                        "消息1", "消息2", "消息3", "消息4",
+                        "消息5", "消息6", "消息7", "消息8"
+                );
+        assertThat(first.expectedVersion()).isEqualTo(-1);
+        assertThat(extractionStore.markCompleted(
+                person.getId(),
+                first,
+                1,
+                2,
+                NOW.plusSeconds(100)
+        ).toCompletableFuture().join()).isTrue();
+        assertThat(extractionStore.markCompleted(
+                person.getId(),
+                first,
+                1,
+                2,
+                NOW.plusSeconds(101)
+        ).toCompletableFuture().join()).isFalse();
+        assertThat(extractionStore.findWork(person.getId(), 2, 8)
+                .toCompletableFuture().join()).isEmpty();
+
+        conversationRepository.append(person.getId(), numberedTurns(11, 18))
+                .toCompletableFuture()
+                .join();
+        StructuredMemoryExtractionWorkItem second = extractionStore.findWork(
+                person.getId(),
+                2,
+                8
+        ).toCompletableFuture().join().orElseThrow();
+        assertThat(second.turns())
+                .extracting(ConversationTurnSnapshot::text)
+                .containsExactly(
+                        "消息9", "消息10", "消息11", "消息12",
+                        "消息13", "消息14", "消息15", "消息16"
+                );
+        assertThat(second.expectedVersion()).isZero();
+        assertThat(second.expectedCoveredThroughTurnId())
+                .isEqualTo(first.sourceEndTurnId());
     }
 
     @Test
