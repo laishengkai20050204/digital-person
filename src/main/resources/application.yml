@@ -35,6 +35,10 @@ digital-person:
   person-api:
     enabled: ${PERSON_API_ENABLED:false}
     token: ${PERSON_API_TOKEN:}
+  openai-compat:
+    enabled: ${OPENAI_COMPAT_ENABLED:false}
+    person-id: ${OPENAI_COMPAT_PERSON_ID:}
+    model: ${OPENAI_COMPAT_MODEL:shen-zhixia}
   dialogue:
     max-memory-items: ${DIALOGUE_MAX_MEMORY_ITEMS:8}
     max-conversation-turns: ${DIALOGUE_MAX_CONVERSATION_TURNS:12}
