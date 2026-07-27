@@ -45,7 +45,7 @@ digital-person:
     conversation-summary-max-output-tokens: ${CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS:800}
     conversation-summary-temperature: ${CONVERSATION_SUMMARY_TEMPERATURE:0.2}
     conversation-episode-enabled: ${CONVERSATION_EPISODE_ENABLED:true}
-    conversation-episode-max-output-tokens: ${CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS:700}
+    conversation-episode-max-output-tokens: ${CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS:2048}
     conversation-episode-temperature: ${CONVERSATION_EPISODE_TEMPERATURE:0.1}
   activity-scheduler:
     enabled: ${ACTIVITY_SCHEDULER_ENABLED:false}
