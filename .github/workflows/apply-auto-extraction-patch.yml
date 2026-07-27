@@ -23,47 +23,41 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: agent/automatic-structured-memory-extraction
-          fetch-depth: 0
+          fetch-depth: 1
+          show-progress: false
           persist-credentials: true
 
-      - name: Stop until payload is complete
-        id: readiness
+      - name: Reassemble, diagnose and validate patch
+        id: patch
         shell: bash
         run: |
-          if [[ -f .github/auto-extract-payload/READY ]]; then
-            echo 'ready=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'ready=false' >> "$GITHUB_OUTPUT"
-            echo 'Payload is still being staged.'
-          fi
+          set -euxo pipefail
+          test -f .github/auto-extract-payload/READY
+          wc -c .github/auto-extract-payload/chunks/part-*
+          cat .github/auto-extract-payload/chunks/part-* > /tmp/payload.b64
+          wc -c /tmp/payload.b64
+          sha256sum /tmp/payload.b64
+          echo 'db4e82c3d8b77f0e9508374a5b810026b530a964347b9c196619162e98f911c3  /tmp/payload.b64' | sha256sum -c -
+          base64 --decode /tmp/payload.b64 | gzip --decompress > /tmp/change.patch
+          wc -c /tmp/change.patch
+          sha256sum /tmp/change.patch
+          echo '73b2c6f01105c71e1e4fd350f114ec68c352104335e9bbcde1eb689015891c31  /tmp/change.patch' | sha256sum -c -
+          git apply --check /tmp/change.patch
+          git apply /tmp/change.patch
+          git diff --check
 
       - name: Set up Java 21
-        if: steps.readiness.outputs.ready == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
 
-      - name: Reassemble and validate patch
-        if: steps.readiness.outputs.ready == 'true'
-        shell: bash
-        run: |
-          cat .github/auto-extract-payload/chunks/part-* > /tmp/payload.b64
-          echo 'db4e82c3d8b77f0e9508374a5b810026b530a964347b9c196619162e98f911c3  /tmp/payload.b64' | sha256sum -c -
-          base64 --decode /tmp/payload.b64 | gzip --decompress > /tmp/change.patch
-          echo '73b2c6f01105c71e1e4fd350f114ec68c352104335e9bbcde1eb689015891c31  /tmp/change.patch' | sha256sum -c -
-          git apply --check /tmp/change.patch
-          git apply /tmp/change.patch
-          git diff --check
-
       - name: Verify implementation
-        if: steps.readiness.outputs.ready == 'true'
         shell: bash
         run: ./mvnw --batch-mode --no-transfer-progress verify
 
       - name: Commit formal implementation and remove temporary payload
-        if: steps.readiness.outputs.ready == 'true'
         shell: bash
         run: |
           rm -rf .github/auto-extract-payload
