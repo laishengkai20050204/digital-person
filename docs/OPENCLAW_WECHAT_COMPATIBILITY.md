@@ -19,12 +19,12 @@ PersonDialogueService
   ├─ Mem0 长期记忆
   └─ 内部 LLM
   ↓
-choices[0].message.content
+OpenAI JSON 或 SSE completion
   ↓
 OpenClaw 发送微信回复
 ```
 
-OpenClaw 只承担微信收发和传输适配。人物上下文、历史、状态、记忆和回复生成全部由 Java 负责。
+OpenClaw 只承担微信收发和协议适配。人物上下文、历史、状态、记忆和回复生成全部由 Java 负责。
 
 ## 2. 接口
 
@@ -43,13 +43,15 @@ Content-Type: application/json
     {"role": "system", "content": "OpenClaw transport prompt"},
     {"role": "user", "content": "你在干嘛？"}
   ],
-  "stream": false
+  "stream": true
 }
 ```
 
 接口只使用最后一条 `role=user` 的文本。OpenClaw 自带的 system prompt 和历史不会重复注入 Java，因为 Java 会自行加载正式人物上下文和近期对话。
 
-成功响应：
+### 非流式响应
+
+当 `stream=false` 或未提供 `stream` 时，返回标准 JSON：
 
 ```json
 {
@@ -75,7 +77,20 @@ Content-Type: application/json
 }
 ```
 
-当前适配器只支持非流式文本请求。OpenClaw 必须配置 `streaming: false`。
+### 流式响应
+
+OpenClaw 的 `openai-completions` 路径通常发送 `stream=true`。适配器会在内部完整等待 Digital Person 回复，然后以 OpenAI SSE 格式一次性发送内容块、结束块和 `[DONE]`：
+
+```text
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk",...,"finish_reason":"stop"}
+
+data: [DONE]
+
+```
+
+这属于协议层流式兼容，不改变 Java 内部回复生成方式。
 
 ## 3. Java 环境变量
 
@@ -97,17 +112,13 @@ OPENAI_COMPAT_MODEL=shen-zhixia
 
 现有正式人物接口是否启用仍由 `PERSON_API_ENABLED` 独立控制。兼容接口只复用其令牌配置。
 
-重启 Java：
+## 4. 直接测试 Java
+
+非流式：
 
 ```bash
-sudo systemctl restart person-ai.service
-sudo systemctl status person-ai.service --no-pager -l
-```
-
-## 4. 先直接测试 Java
-
-```bash
-TOKEN="$(sudo sed -n 's/^PERSON_API_TOKEN=//p' /etc/person-ai/person-ai.env)"
+TOKEN="$(sudo sh -c 'tr "\0" "\n" < /proc/$(systemctl show person-ai -p MainPID --value)/environ' \
+  | sed -n 's/^PERSON_API_TOKEN=//p' | tail -n 1)"
 
 curl -sS \
   -X POST \
@@ -115,45 +126,34 @@ curl -sS \
   -H 'Content-Type: application/json' \
   --data '{
     "model": "shen-zhixia",
-    "messages": [
-      {"role": "user", "content": "测试微信兼容接口"}
-    ],
+    "messages": [{"role": "user", "content": "测试微信兼容接口"}],
     "stream": false
   }' \
   http://127.0.0.1:8080/v1/chat/completions \
   | jq
 ```
 
-预期：
+流式：
 
-```text
-HTTP 200
-choices[0].message.role = assistant
-choices[0].message.content 非空
-```
-
-错误响应使用 OpenAI 风格：
-
-```json
-{
-  "error": {
-    "message": "Invalid API key",
-    "type": "invalid_request_error",
-    "code": "invalid_api_key"
-  }
-}
+```bash
+curl -sS -N \
+  -X POST \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "model": "shen-zhixia",
+    "messages": [{"role": "user", "content": "测试 OpenClaw 流式接口"}],
+    "stream": true
+  }' \
+  http://127.0.0.1:8080/v1/chat/completions
 ```
 
 ## 5. OpenClaw 自定义 provider
 
-把以下内容合并到 OpenClaw 配置，不要覆盖已有微信通道配置：
+把以下内容合并到 `~/.openclaw/openclaw.json`：
 
 ```json5
 {
-  env: {
-    PERSON_API_TOKEN: "与 Java 完全相同的令牌",
-  },
-
   models: {
     mode: "merge",
     providers: {
@@ -168,12 +168,7 @@ choices[0].message.content 非空
             name: "沈知夏",
             reasoning: false,
             input: ["text"],
-            cost: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-            },
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 32768,
             maxTokens: 1200,
           },
@@ -181,72 +176,31 @@ choices[0].message.content 非空
       },
     },
   },
-
   agents: {
     defaults: {
-      model: {
-        primary: "digitalperson/shen-zhixia",
-      },
+      model: { primary: "digitalperson/shen-zhixia" },
       models: {
-        "digitalperson/shen-zhixia": {
-          alias: "沈知夏",
-          params: {
-            streaming: false,
-          },
-        },
+        "digitalperson/shen-zhixia": { alias: "沈知夏" },
       },
       timeoutSeconds: 240,
     },
   },
+  gateway: {
+    mode: "local",
+    bind: "loopback",
+  },
 }
 ```
 
-OpenClaw 自定义 OpenAI-compatible provider 要同时注册：
-
-1. `models.providers.digitalperson`；
-2. `models.providers.digitalperson.models[]`；
-3. `agents.defaults.model.primary`。
-
 `baseUrl` 必须包含 `/v1`，OpenClaw 会在其后调用 `/chat/completions`。
 
-## 6. 重启和观察 OpenClaw
-
-```bash
-systemctl --user daemon-reload
-systemctl --user restart openclaw-gateway.service
-systemctl --user status openclaw-gateway.service --no-pager -l
-```
-
-实时查看两端日志：
-
-```bash
-journalctl --user -u openclaw-gateway.service -f
-```
-
-另一个终端：
-
-```bash
-sudo journalctl -u person-ai.service -f
-```
-
-成功时应看到：
-
-```text
-OpenClaw 请求 http://127.0.0.1:8080/v1/chat/completions
-Java 返回 HTTP 200
-Java 日志出现 Dialogue memory retrieval completed
-Java 随后写入 MySQL 近期对话并异步处理 Mem0
-```
-
-## 7. 当前边界
+## 6. 当前边界
 
 当前版本有意保持最小实现：
 
 - 仅支持文本；
-- 仅支持 `stream=false`；
+- 同时支持 `stream=true` SSE 和 `stream=false` JSON；
 - 一个兼容端点固定映射一个人物 UUID；
 - 忽略 OpenClaw system、assistant 和 tool 历史，只取最后一条用户消息；
 - 不提供同人物 FIFO 队列；连续消息仍可能并发处理；
 - 不实现 OpenAI tool calls，因为人物工具和上下文由 Java 内部负责。
-
-这些限制不影响先完成单人物微信对话接入。

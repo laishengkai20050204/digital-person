@@ -9,6 +9,8 @@ import com.laishengkai.digitalperson.person.PersonRepository;
 import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -34,7 +36,7 @@ class OpenAiChatCompletionsControllerTest {
                 receivedMessage
         );
 
-        var response = controller.complete(
+        var httpResponse = controller.complete(
                 "Bearer " + TOKEN,
                 new OpenAiChatCompletionsController.ChatCompletionRequest(
                         MODEL,
@@ -58,10 +60,13 @@ class OpenAiChatCompletionsControllerTest {
                         ),
                         false
                 )
-        ).toCompletableFuture().join().getBody();
+        ).toCompletableFuture().join();
 
         assertThat(receivedMessage.get()).isEqualTo("微信里的最新消息");
-        assertThat(response).isNotNull();
+        assertThat(httpResponse.getBody())
+                .isInstanceOf(OpenAiChatCompletionsController.ChatCompletionResponse.class);
+        var response = (OpenAiChatCompletionsController.ChatCompletionResponse)
+                httpResponse.getBody();
         assertThat(response.id()).startsWith("chatcmpl-");
         assertThat(response.object()).isEqualTo("chat.completion");
         assertThat(response.created()).isEqualTo(1784941200L);
@@ -76,14 +81,15 @@ class OpenAiChatCompletionsControllerTest {
     }
 
     @Test
-    void rejectsStreamingRequests() {
+    void returnsOpenAiSseChunksForStreamingRequests() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
+        AtomicReference<String> receivedMessage = new AtomicReference<>();
         OpenAiChatCompletionsController controller = controller(
                 person,
-                new AtomicReference<>()
+                receivedMessage
         );
 
-        assertThatThrownBy(() -> controller.complete(
+        var response = controller.complete(
                 "Bearer " + TOKEN,
                 new OpenAiChatCompletionsController.ChatCompletionRequest(
                         MODEL,
@@ -93,8 +99,21 @@ class OpenAiChatCompletionsControllerTest {
                         )),
                         true
                 )
-        )).isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("streaming is not supported");
+        ).toCompletableFuture().join();
+
+        assertThat(receivedMessage.get()).isEqualTo("你好");
+        assertThat(response.getHeaders().getContentType())
+                .isEqualTo(MediaType.TEXT_EVENT_STREAM);
+        assertThat(response.getBody()).isInstanceOf(String.class);
+        String body = (String) response.getBody();
+        assertThat(body)
+                .contains("data: {")
+                .contains("\"object\":\"chat.completion.chunk\"")
+                .contains("\"model\":\"shen-zhixia\"")
+                .contains("\"role\":\"assistant\"")
+                .contains("\"content\":\"第一段回复\\n\\n第二段回复\"")
+                .contains("\"finish_reason\":\"stop\"")
+                .endsWith("data: [DONE]\n\n");
     }
 
     @Test
@@ -129,7 +148,8 @@ class OpenAiChatCompletionsControllerTest {
                         true,
                         person.getId().toString(),
                         MODEL
-                )
+                ),
+                JsonMapper.builder().build()
         );
     }
 

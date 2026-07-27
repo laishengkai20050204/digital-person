@@ -5,14 +5,18 @@ import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletionStage;
@@ -32,11 +36,13 @@ public final class OpenAiChatCompletionsController {
     private final InternalTokenGuard tokenGuard;
     private final PersonId personId;
     private final String configuredModel;
+    private final JsonMapper jsonMapper;
 
     public OpenAiChatCompletionsController(
             PersonDialogueService dialogueService,
             PersonApiProperties personApiProperties,
-            OpenAiCompatibilityProperties compatibilityProperties
+            OpenAiCompatibilityProperties compatibilityProperties,
+            JsonMapper jsonMapper
     ) {
         this.dialogueService = Objects.requireNonNull(
                 dialogueService,
@@ -52,10 +58,11 @@ public final class OpenAiChatCompletionsController {
         );
         this.personId = properties.requiredPersonId();
         this.configuredModel = properties.requiredModel();
+        this.jsonMapper = Objects.requireNonNull(jsonMapper, "jsonMapper cannot be null");
     }
 
     @PostMapping
-    public CompletionStage<ResponseEntity<ChatCompletionResponse>> complete(
+    public CompletionStage<ResponseEntity<?>> complete(
             @RequestHeader(name = HttpHeaders.AUTHORIZATION, required = false)
             String authorization,
             @RequestBody ChatCompletionRequest request
@@ -65,24 +72,25 @@ public final class OpenAiChatCompletionsController {
                 request,
                 "request cannot be null"
         );
-        if (Boolean.TRUE.equals(requested.stream())) {
-            throw new IllegalArgumentException("streaming is not supported");
-        }
 
         String requestedModel = requireText(requested.model(), "model");
         if (!configuredModel.equals(requestedModel)) {
             throw new IllegalArgumentException("requested model is not configured");
         }
         String userMessage = lastUserMessage(requested.messages());
+        boolean streaming = Boolean.TRUE.equals(requested.stream());
 
         return dialogueService.dialogue(personId, userMessage)
-                .thenApply(exchange -> ResponseEntity.ok(toResponse(exchange)));
+                .thenApply(exchange -> streaming
+                        ? streamingResponse(exchange)
+                        : ResponseEntity.ok(nonStreamingResponse(exchange))
+                );
     }
 
-    private ChatCompletionResponse toResponse(PersonDialogueExchange exchange) {
+    private ChatCompletionResponse nonStreamingResponse(PersonDialogueExchange exchange) {
         String content = String.join("\n\n", exchange.result().replies());
         return new ChatCompletionResponse(
-                "chatcmpl-" + UUID.randomUUID(),
+                completionId(),
                 "chat.completion",
                 exchange.occurredAt().getEpochSecond(),
                 configuredModel,
@@ -93,6 +101,50 @@ public final class OpenAiChatCompletionsController {
                 )),
                 new Usage(0, 0, 0)
         );
+    }
+
+    private ResponseEntity<String> streamingResponse(PersonDialogueExchange exchange) {
+        String id = completionId();
+        long created = exchange.occurredAt().getEpochSecond();
+        String content = String.join("\n\n", exchange.result().replies());
+
+        ChatCompletionChunk contentChunk = new ChatCompletionChunk(
+                id,
+                "chat.completion.chunk",
+                created,
+                configuredModel,
+                List.of(new ChunkChoice(
+                        0,
+                        Map.of("role", "assistant", "content", content),
+                        null
+                ))
+        );
+        ChatCompletionChunk stopChunk = new ChatCompletionChunk(
+                id,
+                "chat.completion.chunk",
+                created,
+                configuredModel,
+                List.of(new ChunkChoice(0, Map.of(), "stop"))
+        );
+
+        String body = "data: " + writeJson(contentChunk) + "\n\n"
+                + "data: " + writeJson(stopChunk) + "\n\n"
+                + "data: [DONE]\n\n";
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
+                .body(body);
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return jsonMapper.writeValueAsString(value);
+        } catch (JacksonException error) {
+            throw new IllegalStateException("could not serialize OpenAI streaming response", error);
+        }
+    }
+
+    private static String completionId() {
+        return "chatcmpl-" + UUID.randomUUID();
     }
 
     private static String lastUserMessage(List<ChatMessage> messages) {
@@ -167,6 +219,22 @@ public final class OpenAiChatCompletionsController {
             int prompt_tokens,
             int completion_tokens,
             int total_tokens
+    ) {
+    }
+
+    public record ChatCompletionChunk(
+            String id,
+            String object,
+            long created,
+            String model,
+            List<ChunkChoice> choices
+    ) {
+    }
+
+    public record ChunkChoice(
+            int index,
+            Map<String, String> delta,
+            String finish_reason
     ) {
     }
 }
