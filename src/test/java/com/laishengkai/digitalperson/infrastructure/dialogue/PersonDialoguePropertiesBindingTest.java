@@ -44,6 +44,17 @@ class PersonDialoguePropertiesBindingTest {
         });
     }
 
+    @Test
+    void usesSaferDefaultEpisodeOutputBudget() {
+        contextRunner.run(context -> {
+            assertThat(context).hasNotFailed();
+            PersonDialogueProperties properties = context.getBean(
+                    PersonDialogueProperties.class
+            );
+            assertThat(properties.conversationEpisodeMaxOutputTokens()).isEqualTo(2048);
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(PersonDialogueProperties.class)
     static class TestConfiguration {

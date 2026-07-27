@@ -24,7 +24,7 @@ class ConversationSummaryEpisodeServiceTest {
     private static final Instant NOW = Instant.parse("2026-07-25T12:00:00Z");
 
     @Test
-    void persistsEpisodesOnlyAfterTheSummaryCommitSucceeds() {
+    void persistsEpisodesBeforeTheSummaryCommit() {
         PersonId personId = PersonId.random();
         ConversationSummaryWorkItem work = workItem();
         AtomicBoolean summaryCommitted = new AtomicBoolean();
@@ -44,7 +44,7 @@ class ConversationSummaryEpisodeServiceTest {
                     List<ConversationEpisodeDraft> episodes,
                     Instant extractedAt
             ) {
-                assertThat(summaryCommitted).isTrue();
+                assertThat(summaryCommitted).isFalse();
                 assertThat(requested).isEqualTo(personId);
                 assertThat(requestedWork).isEqualTo(work);
                 storedEpisodes.set(List.copyOf(episodes));
@@ -79,33 +79,13 @@ class ConversationSummaryEpisodeServiceTest {
     }
 
     @Test
-    void discardsExtractedEpisodesWhenTheSummaryLosesTheOptimisticRace() {
+    void keepsIdempotentEpisodePersistenceWhenTheSummaryLosesTheOptimisticRace() {
         PersonId personId = PersonId.random();
         ConversationSummaryWorkItem work = workItem();
         AtomicBoolean summaryCommitted = new AtomicBoolean();
         AtomicBoolean episodeStoreCalled = new AtomicBoolean();
 
-        ConversationEpisodeStore episodeStore = new ConversationEpisodeStore() {
-            @Override
-            public CompletableFuture<Integer> saveAll(
-                    PersonId requested,
-                    ConversationSummaryWorkItem requestedWork,
-                    List<ConversationEpisodeDraft> episodes,
-                    Instant extractedAt
-            ) {
-                episodeStoreCalled.set(true);
-                return CompletableFuture.completedFuture(episodes.size());
-            }
-
-            @Override
-            public CompletableFuture<List<ConversationEpisodeSnapshot>> retrieve(
-                    PersonId requested,
-                    String relevanceQuery,
-                    int maxItems
-            ) {
-                return CompletableFuture.completedFuture(List.of());
-            }
-        };
+        ConversationEpisodeStore episodeStore = successfulEpisodeStore(episodeStoreCalled);
         ConversationSummaryService service = new ConversationSummaryService(
                 summaryStore(work, summaryCommitted, false),
                 (existing, turns, zone) -> CompletableFuture.completedFuture("过期摘要"),
@@ -120,11 +100,37 @@ class ConversationSummaryEpisodeServiceTest {
                 .join();
 
         assertThat(summaryCommitted).isFalse();
+        assertThat(episodeStoreCalled).isTrue();
+    }
+
+    @Test
+    void retainsTheSummaryBatchWhenEpisodeExtractionFails() {
+        PersonId personId = PersonId.random();
+        ConversationSummaryWorkItem work = workItem();
+        AtomicBoolean summaryCommitted = new AtomicBoolean();
+        AtomicBoolean episodeStoreCalled = new AtomicBoolean();
+
+        ConversationSummaryService service = new ConversationSummaryService(
+                summaryStore(work, summaryCommitted, true),
+                (existing, turns, zone) -> CompletableFuture.completedFuture("不应提交的摘要"),
+                successfulEpisodeStore(episodeStoreCalled),
+                (turns, zone) -> CompletableFuture.failedFuture(
+                        new RuntimeException("episode model unavailable")
+                ),
+                12,
+                8
+        );
+
+        service.summarizeIfNeeded(personId, ZoneId.of("UTC"), NOW)
+                .toCompletableFuture()
+                .join();
+
+        assertThat(summaryCommitted).isFalse();
         assertThat(episodeStoreCalled).isFalse();
     }
 
     @Test
-    void keepsTheSummaryWhenEpisodeExtractionFails() {
+    void retainsTheSummaryBatchWhenEpisodePersistenceFails() {
         PersonId personId = PersonId.random();
         ConversationSummaryWorkItem work = workItem();
         AtomicBoolean summaryCommitted = new AtomicBoolean();
@@ -139,7 +145,9 @@ class ConversationSummaryEpisodeServiceTest {
                     Instant extractedAt
             ) {
                 episodeStoreCalled.set(true);
-                return CompletableFuture.completedFuture(episodes.size());
+                return CompletableFuture.failedFuture(
+                        new RuntimeException("episode database unavailable")
+                );
             }
 
             @Override
@@ -153,11 +161,33 @@ class ConversationSummaryEpisodeServiceTest {
         };
         ConversationSummaryService service = new ConversationSummaryService(
                 summaryStore(work, summaryCommitted, true),
-                (existing, turns, zone) -> CompletableFuture.completedFuture("已提交摘要"),
+                (existing, turns, zone) -> CompletableFuture.completedFuture("不应提交的摘要"),
                 episodeStore,
-                (turns, zone) -> CompletableFuture.failedFuture(
-                        new RuntimeException("episode model unavailable")
-                ),
+                (turns, zone) -> CompletableFuture.completedFuture(List.of(episode())),
+                12,
+                8
+        );
+
+        service.summarizeIfNeeded(personId, ZoneId.of("UTC"), NOW)
+                .toCompletableFuture()
+                .join();
+
+        assertThat(episodeStoreCalled).isTrue();
+        assertThat(summaryCommitted).isFalse();
+    }
+
+    @Test
+    void advancesTheSummaryWhenTheModelExplicitlySubmitsNoEpisodes() {
+        PersonId personId = PersonId.random();
+        ConversationSummaryWorkItem work = workItem();
+        AtomicBoolean summaryCommitted = new AtomicBoolean();
+        AtomicBoolean episodeStoreCalled = new AtomicBoolean();
+
+        ConversationSummaryService service = new ConversationSummaryService(
+                summaryStore(work, summaryCommitted, true),
+                (existing, turns, zone) -> CompletableFuture.completedFuture("无事件摘要"),
+                successfulEpisodeStore(episodeStoreCalled),
+                (turns, zone) -> CompletableFuture.completedFuture(List.of()),
                 12,
                 8
         );
@@ -168,6 +198,30 @@ class ConversationSummaryEpisodeServiceTest {
 
         assertThat(summaryCommitted).isTrue();
         assertThat(episodeStoreCalled).isFalse();
+    }
+
+    private static ConversationEpisodeStore successfulEpisodeStore(AtomicBoolean called) {
+        return new ConversationEpisodeStore() {
+            @Override
+            public CompletableFuture<Integer> saveAll(
+                    PersonId requested,
+                    ConversationSummaryWorkItem requestedWork,
+                    List<ConversationEpisodeDraft> episodes,
+                    Instant extractedAt
+            ) {
+                called.set(true);
+                return CompletableFuture.completedFuture(episodes.size());
+            }
+
+            @Override
+            public CompletableFuture<List<ConversationEpisodeSnapshot>> retrieve(
+                    PersonId requested,
+                    String relevanceQuery,
+                    int maxItems
+            ) {
+                return CompletableFuture.completedFuture(List.of());
+            }
+        };
     }
 
     private static ConversationSummaryStore summaryStore(

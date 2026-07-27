@@ -22,7 +22,7 @@ import java.util.concurrent.CompletionStage;
 
 /**
  * Summarizes older raw turns and optionally extracts complete event memories from the same
- * stable batch without blocking normal dialogue on auxiliary failures.
+ * stable batch without blocking the normal dialogue response path.
  */
 public final class ConversationSummaryService {
     private static final Logger LOGGER = LoggerFactory.getLogger(
@@ -134,11 +134,22 @@ public final class ConversationSummaryService {
                 return CompletableFuture.failedFuture(error);
             }
 
-            return modelStage.thenCompose(summary -> Objects.requireNonNull(
+            return episodeStage.thenCombine(
+                    modelStage,
+                    (episodes, summary) -> new BatchResult(
+                            episodes,
+                            requireSummary(summary)
+                    )
+            ).thenCompose(result -> persistEpisodes(
+                    requestedPersonId,
+                    item,
+                    result.episodes(),
+                    now
+            ).thenApply(ignored -> result)).thenCompose(result -> Objects.requireNonNull(
                     summaryStore.save(
                             requestedPersonId,
                             item,
-                            requireSummary(summary),
+                            result.summary(),
                             now
                     ),
                     "summaryStore save stage cannot be null"
@@ -158,7 +169,7 @@ public final class ConversationSummaryService {
                         item.turns().size(),
                         item.coveredThroughTurnId()
                 );
-                return persistEpisodes(requestedPersonId, item, episodeStage, now);
+                return CompletableFuture.completedFuture(null);
             });
         }).handle((ignored, failure) -> {
             if (failure != null) {
@@ -184,67 +195,64 @@ public final class ConversationSummaryService {
             );
         } catch (RuntimeException error) {
             logEpisodeFailure(personId, "extraction", error);
-            return CompletableFuture.completedFuture(List.of());
+            return CompletableFuture.failedFuture(error);
         }
         return stage.handle((episodes, failure) -> {
             if (failure != null) {
-                logEpisodeFailure(personId, "extraction", unwrap(failure));
-                return List.of();
+                Throwable cause = unwrap(failure);
+                logEpisodeFailure(personId, "extraction", cause);
+                throw new CompletionException(cause);
             }
-            List<ConversationEpisodeDraft> safe = List.copyOf(Objects.requireNonNullElse(
-                    episodes,
-                    List.of()
-            ));
-            if (safe.stream().anyMatch(Objects::isNull)) {
-                logEpisodeFailure(
-                        personId,
-                        "extraction",
-                        new NullPointerException("episodes cannot contain null")
-                );
-                return List.of();
+            try {
+                List<ConversationEpisodeDraft> safe = List.copyOf(Objects.requireNonNull(
+                        episodes,
+                        "episodes cannot be null"
+                ));
+                if (safe.stream().anyMatch(Objects::isNull)) {
+                    throw new NullPointerException("episodes cannot contain null");
+                }
+                return safe;
+            } catch (RuntimeException error) {
+                logEpisodeFailure(personId, "extraction", error);
+                throw new CompletionException(error);
             }
-            return safe;
         });
     }
 
     private CompletionStage<Void> persistEpisodes(
             PersonId personId,
             ConversationSummaryWorkItem item,
-            CompletionStage<List<ConversationEpisodeDraft>> episodeStage,
+            List<ConversationEpisodeDraft> episodes,
             Instant extractedAt
     ) {
-        if (episodeStore == null) {
+        if (episodeStore == null || episodes.isEmpty()) {
             return CompletableFuture.completedFuture(null);
         }
-        return episodeStage.thenCompose(episodes -> {
-            if (episodes.isEmpty()) {
-                return CompletableFuture.completedFuture(null);
+        final CompletionStage<Integer> saveStage;
+        try {
+            saveStage = Objects.requireNonNull(
+                    episodeStore.saveAll(personId, item, episodes, extractedAt),
+                    "episodeStore stage cannot be null"
+            );
+        } catch (RuntimeException error) {
+            logEpisodeFailure(personId, "persistence", error);
+            return CompletableFuture.failedFuture(error);
+        }
+        return saveStage.handle((stored, failure) -> {
+            if (failure != null) {
+                Throwable cause = unwrap(failure);
+                logEpisodeFailure(personId, "persistence", cause);
+                throw new CompletionException(cause);
             }
-            final CompletionStage<Integer> saveStage;
-            try {
-                saveStage = Objects.requireNonNull(
-                        episodeStore.saveAll(personId, item, episodes, extractedAt),
-                        "episodeStore stage cannot be null"
-                );
-            } catch (RuntimeException error) {
-                logEpisodeFailure(personId, "persistence", error);
-                return CompletableFuture.completedFuture(null);
-            }
-            return saveStage.handle((stored, failure) -> {
-                if (failure != null) {
-                    logEpisodeFailure(personId, "persistence", unwrap(failure));
-                    return null;
-                }
-                LOGGER.info(
-                        "Conversation episodes persisted: personId={}, extractedCount={}, insertedCount={}, sourceStartTurnId={}, sourceEndTurnId={}",
-                        personId,
-                        episodes.size(),
-                        Objects.requireNonNullElse(stored, 0),
-                        item.sourceStartTurnId(),
-                        item.coveredThroughTurnId()
-                );
-                return null;
-            });
+            LOGGER.info(
+                    "Conversation episodes persisted: personId={}, extractedCount={}, insertedCount={}, sourceStartTurnId={}, sourceEndTurnId={}",
+                    personId,
+                    episodes.size(),
+                    Objects.requireNonNullElse(stored, 0),
+                    item.sourceStartTurnId(),
+                    item.coveredThroughTurnId()
+            );
+            return null;
         });
     }
 
@@ -276,7 +284,7 @@ public final class ConversationSummaryService {
 
     private static void logSummaryFailure(PersonId personId, Throwable error) {
         LOGGER.warn(
-                "Rolling conversation summary failed; retaining raw turns: personId={}, errorType={}",
+                "Rolling conversation summary failed; retaining raw turns for retry: personId={}, errorType={}",
                 personId,
                 error.getClass().getSimpleName()
         );
@@ -288,10 +296,17 @@ public final class ConversationSummaryService {
             Throwable error
     ) {
         LOGGER.warn(
-                "Conversation episode {} failed; continuing without episode update: personId={}, errorType={}",
+                "Conversation episode {} failed; retaining summary batch for retry: personId={}, errorType={}",
                 stage,
                 personId,
                 error.getClass().getSimpleName()
         );
+    }
+
+    private record BatchResult(List<ConversationEpisodeDraft> episodes, String summary) {
+        private BatchResult {
+            episodes = List.copyOf(Objects.requireNonNull(episodes, "episodes cannot be null"));
+            summary = requireSummary(summary);
+        }
     }
 }

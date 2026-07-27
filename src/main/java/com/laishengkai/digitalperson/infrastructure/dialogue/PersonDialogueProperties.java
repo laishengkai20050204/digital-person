@@ -27,7 +27,7 @@ public record PersonDialogueProperties(
     private static final int DEFAULT_CONVERSATION_SUMMARY_MAX_OUTPUT_TOKENS = 800;
     private static final double DEFAULT_CONVERSATION_SUMMARY_TEMPERATURE = 0.2;
     private static final boolean DEFAULT_CONVERSATION_EPISODE_ENABLED = true;
-    private static final int DEFAULT_CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS = 700;
+    private static final int DEFAULT_CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS = 2_048;
     private static final double DEFAULT_CONVERSATION_EPISODE_TEMPERATURE = 0.1;
 
     /** Explicitly selects the canonical constructor for Spring Boot configuration binding. */

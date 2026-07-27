@@ -4,7 +4,7 @@
 
 Conversation episode memory preserves complete historical events that would lose their causal structure if they were reduced to independent Mem0 facts.
 
-The dialogue context now has four complementary layers:
+The dialogue context has four complementary layers:
 
 ```text
 recent raw turns
@@ -17,7 +17,27 @@ An episode is appropriate for a completed conflict, decision, plan, achievement,
 
 It is not appropriate for greetings, transient confirmations, unfinished topics, synthetic tests, test codes, credentials, or isolated stable facts.
 
-## Extraction lifecycle
+## Extraction protocol
+
+The episode model must call exactly one result-submission tool:
+
+```text
+submit_conversation_episodes
+```
+
+The tool only submits candidates. It does not write the database. Java validates, filters and persists the submitted episodes.
+
+A successful empty result is explicit:
+
+```json
+{
+  "episodes": []
+}
+```
+
+The request uses required tool choice. Plain-text JSON, a missing `episodes` array, an unexpected tool, multiple tool calls, malformed arguments, or truncated arguments are rejected. The model receives one protocol-correction retry after an invalid submission.
+
+## Extraction and summary lifecycle
 
 Episodes reuse the stable batch boundary already established by rolling summaries:
 
@@ -28,16 +48,21 @@ prepare one optimistic summary work item
                     ↓
 summary generation and episode extraction run in parallel
                     ↓
-commit rolling summary with version / coverage CAS
+validate explicit episode tool submission
                     ↓
-only the winner persists extracted episodes
+persist episodes using the idempotent source-range/title key
+                    ↓
+commit rolling summary with version / coverage CAS
 ```
 
-This ordering provides three guarantees:
+This ordering provides four guarantees:
 
 1. Episodes are extracted only from turns old enough to leave the recent raw window.
-2. A request that loses the summary optimistic race cannot persist duplicate or stale episodes.
-3. Episode extraction and persistence failures do not block normal dialogue or rolling summaries.
+2. Episode persistence is idempotent if concurrent requests process the same summary batch.
+3. A valid empty `episodes` submission allows the summary batch to advance.
+4. Episode extraction or persistence failure prevents summary coverage from advancing, so the same batch remains available for a later retry.
+
+The retry rule does not block the normal user reply. Summary and episode processing remain asynchronous post-processing. During an episode-model or episode-database outage, older raw turns are retained instead of being silently marked as processed.
 
 ## Persistence
 
@@ -53,7 +78,9 @@ Each row stores:
 - importance from `0.0` to `1.0`;
 - event time range and creation time.
 
-The unique key on person, source range, and title makes retries idempotent. Rows are deleted automatically when the owning digital person is deleted.
+The unique key on person, source range, and title makes retries and concurrent extraction idempotent. Rows are deleted automatically when the owning digital person is deleted.
+
+No new database migration is required for the required-tool protocol or retry ordering.
 
 ## Retrieval
 
@@ -84,15 +111,17 @@ Episodes are supplied as ordinary user-role background data, not system messages
 ```bash
 CONVERSATION_EPISODE_ENABLED=true
 CONVERSATION_EPISODE_MAX_ITEMS=3
-CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS=700
+CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS=2048
 CONVERSATION_EPISODE_TEMPERATURE=0.1
 ```
 
-`CONVERSATION_EPISODE_ENABLED=false` disables extraction and retrieval while leaving raw-turn persistence, rolling summaries, and Mem0 unchanged.
+`CONVERSATION_EPISODE_MAX_OUTPUT_TOKENS` defaults to `2048` so a submission containing several event summaries and arrays is less likely to be truncated by the configured model.
+
+`CONVERSATION_EPISODE_ENABLED=false` disables extraction and retrieval while leaving raw-turn persistence, rolling summaries, and Mem0 unchanged. When disabled, rolling summaries do not wait for episode extraction.
 
 ## Production verification
 
-After deployment, confirm Flyway V5 and the new table:
+Confirm the existing Flyway V5 migration and episode table:
 
 ```sql
 SELECT installed_rank, version, description, success
@@ -127,8 +156,9 @@ Relevant service logs:
 
 ```text
 Conversation episodes persisted
-Conversation episode extraction failed
-Conversation episode persistence failed
+Conversation episode extraction failed; retaining summary batch for retry
+Conversation episode persistence failed; retaining summary batch for retry
+Rolling conversation summary failed; retaining raw turns for retry
 ```
 
-The failure logs contain only person IDs, stages, counts, source turn IDs, and exception types; episode text is not logged.
+The failure logs contain only person IDs, stages, counts, source turn IDs, and exception types; episode text and tool arguments are not logged.
