@@ -1,6 +1,7 @@
 package com.laishengkai.digitalperson.infrastructure.memory;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.net.URI;
 import java.time.Duration;
@@ -18,6 +19,7 @@ public record Mem0Properties(
         String apiKey,
         Duration connectTimeout,
         Duration requestTimeout,
+        Duration recordingTimeout,
         Integer maxResponseBytes,
         String healthPath
 ) {
@@ -38,10 +40,12 @@ public record Mem0Properties(
     private static final URI DEFAULT_BASE_URL = URI.create("http://127.0.0.1:8888");
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(2);
     private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    static final Duration DEFAULT_RECORDING_TIMEOUT = Duration.ofSeconds(120);
     static final int DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
     private static final int MAX_CONFIGURED_RESPONSE_BYTES = 16 * 1_048_576;
     private static final String DEFAULT_HEALTH_PATH = "/auth/setup-status";
 
+    @ConstructorBinding
     public Mem0Properties {
         minimumRelevance = probability(minimumRelevance, "minimumRelevance");
         extractionInstructions = normalizeInstructions(extractionInstructions);
@@ -55,6 +59,10 @@ public record Mem0Properties(
                 requestTimeout == null ? DEFAULT_REQUEST_TIMEOUT : requestTimeout,
                 "requestTimeout"
         );
+        recordingTimeout = positive(
+                recordingTimeout == null ? DEFAULT_RECORDING_TIMEOUT : recordingTimeout,
+                "recordingTimeout"
+        );
         maxResponseBytes = responseBytes(maxResponseBytes);
         healthPath = normalizePath(
                 healthPath == null ? DEFAULT_HEALTH_PATH : healthPath
@@ -64,6 +72,36 @@ public record Mem0Properties(
                     "Mem0 retrieval cannot be enabled while Mem0 is disabled"
             );
         }
+    }
+
+    /** Compatibility constructor for callers using the original shared timeout shape. */
+    public Mem0Properties(
+            boolean enabled,
+            boolean required,
+            boolean retrievalEnabled,
+            Double minimumRelevance,
+            String extractionInstructions,
+            URI baseUrl,
+            String apiKey,
+            Duration connectTimeout,
+            Duration requestTimeout,
+            Integer maxResponseBytes,
+            String healthPath
+    ) {
+        this(
+                enabled,
+                required,
+                retrievalEnabled,
+                minimumRelevance,
+                extractionInstructions,
+                baseUrl,
+                apiKey,
+                connectTimeout,
+                requestTimeout,
+                null,
+                maxResponseBytes,
+                healthPath
+        );
     }
 
     URI endpoint(String path) {
@@ -91,6 +129,8 @@ public record Mem0Properties(
                 + connectTimeout
                 + ", requestTimeout="
                 + requestTimeout
+                + ", recordingTimeout="
+                + recordingTimeout
                 + ", maxResponseBytes="
                 + maxResponseBytes
                 + ", healthPath="

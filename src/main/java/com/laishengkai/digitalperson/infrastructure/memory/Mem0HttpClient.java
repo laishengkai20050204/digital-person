@@ -11,7 +11,9 @@ import tools.jackson.databind.node.ObjectNode;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -38,7 +40,10 @@ final class Mem0HttpClient {
     }
 
     CompletionStage<Boolean> probe() {
-        HttpRequest request = requestBuilder(properties.healthPath())
+        HttpRequest request = requestBuilder(
+                properties.healthPath(),
+                properties.requestTimeout()
+        )
                 .GET()
                 .build();
         return httpClient.sendAsync(request, HttpResponse.BodyHandlers.discarding())
@@ -60,7 +65,13 @@ final class Mem0HttpClient {
         payload.put("threshold", properties.minimumRelevance());
         payload.putObject("filters")
                 .put("agent_id", query.personId().toString());
-        return sendJson("/search", "POST", payload);
+        return sendJson(
+                "/search",
+                "POST",
+                payload,
+                properties.requestTimeout(),
+                "search"
+        );
     }
 
     CompletionStage<JsonNode> add(PersonMemoryWriteRequest request) {
@@ -80,12 +91,21 @@ final class Mem0HttpClient {
         ObjectNode metadata = payload.putObject("metadata");
         metadata.put("source", "digital-person");
         request.metadata().forEach(metadata::put);
-        return sendJson("/memories", "POST", payload);
+        return sendJson(
+                "/memories",
+                "POST",
+                payload,
+                properties.recordingTimeout(),
+                "recording"
+        );
     }
 
     CompletionStage<Void> delete(String memoryId) {
         String normalized = requireText(memoryId, "memoryId");
-        HttpRequest request = requestBuilder("/memories/" + normalized)
+        HttpRequest request = requestBuilder(
+                "/memories/" + normalized,
+                properties.requestTimeout()
+        )
                 .DELETE()
                 .build();
         return httpClient.sendAsync(request, responseBodyHandler)
@@ -99,7 +119,9 @@ final class Mem0HttpClient {
     private CompletionStage<JsonNode> sendJson(
             String path,
             String method,
-            JsonNode payload
+            JsonNode payload,
+            Duration timeout,
+            String operation
     ) {
         String body;
         try {
@@ -111,7 +133,7 @@ final class Mem0HttpClient {
             ));
         }
 
-        HttpRequest request = requestBuilder(path)
+        HttpRequest request = requestBuilder(path, timeout)
                 .method(
                         method,
                         HttpRequest.BodyPublishers.ofString(body)
@@ -119,17 +141,65 @@ final class Mem0HttpClient {
                 .header("Content-Type", "application/json")
                 .build();
         return httpClient.sendAsync(request, responseBodyHandler)
-                .thenApply(this::parseResponse);
+                .handle((response, failure) -> {
+                    if (failure != null) {
+                        throw new CompletionException(requestFailure(
+                                operation,
+                                timeout,
+                                failure
+                        ));
+                    }
+                    return parseResponse(response);
+                });
     }
 
-    private HttpRequest.Builder requestBuilder(String path) {
+    private HttpRequest.Builder requestBuilder(String path, Duration timeout) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(properties.endpoint(path))
-                .timeout(properties.requestTimeout())
+                .timeout(Objects.requireNonNull(timeout, "timeout cannot be null"))
                 .header("Accept", "application/json");
         if (!properties.apiKey().isBlank()) {
             builder.header("X-API-Key", properties.apiKey());
         }
         return builder;
+    }
+
+    private static Mem0ClientException requestFailure(
+            String operation,
+            Duration timeout,
+            Throwable failure
+    ) {
+        Throwable cause = unwrap(failure);
+        String safeOperation = requireOperation(operation);
+        if (cause instanceof HttpTimeoutException) {
+            String message = "Mem0 " + safeOperation + " timed out after " + timeout;
+            if ("recording".equals(safeOperation)) {
+                message += "; completion is unknown and the POST request was not retried";
+            }
+            return new Mem0ClientException(message, cause);
+        }
+        if (cause instanceof Mem0ClientException clientException) {
+            return clientException;
+        }
+        return new Mem0ClientException(
+                "Mem0 " + safeOperation + " request failed",
+                cause
+        );
+    }
+
+    private static Throwable unwrap(Throwable failure) {
+        Throwable current = Objects.requireNonNull(failure, "failure cannot be null");
+        while (current instanceof CompletionException && current.getCause() != null) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private static String requireOperation(String value) {
+        String operation = requireText(value, "operation");
+        if (!operation.matches("[a-z]+")) {
+            throw new IllegalArgumentException("operation contains unsafe characters");
+        }
+        return operation;
     }
 
     private JsonNode parseResponse(HttpResponse<byte[]> response) {
