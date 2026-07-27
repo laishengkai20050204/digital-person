@@ -40,9 +40,28 @@ jobs:
           git apply /tmp/structured-memory-tool-submission.patch
 
       - name: Run full Maven verification
-        run: ./mvnw -B verify
+        id: verify
+        continue-on-error: true
+        shell: bash
+        run: ./mvnw -B verify > /tmp/maven-verify.log 2>&1
+
+      - name: Upload Maven verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: structured-memory-tool-maven-verify
+          path: /tmp/maven-verify.log
+          if-no-files-found: error
+
+      - name: Fail on Maven verification error
+        if: steps.verify.outcome == 'failure'
+        shell: bash
+        run: |
+          tail -n 200 /tmp/maven-verify.log
+          exit 1
 
       - name: Commit verified implementation
+        if: steps.verify.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
