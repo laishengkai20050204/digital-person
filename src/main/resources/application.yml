@@ -89,6 +89,10 @@ digital-person:
       connect-timeout: ${MEM0_CONNECT_TIMEOUT:2s}
       request-timeout: ${MEM0_REQUEST_TIMEOUT:30s}
       recording-timeout: ${MEM0_RECORDING_TIMEOUT:120s}
+      deduplication-enabled: ${MEM0_DEDUPLICATION_ENABLED:true}
+      duplicate-semantic-threshold: ${MEM0_DUPLICATE_SEMANTIC_THRESHOLD:0.62}
+      duplicate-text-threshold: ${MEM0_DUPLICATE_TEXT_THRESHOLD:0.30}
+      duplicate-max-candidates: ${MEM0_DUPLICATE_MAX_CANDIDATES:5}
       max-response-bytes: ${MEM0_MAX_RESPONSE_BYTES:1048576}
       health-path: ${MEM0_HEALTH_PATH:/auth/setup-status}
     test-api:
