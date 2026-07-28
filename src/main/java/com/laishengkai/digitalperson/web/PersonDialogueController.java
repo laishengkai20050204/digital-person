@@ -53,7 +53,7 @@ public final class PersonDialogueController {
             PersonDialogueService dialogueService,
             PersonApiProperties properties
     ) {
-        this(dialogueService, properties, null);
+        this(dialogueService, properties, (DialogueActivityReactionService) null);
     }
 
     private PersonDialogueController(
