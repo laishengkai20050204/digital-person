@@ -158,10 +158,67 @@ public final class OpenAiChatCompletionsController {
                     "messages cannot contain null"
             );
             if (message.role() != null && "user".equalsIgnoreCase(message.role().strip())) {
-                return requireText(message.content(), "user message content");
+                return userText(message.content());
             }
         }
         throw new IllegalArgumentException("messages must contain a user message");
+    }
+
+    private static String userText(Object content) {
+        if (content instanceof String text) {
+            return requireText(text, "user message content");
+        }
+        if (content instanceof List<?> parts) {
+            StringBuilder combined = new StringBuilder();
+            for (Object part : parts) {
+                appendTextPart(combined, part);
+            }
+            return requireText(combined.toString(), "user message content");
+        }
+        throw new IllegalArgumentException(
+                "user message content must be text or an array of text parts"
+        );
+    }
+
+    private static void appendTextPart(StringBuilder combined, Object part) {
+        if (part instanceof String text) {
+            appendText(combined, text);
+            return;
+        }
+        if (!(part instanceof Map<?, ?> values)) {
+            return;
+        }
+        Object type = values.get("type");
+        if (!isSupportedTextPart(type)) {
+            return;
+        }
+        Object text = values.get("text");
+        if (text instanceof String value) {
+            appendText(combined, value);
+        }
+    }
+
+    private static boolean isSupportedTextPart(Object type) {
+        if (type == null) {
+            return true;
+        }
+        if (!(type instanceof String value)) {
+            return false;
+        }
+        String normalized = value.strip();
+        return "text".equalsIgnoreCase(normalized)
+                || "input_text".equalsIgnoreCase(normalized);
+    }
+
+    private static void appendText(StringBuilder combined, String text) {
+        String normalized = text == null ? "" : text.strip();
+        if (normalized.isEmpty()) {
+            return;
+        }
+        if (!combined.isEmpty()) {
+            combined.append('\n');
+        }
+        combined.append(normalized);
     }
 
     private static String extractBearerToken(String authorization) {
@@ -192,7 +249,7 @@ public final class OpenAiChatCompletionsController {
     ) {
     }
 
-    public record ChatMessage(String role, String content) {
+    public record ChatMessage(String role, Object content) {
     }
 
     public record ChatCompletionResponse(
