@@ -96,11 +96,12 @@ class LanguageModelPersonDialogueModelTest {
         ).toCompletableFuture().join();
 
         assertThat(result.replies()).containsExactly("记得，你喜欢科幻片。");
-        assertThat(captured.get().messages()).hasSize(7);
+        assertThat(captured.get().messages()).hasSize(8);
         assertThat(captured.get().messages().getFirst())
                 .isInstanceOf(SystemModelMessage.class);
         assertThat(((SystemModelMessage) captured.get().messages().getFirst()).text())
                 .contains("context_json")
+                .contains("当前消息中的明确任务、停止要求、回答范围和输出格式必须严格执行")
                 .contains(person.getId().toString())
                 .contains("\"recentConversation\":[]")
                 .doesNotContain("我今天晚上准备复习线性代数。")
@@ -132,6 +133,13 @@ class LanguageModelPersonDialogueModelTest {
                 )
         );
         assertThat(captured.get().messages().get(6))
+                .isInstanceOf(SystemModelMessage.class);
+        assertThat(((SystemModelMessage) captured.get().messages().get(6)).text())
+                .contains("当前实时消息")
+                .contains("优先级高于此前全部历史内容")
+                .contains("只回答指定内容")
+                .contains("人物语气和角色演绎不能覆盖当前消息的明确要求");
+        assertThat(captured.get().messages().get(7))
                 .isEqualTo(new UserModelMessage("你还记得我喜欢什么电影吗？"));
         assertThat(captured.get().options().toolChoice()).isEqualTo(ModelToolChoice.NONE);
         assertThat(captured.get().options().maxOutputTokens()).isEqualTo(900);
