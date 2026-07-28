@@ -1,8 +1,10 @@
 package com.laishengkai.digitalperson.web;
 
+import com.laishengkai.digitalperson.application.DialogueActivityReactionService;
 import com.laishengkai.digitalperson.application.PersonDialogueExchange;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.person.PersonId;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
@@ -49,6 +51,7 @@ public final class OpenAiChatCompletionsController {
 
     private final PersonDialogueService dialogueService;
     private final WechatSlashCommandHandler slashCommandHandler;
+    private final DialogueActivityReactionService activityReactionService;
     private final InternalTokenGuard tokenGuard;
     private final PersonId personId;
     private final String configuredModel;
@@ -60,7 +63,46 @@ public final class OpenAiChatCompletionsController {
             WechatSlashCommandHandler slashCommandHandler,
             PersonApiProperties personApiProperties,
             OpenAiCompatibilityProperties compatibilityProperties,
+            JsonMapper jsonMapper,
+            ObjectProvider<DialogueActivityReactionService> activityReactionProvider
+    ) {
+        this(
+                dialogueService,
+                slashCommandHandler,
+                personApiProperties,
+                compatibilityProperties,
+                jsonMapper,
+                Objects.requireNonNull(
+                        activityReactionProvider,
+                        "activityReactionProvider cannot be null"
+                ).getIfAvailable()
+        );
+    }
+
+    public OpenAiChatCompletionsController(
+            PersonDialogueService dialogueService,
+            WechatSlashCommandHandler slashCommandHandler,
+            PersonApiProperties personApiProperties,
+            OpenAiCompatibilityProperties compatibilityProperties,
             JsonMapper jsonMapper
+    ) {
+        this(
+                dialogueService,
+                slashCommandHandler,
+                personApiProperties,
+                compatibilityProperties,
+                jsonMapper,
+                (DialogueActivityReactionService) null
+        );
+    }
+
+    private OpenAiChatCompletionsController(
+            PersonDialogueService dialogueService,
+            WechatSlashCommandHandler slashCommandHandler,
+            PersonApiProperties personApiProperties,
+            OpenAiCompatibilityProperties compatibilityProperties,
+            JsonMapper jsonMapper,
+            DialogueActivityReactionService activityReactionService
     ) {
         this.dialogueService = Objects.requireNonNull(
                 dialogueService,
@@ -70,6 +112,7 @@ public final class OpenAiChatCompletionsController {
                 slashCommandHandler,
                 "slashCommandHandler cannot be null"
         );
+        this.activityReactionService = activityReactionService;
         this.tokenGuard = new InternalTokenGuard(Objects.requireNonNull(
                 personApiProperties,
                 "personApiProperties cannot be null"
@@ -129,7 +172,16 @@ public final class OpenAiChatCompletionsController {
         }
 
         return dialogueService.dialogue(personId, userMessage)
-                .thenApply(exchange -> response(exchange, streaming));
+                .thenApply(exchange -> {
+                    triggerActivityReaction(userMessage, exchange);
+                    return response(exchange, streaming);
+                });
+    }
+
+    private void triggerActivityReaction(String userMessage, PersonDialogueExchange exchange) {
+        if (activityReactionService != null) {
+            activityReactionService.triggerIfNeeded(userMessage, exchange);
+        }
     }
 
     private ResponseEntity<?> response(PersonDialogueExchange exchange, boolean streaming) {

@@ -1,8 +1,11 @@
 package com.laishengkai.digitalperson.web;
 
+import com.laishengkai.digitalperson.application.DialogueActivityReactionService;
 import com.laishengkai.digitalperson.application.PersonDialogueExchange;
 import com.laishengkai.digitalperson.application.PersonDialogueService;
 import com.laishengkai.digitalperson.person.PersonId;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,16 +30,42 @@ import java.util.concurrent.CompletionStage;
 )
 public final class PersonDialogueController {
     private final PersonDialogueService dialogueService;
+    private final DialogueActivityReactionService activityReactionService;
     private final InternalTokenGuard tokenGuard;
+
+    @Autowired
+    public PersonDialogueController(
+            PersonDialogueService dialogueService,
+            PersonApiProperties properties,
+            ObjectProvider<DialogueActivityReactionService> activityReactionProvider
+    ) {
+        this(
+                dialogueService,
+                properties,
+                Objects.requireNonNull(
+                        activityReactionProvider,
+                        "activityReactionProvider cannot be null"
+                ).getIfAvailable()
+        );
+    }
 
     public PersonDialogueController(
             PersonDialogueService dialogueService,
             PersonApiProperties properties
     ) {
+        this(dialogueService, properties, (DialogueActivityReactionService) null);
+    }
+
+    private PersonDialogueController(
+            PersonDialogueService dialogueService,
+            PersonApiProperties properties,
+            DialogueActivityReactionService activityReactionService
+    ) {
         this.dialogueService = Objects.requireNonNull(
                 dialogueService,
                 "dialogueService cannot be null"
         );
+        this.activityReactionService = activityReactionService;
         this.tokenGuard = new InternalTokenGuard(Objects.requireNonNull(
                 properties,
                 "properties cannot be null"
@@ -59,7 +88,16 @@ public final class PersonDialogueController {
                 "request cannot be null"
         ).message();
         return dialogueService.dialogue(parsedPersonId, message)
-                .thenApply(exchange -> ResponseEntity.ok(DialogueResponse.from(exchange)));
+                .thenApply(exchange -> {
+                    triggerActivityReaction(message, exchange);
+                    return ResponseEntity.ok(DialogueResponse.from(exchange));
+                });
+    }
+
+    private void triggerActivityReaction(String message, PersonDialogueExchange exchange) {
+        if (activityReactionService != null) {
+            activityReactionService.triggerIfNeeded(message, exchange);
+        }
     }
 
     public record DialogueRequest(String message) {

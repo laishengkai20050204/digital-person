@@ -39,13 +39,15 @@ import java.util.Optional;
 )
 public final class WechatSlashCommandService implements WechatSlashCommandHandler {
     private static final String COMMAND_NAMESPACE = "#dp";
+    private static final Duration ACTIVITY_HISTORY_WINDOW = Duration.ofHours(24);
     private static final String HELP = """
             可用人物指令
-            #dp activity  查看当前活动
-            #dp state     查看完整状态
-            #dp status    查看活动和主要状态
-            #dp effects   查看生效中的状态效果
-            #dp help      查看指令帮助
+            #dp activity     查看当前活动
+            #dp activity24h  查看过去24小时活动
+            #dp state        查看完整状态
+            #dp status       查看活动和主要状态
+            #dp effects      查看生效中的状态效果
+            #dp help         查看指令帮助
             """;
 
     private static final DateTimeFormatter TIME_FORMATTER =
@@ -114,6 +116,7 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
 
         String content = switch (command) {
             case "activity" -> formatActivities(person, now);
+            case "activity24h" -> formatActivityHistory(person, now);
             case "state" -> formatState(person, projection, false);
             case "status" -> formatActivities(person, now)
                     + "\n\n"
@@ -148,6 +151,7 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
 
     private static boolean isKnownCommand(String command) {
         return "activity".equals(command)
+                || "activity24h".equals(command)
                 || "state".equals(command)
                 || "status".equals(command)
                 || "effects".equals(command);
@@ -185,6 +189,53 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
                     .append(formatTime(event.getStartTime(), zone))
                     .append("\n持续：")
                     .append(formatDuration(Duration.between(event.getStartTime(), now)));
+        }
+        return output.toString();
+    }
+
+    private static String formatActivityHistory(Person person, Instant now) {
+        Instant cutoff = now.minus(ACTIVITY_HISTORY_WINDOW);
+        List<PersonEvent> events = person.getPersonTimeline().getAll().stream()
+                .filter(event -> !event.getStartTime().isAfter(now))
+                .filter(event -> event.getEndTime()
+                        .map(end -> end.isAfter(cutoff))
+                        .orElse(true))
+                .sorted(Comparator.comparing(PersonEvent::getStartTime).reversed())
+                .toList();
+        String displayName = person.getIdentity().displayName();
+        if (events.isEmpty()) {
+            return "过去24小时活动（" + displayName + "）\n暂无活动记录。";
+        }
+
+        ZoneId zone = person.getIdentity().timeZone();
+        StringBuilder output = new StringBuilder("过去24小时活动（")
+                .append(displayName)
+                .append("）");
+        for (int index = 0; index < events.size(); index++) {
+            PersonEvent event = events.get(index);
+            Instant effectiveEnd = event.getEndTime().orElse(now);
+            output.append("\n\n")
+                    .append(index + 1)
+                    .append(". [")
+                    .append(channelLabel(event.getChannel()))
+                    .append("] ")
+                    .append(event.getTitle())
+                    .append("\n类型：")
+                    .append(activityLabel(event.getActivityType()));
+            if (!event.getLocation().isBlank()) {
+                output.append("\n地点：").append(event.getLocation());
+            }
+            output.append("\n开始：")
+                    .append(formatTime(event.getStartTime(), zone))
+                    .append("\n结束：")
+                    .append(event.getEndTime()
+                            .map(end -> formatTime(end, zone))
+                            .orElse("进行中"))
+                    .append("\n持续：")
+                    .append(formatDuration(Duration.between(
+                            event.getStartTime(),
+                            effectiveEnd
+                    )));
         }
         return output.toString();
     }
