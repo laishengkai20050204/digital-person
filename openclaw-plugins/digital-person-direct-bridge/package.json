@@ -1,0 +1,19 @@
+{
+  "name": "@laishengkai/digital-person-direct-bridge",
+  "version": "1.0.0",
+  "description": "Routes WeChat messages directly to the Digital Person Java backend before OpenClaw starts an agent turn.",
+  "type": "module",
+  "private": true,
+  "peerDependencies": {
+    "openclaw": ">=2026.7.1"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1",
+      "minGatewayVersion": "2026.7.1"
+    }
+  }
+}
