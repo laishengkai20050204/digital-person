@@ -66,6 +66,36 @@ class DialogueActivityReactionServiceTest {
     }
 
     @Test
+    void serializesReviewsForTheSamePerson() {
+        PersonId personId = PersonId.random();
+        CompletableFuture<Void> firstDecision = new CompletableFuture<>();
+        AtomicInteger invocations = new AtomicInteger();
+        DialogueActivityReactionService service = new DialogueActivityReactionService(
+                (ignored, observation, occurredAt) -> {
+                    int invocation = invocations.incrementAndGet();
+                    return invocation == 1
+                            ? firstDecision
+                            : CompletableFuture.completedFuture(null);
+                },
+                Runnable::run
+        );
+
+        assertThat(service.triggerIfNeeded(
+                "一起打游戏吧",
+                storedExchange(personId, "好，我上号了。")
+        )).isTrue();
+        assertThat(service.triggerIfNeeded(
+                "你来了吗",
+                storedExchange(personId, "来了，正在进房间。")
+        )).isTrue();
+        assertThat(invocations).hasValue(1);
+
+        firstDecision.complete(null);
+
+        assertThat(invocations).hasValue(2);
+    }
+
+    @Test
     void ignoresDialoguesThatWereNotPersisted() {
         AtomicInteger decisions = new AtomicInteger();
         DialogueActivityReactionService service = new DialogueActivityReactionService(
@@ -102,8 +132,12 @@ class DialogueActivityReactionServiceTest {
     }
 
     private static PersonDialogueExchange storedExchange(String reply) {
+        return storedExchange(PersonId.random(), reply);
+    }
+
+    private static PersonDialogueExchange storedExchange(PersonId personId, String reply) {
         return new PersonDialogueExchange(
-                PersonId.random(),
+                personId,
                 new DialogueResult("", List.of(reply)),
                 NOW,
                 PersonDialogueExchange.ConversationStatus.STORED,
