@@ -8,8 +8,11 @@ import org.slf4j.LoggerFactory;
 import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
 /**
@@ -17,7 +20,8 @@ import java.util.concurrent.Executor;
  *
  * <p>The model receives both sides of the completed exchange together with the person's current
  * activity context. It decides whether the person actually started, stopped, continued, or changed
- * an activity. Java remains responsible for validating and applying the resulting lifecycle plan.</p>
+ * an activity. Java remains responsible for validating and applying the resulting lifecycle plan.
+ * Reviews are serialized per person so rapid messages cannot race on the same aggregate version.</p>
  */
 public final class DialogueActivityReactionService {
     private static final Logger LOGGER = LoggerFactory.getLogger(
@@ -26,6 +30,8 @@ public final class DialogueActivityReactionService {
 
     private final ActivityDecisionTrigger decisionTrigger;
     private final Executor executor;
+    private final ConcurrentMap<PersonId, CompletableFuture<Void>> personQueues =
+            new ConcurrentHashMap<>();
 
     public DialogueActivityReactionService(
             PersonActivityDecisionService decisionService,
@@ -69,11 +75,11 @@ public final class DialogueActivityReactionService {
                 completed.occurredAt()
         );
         try {
-            executor.execute(() -> decideAsynchronously(
+            enqueueDecision(
                     completed.personId(),
                     observation,
                     completed.occurredAt()
-            ));
+            );
             return true;
         } catch (RuntimeException error) {
             logFailure(completed.personId(), error);
@@ -81,7 +87,24 @@ public final class DialogueActivityReactionService {
         }
     }
 
-    private void decideAsynchronously(
+    private void enqueueDecision(
+            PersonId personId,
+            String observation,
+            Instant occurredAt
+    ) {
+        CompletableFuture<Void> scheduled = personQueues.compute(personId, (ignored, previous) -> {
+            CompletionStage<Void> ready = previous == null
+                    ? CompletableFuture.completedFuture(null)
+                    : previous.handle((result, failure) -> null);
+            return ready.thenComposeAsync(
+                    result -> decideAsynchronously(personId, observation, occurredAt),
+                    executor
+            ).toCompletableFuture();
+        });
+        scheduled.whenComplete((ignored, failure) -> personQueues.remove(personId, scheduled));
+    }
+
+    private CompletionStage<Void> decideAsynchronously(
             PersonId personId,
             String observation,
             Instant occurredAt
@@ -94,17 +117,18 @@ public final class DialogueActivityReactionService {
             );
         } catch (RuntimeException error) {
             logFailure(personId, error);
-            return;
+            return CompletableFuture.completedFuture(null);
         }
-        stage.whenComplete((ignored, failure) -> {
+        return stage.handle((ignored, failure) -> {
             if (failure != null) {
                 logFailure(personId, unwrap(failure));
-                return;
+            } else {
+                LOGGER.info(
+                        "Dialogue-triggered activity review completed: personId={}",
+                        personId
+                );
             }
-            LOGGER.info(
-                    "Dialogue-triggered activity review completed: personId={}",
-                    personId
-            );
+            return null;
         });
     }
 
