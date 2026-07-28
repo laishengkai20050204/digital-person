@@ -60,7 +60,11 @@ function currentOpenClawConfig(api) {
 function resolveSecretString(value) {
   const direct = nonBlankString(value);
   if (direct) {
-    const environmentReference = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(direct);
+    const bracedEnvironmentReference = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(direct);
+    if (bracedEnvironmentReference) {
+      return nonBlankString(process.env[bracedEnvironmentReference[1]]);
+    }
+    const environmentReference = /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(direct);
     return environmentReference
       ? nonBlankString(process.env[environmentReference[1]])
       : direct;
@@ -70,6 +74,11 @@ function resolveSecretString(value) {
   const valueField = nonBlankString(object.value);
   if (valueField) {
     return valueField;
+  }
+  const source = nonBlankString(object.source);
+  const id = nonBlankString(object.id);
+  if (source === "env" && id) {
+    return nonBlankString(process.env[id]);
   }
   const environmentName = nonBlankString(object.env) ?? nonBlankString(object.environment);
   return environmentName ? nonBlankString(process.env[environmentName]) : undefined;
