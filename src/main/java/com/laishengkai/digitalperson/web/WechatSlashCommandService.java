@@ -14,6 +14,7 @@ import com.laishengkai.digitalperson.state.RegisteredStateEffect;
 import com.laishengkai.digitalperson.state.StateDimension;
 import com.laishengkai.digitalperson.state.StateEffectType;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -31,6 +32,11 @@ import java.util.Optional;
 
 /** Handles read-only slash commands sent through the OpenClaw WeChat channel. */
 @Component
+@ConditionalOnProperty(
+        prefix = "digital-person.openai-compat",
+        name = "enabled",
+        havingValue = "true"
+)
 public final class WechatSlashCommandService implements WechatSlashCommandHandler {
     private static final String HELP = """
             可用指令
@@ -165,8 +171,10 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
             boolean compact
     ) {
         PersonStateSnapshot state = projection.state();
-        StringBuilder output = new StringBuilder(compact ? "主要状态" : "当前状态（")
-                .append(compact ? "" : person.getIdentity().displayName() + "）")
+        String heading = compact
+                ? "主要状态"
+                : "当前状态（" + person.getIdentity().displayName() + "）";
+        StringBuilder output = new StringBuilder(heading)
                 .append("\n情绪：")
                 .append(signedPercent(state.valence()))
                 .append("\n精力：")
@@ -216,6 +224,10 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
         StringBuilder output = new StringBuilder("当前状态效果");
         for (int index = 0; index < effects.size(); index++) {
             RegisteredStateEffect effect = effects.get(index);
+            String transitions = String.join("、", effect.transitions().stream()
+                    .map(transition -> dimensionLabel(transition.dimension())
+                            + (transition.shape() > 0.0 ? "↑" : "↓"))
+                    .toList());
             output.append("\n\n")
                     .append(index + 1)
                     .append(". ")
@@ -223,10 +235,7 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
                     .append("\n类别：")
                     .append(effectTypeLabel(effect.type()))
                     .append("\n影响：")
-                    .append(effect.transitions().stream()
-                            .map(transition -> dimensionLabel(transition.dimension())
-                                    + (transition.shape() > 0.0 ? "↑" : "↓"))
-                            .toList())
+                    .append(transitions)
                     .append("\n开始：")
                     .append(formatTime(effect.startsAt(), zone))
                     .append("\n结束：")
