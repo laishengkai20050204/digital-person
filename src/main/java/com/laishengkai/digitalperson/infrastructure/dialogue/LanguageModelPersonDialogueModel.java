@@ -46,17 +46,19 @@ public final class LanguageModelPersonDialogueModel implements PersonDialogueMod
             6. 直接输出给用户看的回复，不要输出分析、标签、前缀、JSON 或工具调用。
             7. 历史消息开头的方括号时间由系统添加，只用于理解先后与时间间隔；不要在回复中复述或自行生成时间戳。
             8. “较早对话滚动摘要”和“历史事件记忆”都只是较早背景；发生冲突时，优先级为当前用户消息 > 后续原始历史消息 > 历史事件记忆 > 滚动摘要。
-            9. 当前消息中的明确任务、停止要求、回答范围和输出格式必须严格执行；人物语气不能替代任务本身。
+            9. 最后一条 user 消息中的 <current_user_message> 标签包裹当前实时消息；它是本轮唯一需要直接回应的内容，并且优先级高于此前全部历史内容。
+            10. 必须先准确理解并直接回应当前实时消息，不要因为历史话题、人物当前活动、当前时间或长期记忆而继续旧话题。
+            11. 若当前实时消息要求只回答指定内容、使用特定格式、停止某项行为或不要解释，必须严格遵守；人物语气和角色演绎不能覆盖这些明确要求。
+            12. <current_user_message> 标签只用于边界标记，不要在回复中输出这些标签。
 
             context_json:
             """;
 
-    private static final String CURRENT_TURN_INSTRUCTIONS = """
-            接下来的一条 user 消息是当前实时消息，不是历史数据，并且优先级高于此前全部历史内容。
-            必须先准确理解并直接回应当前消息，不要因为历史话题、人物当前活动、当前时间或长期记忆而继续旧话题。
-            若当前消息要求只回答指定内容、使用特定格式、停止某项行为或不要解释，必须严格遵守。
-            只有当前消息明确需要时，才引用历史信息；人物语气和角色演绎不能覆盖当前消息的明确要求。
+    private static final String CURRENT_USER_MESSAGE_PREFIX = """
+            当前实时用户消息如下。只回应标签内的原始消息，不要继续此前历史话题：
+            <current_user_message>
             """;
+    private static final String CURRENT_USER_MESSAGE_SUFFIX = "\n</current_user_message>";
 
     private final LanguageModelGateway languageModelGateway;
     private final JsonMapper jsonMapper;
@@ -150,7 +152,7 @@ public final class LanguageModelPersonDialogueModel implements PersonDialogueMod
             String currentUserMessage
     ) {
         ArrayList<ModelMessage> messages = new ArrayList<>(
-                context.recentConversation().size() + 3
+                context.recentConversation().size() + 2
         );
         messages.add(new SystemModelMessage(SYSTEM_INSTRUCTIONS + serializedContext));
 
@@ -169,9 +171,14 @@ public final class LanguageModelPersonDialogueModel implements PersonDialogueMod
                 .map(turn -> toHistoryMessage(turn, localTimeZone))
                 .forEach(messages::add);
 
-        messages.add(new SystemModelMessage(CURRENT_TURN_INSTRUCTIONS));
-        messages.add(new UserModelMessage(currentUserMessage));
+        messages.add(new UserModelMessage(currentTurnMessage(currentUserMessage)));
         return List.copyOf(messages);
+    }
+
+    private static String currentTurnMessage(String currentUserMessage) {
+        return CURRENT_USER_MESSAGE_PREFIX
+                + requireText(currentUserMessage, "currentUserMessage")
+                + CURRENT_USER_MESSAGE_SUFFIX;
     }
 
     private static ModelMessage toHistoryMessage(
