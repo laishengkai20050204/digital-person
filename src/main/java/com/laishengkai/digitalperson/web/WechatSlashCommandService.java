@@ -30,7 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Handles read-only slash commands sent through the OpenClaw WeChat channel. */
+/** Handles read-only hash-prefixed commands sent through the OpenClaw WeChat channel. */
 @Component
 @ConditionalOnProperty(
         prefix = "digital-person.openai-compat",
@@ -40,11 +40,11 @@ import java.util.Optional;
 public final class WechatSlashCommandService implements WechatSlashCommandHandler {
     private static final String HELP = """
             可用指令
-            /activity  查看当前活动
-            /state     查看完整状态
-            /status    查看活动和主要状态
-            /effects   查看生效中的状态效果
-            /help      查看指令帮助
+            #activity  查看当前活动
+            #state     查看完整状态
+            #status    查看活动和主要状态
+            #effects   查看生效中的状态效果
+            #help      查看指令帮助
             """;
 
     private static final DateTimeFormatter TIME_FORMATTER =
@@ -88,18 +88,18 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
                 message,
                 "message cannot be null"
         ).strip();
-        if (!normalized.startsWith("/")) {
+        if (!normalized.startsWith("#")) {
             return Optional.empty();
         }
 
         Instant now = clock.instant();
         String command = normalized.toLowerCase(Locale.ROOT);
-        if ("/help".equals(command)) {
+        if ("#help".equals(command)) {
             return Optional.of(new CommandResult(HELP, now));
         }
         if (!isKnownCommand(command)) {
             return Optional.of(new CommandResult(
-                    "未知指令：" + normalized + "\n发送 /help 查看可用指令。",
+                    "未知指令：" + normalized + "\n发送 #help 查看可用指令。",
                     now
             ));
         }
@@ -111,22 +111,22 @@ public final class WechatSlashCommandService implements WechatSlashCommandHandle
         PersonCurrentStateProjector.Projection projection = stateProjector.project(person, now);
 
         String content = switch (command) {
-            case "/activity" -> formatActivities(person, now);
-            case "/state" -> formatState(person, projection, false);
-            case "/status" -> formatActivities(person, now)
+            case "#activity" -> formatActivities(person, now);
+            case "#state" -> formatState(person, projection, false);
+            case "#status" -> formatActivities(person, now)
                     + "\n\n"
                     + formatState(person, projection, true);
-            case "/effects" -> formatEffects(person, projection, now);
+            case "#effects" -> formatEffects(person, projection, now);
             default -> throw new IllegalStateException("unreachable command: " + command);
         };
         return Optional.of(new CommandResult(content, now));
     }
 
     private static boolean isKnownCommand(String command) {
-        return "/activity".equals(command)
-                || "/state".equals(command)
-                || "/status".equals(command)
-                || "/effects".equals(command);
+        return "#activity".equals(command)
+                || "#state".equals(command)
+                || "#status".equals(command)
+                || "#effects".equals(command);
     }
 
     private static String formatActivities(Person person, Instant now) {
