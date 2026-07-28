@@ -92,7 +92,7 @@ public final class OpenAiChatCompletionsController {
                 personApiProperties,
                 compatibilityProperties,
                 jsonMapper,
-                null
+                (DialogueActivityReactionService) null
         );
     }
 
