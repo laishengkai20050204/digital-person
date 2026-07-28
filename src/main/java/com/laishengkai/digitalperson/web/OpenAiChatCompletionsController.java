@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletionStage;
+import java.util.regex.Pattern;
 
 /** Minimal OpenAI Chat Completions adapter for OpenClaw's WeChat channel. */
 @RestController
@@ -31,6 +32,16 @@ import java.util.concurrent.CompletionStage;
 )
 public final class OpenAiChatCompletionsController {
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final String OPENCLAW_INTERNAL_CONTEXT_PREFIX =
+            "OpenClaw runtime context for the immediately preceding user message.";
+    private static final String OPENCLAW_INTERNAL_CONTEXT_MARKER =
+            "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>";
+    private static final Pattern OPENCLAW_MESSAGE_TIMESTAMP = Pattern.compile(
+            "^\\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) "
+                    + "\\d{4}-\\d{2}-\\d{2} "
+                    + "\\d{2}:\\d{2}(?::\\d{2})? "
+                    + "(?:GMT|UTC)[+-]\\d{1,2}(?::\\d{2})?\\]\\s*"
+    );
 
     private final PersonDialogueService dialogueService;
     private final InternalTokenGuard tokenGuard;
@@ -157,11 +168,32 @@ public final class OpenAiChatCompletionsController {
                     safeMessages.get(index),
                     "messages cannot contain null"
             );
-            if (message.role() != null && "user".equalsIgnoreCase(message.role().strip())) {
-                return userText(message.content());
+            if (message.role() == null || !"user".equalsIgnoreCase(message.role().strip())) {
+                continue;
             }
+            String candidate = userText(message.content());
+            if (isOpenClawInternalContext(candidate)) {
+                continue;
+            }
+            return normalizeOpenClawUserMessage(candidate);
         }
-        throw new IllegalArgumentException("messages must contain a user message");
+        throw new IllegalArgumentException(
+                "messages must contain a non-internal user message"
+        );
+    }
+
+    private static boolean isOpenClawInternalContext(String text) {
+        String normalized = text.strip();
+        return normalized.startsWith(OPENCLAW_INTERNAL_CONTEXT_PREFIX)
+                || normalized.contains(OPENCLAW_INTERNAL_CONTEXT_MARKER);
+    }
+
+    private static String normalizeOpenClawUserMessage(String text) {
+        String normalized = OPENCLAW_MESSAGE_TIMESTAMP
+                .matcher(text.strip())
+                .replaceFirst("")
+                .strip();
+        return requireText(normalized, "user message content");
     }
 
     private static String userText(Object content) {
