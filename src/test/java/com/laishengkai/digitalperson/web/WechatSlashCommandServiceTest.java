@@ -39,7 +39,7 @@ class WechatSlashCommandServiceTest {
         );
         WechatSlashCommandService service = service(person);
 
-        var result = service.handle(person.getId(), "/activity");
+        var result = service.handle(person.getId(), "#activity");
 
         assertThat(result).isPresent();
         assertThat(result.orElseThrow().content())
@@ -51,12 +51,12 @@ class WechatSlashCommandServiceTest {
     }
 
     @Test
-    void returnsStateAndHelpForExactSlashCommands() {
+    void returnsStateAndHelpForExactHashCommands() {
         Person person = person();
         WechatSlashCommandService service = service(person);
 
-        var state = service.handle(person.getId(), "/STATE");
-        var help = service.handle(person.getId(), "/help");
+        var state = service.handle(person.getId(), "#STATE");
+        var help = service.handle(person.getId(), "#help");
 
         assertThat(state).isPresent();
         assertThat(state.orElseThrow().content())
@@ -66,29 +66,30 @@ class WechatSlashCommandServiceTest {
                 .contains("社交需求：");
         assertThat(help).isPresent();
         assertThat(help.orElseThrow().content())
-                .contains("/activity")
-                .contains("/effects");
+                .contains("#activity")
+                .contains("#effects");
     }
 
     @Test
-    void leavesOrdinaryMessagesForTheDialogueService() {
+    void leavesOrdinaryAndOpenClawSlashMessagesForTheDialogueService() {
         Person person = person();
         WechatSlashCommandService service = service(person);
 
         assertThat(service.handle(person.getId(), "activity")).isEmpty();
-        assertThat(service.handle(person.getId(), "你现在的/state是什么")).isEmpty();
+        assertThat(service.handle(person.getId(), "你现在的#state是什么")).isEmpty();
+        assertThat(service.handle(person.getId(), "/state")).isEmpty();
     }
 
     @Test
-    void reservesUnknownSlashCommandsInsteadOfSendingThemToTheModel() {
+    void reservesUnknownHashCommandsInsteadOfSendingThemToTheModel() {
         Person person = person();
         WechatSlashCommandService service = service(person);
 
-        var result = service.handle(person.getId(), "/unknown");
+        var result = service.handle(person.getId(), "#unknown");
 
         assertThat(result).isPresent();
         assertThat(result.orElseThrow().content())
-                .isEqualTo("未知指令：/unknown\n发送 /help 查看可用指令。");
+                .isEqualTo("未知指令：#unknown\n发送 #help 查看可用指令。");
     }
 
     private static WechatSlashCommandService service(Person person) {
@@ -126,7 +127,7 @@ class WechatSlashCommandServiceTest {
 
             @Override
             public boolean save(Person updated, long expectedVersion) {
-                throw new AssertionError("slash commands must remain read-only");
+                throw new AssertionError("prefixed commands must remain read-only");
             }
         };
     }
