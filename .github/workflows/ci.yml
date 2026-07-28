@@ -24,11 +24,19 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Validate deployment scripts
+      - name: Validate deployment scripts and OpenClaw bridge
         run: |
           bash -n ops/deploy-from-git.sh
           bash -n ops/ensure-mem0.sh
           bash -n ops/test-ensure-mem0-secret-handling.sh
+          bash -n scripts/install-openclaw-direct-bridge.sh
+          node --check openclaw-plugins/digital-person-direct-bridge/index.mjs
+          python3 -m json.tool \
+            openclaw-plugins/digital-person-direct-bridge/package.json \
+            >/dev/null
+          python3 -m json.tool \
+            openclaw-plugins/digital-person-direct-bridge/openclaw.plugin.json \
+            >/dev/null
 
       - name: Verify Mem0 secret handling
         run: bash ops/test-ensure-mem0-secret-handling.sh
