@@ -123,6 +123,55 @@ class OpenAiChatCompletionsControllerTest {
     }
 
     @Test
+    void skipsOpenClawRuntimeContextAndStripsTransportTimestamp() {
+        Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
+        AtomicReference<String> receivedMessage = new AtomicReference<>();
+        OpenAiChatCompletionsController controller = controller(
+                person,
+                receivedMessage
+        );
+
+        var response = controller.complete(
+                "Bearer " + TOKEN,
+                new OpenAiChatCompletionsController.ChatCompletionRequest(
+                        MODEL,
+                        List.of(
+                                new OpenAiChatCompletionsController.ChatMessage(
+                                        "system",
+                                        "OpenClaw transport prompt"
+                                ),
+                                new OpenAiChatCompletionsController.ChatMessage(
+                                        "user",
+                                        "[Tue 2026-07-28 11:21 GMT+8] 请只回答最后的数字：葡萄 5276"
+                                ),
+                                new OpenAiChatCompletionsController.ChatMessage(
+                                        "user",
+                                        List.of(Map.of(
+                                                "type",
+                                                "text",
+                                                "text",
+                                                """
+                                                        OpenClaw runtime context for the immediately preceding user message.
+                                                        This context is runtime-generated, not user-authored.
+
+                                                        <<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>
+                                                        Conversation info (untrusted metadata):
+                                                        {"message_id":"openclaw-weixin:123"}
+                                                        <<<END_OPENCLAW_INTERNAL_CONTEXT>>>
+                                                        """
+                                        ))
+                                )
+                        ),
+                        true
+                )
+        ).toCompletableFuture().join();
+
+        assertThat(receivedMessage.get()).isEqualTo("请只回答最后的数字：葡萄 5276");
+        assertThat(response.getHeaders().getContentType())
+                .isEqualTo(MediaType.TEXT_EVENT_STREAM);
+    }
+
+    @Test
     void returnsOpenAiSseChunksForStreamingRequests() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
         AtomicReference<String> receivedMessage = new AtomicReference<>();
