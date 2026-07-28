@@ -16,6 +16,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicReference;
@@ -78,6 +79,47 @@ class OpenAiChatCompletionsControllerTest {
                 .isEqualTo("第一段回复\n\n第二段回复");
         assertThat(response.choices().getFirst().finish_reason()).isEqualTo("stop");
         assertThat(response.usage().total_tokens()).isZero();
+    }
+
+    @Test
+    void acceptsStructuredTextContentFromOpenClaw() throws Exception {
+        Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
+        AtomicReference<String> receivedMessage = new AtomicReference<>();
+        OpenAiChatCompletionsController controller = controller(
+                person,
+                receivedMessage
+        );
+        JsonMapper mapper = JsonMapper.builder().build();
+
+        var request = mapper.readValue("""
+                {
+                  "model": "shen-zhixia",
+                  "messages": [
+                    {
+                      "role": "system",
+                      "content": [{"type": "text", "text": "transport prompt"}]
+                    },
+                    {
+                      "role": "user",
+                      "content": [
+                        {"type": "text", "text": "微信里的消息"},
+                        {"type": "image_url", "image_url": {"url": "https://example.invalid/a.jpg"}},
+                        {"type": "input_text", "text": "第二段文字"}
+                      ]
+                    }
+                  ],
+                  "stream": true
+                }
+                """, OpenAiChatCompletionsController.ChatCompletionRequest.class);
+
+        var response = controller.complete(
+                "Bearer " + TOKEN,
+                request
+        ).toCompletableFuture().join();
+
+        assertThat(receivedMessage.get()).isEqualTo("微信里的消息\n第二段文字");
+        assertThat(response.getHeaders().getContentType())
+                .isEqualTo(MediaType.TEXT_EVENT_STREAM);
     }
 
     @Test
