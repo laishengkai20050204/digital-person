@@ -8,6 +8,7 @@ REPOSITORY_URL="${REPOSITORY_URL:-https://github.com/laishengkai20050204/digital
 SERVICE_NAME="${SERVICE_NAME:-person-ai}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8080/actuator/health}"
 DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/github-readonly}"
+MAVEN_ATTEMPTS="${MAVEN_ATTEMPTS:-6}"
 REQUIRED_JAVA_MAJOR=21
 
 SOURCE_REPO="$APP_DIR/source.git"
@@ -26,6 +27,11 @@ cd "${TMPDIR:-/tmp}"
 
 if [[ ! "$APP_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "APP_SHA 必须是完整的 40 位小写 Git commit SHA"
+  exit 1
+fi
+
+if [[ ! "$MAVEN_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MAVEN_ATTEMPTS 必须是正整数"
   exit 1
 fi
 
@@ -82,7 +88,6 @@ for command_name in git java javac curl flock; do
     exit 1
   fi
 done
-
 
 USES_SSH=false
 case "$REPOSITORY_URL" in
@@ -183,9 +188,39 @@ if [ ! -x ./mvnw ]; then
   exit 1
 fi
 
-if ! ./mvnw -version | grep -q "Java version: 21"; then
-  echo "Maven Wrapper 未使用 Java 21，拒绝继续部署"
-  ./mvnw -version || true
+run_maven_wrapper() {
+  local attempt=1
+  local exit_code=1
+
+  while [ "$attempt" -le "$MAVEN_ATTEMPTS" ]; do
+    if ./mvnw "$@"; then
+      return 0
+    else
+      exit_code=$?
+    fi
+
+    if [ "$attempt" -ge "$MAVEN_ATTEMPTS" ]; then
+      echo "Maven Wrapper 连续失败：$attempt/$MAVEN_ATTEMPTS，最后退出码：$exit_code" >&2
+      return "$exit_code"
+    fi
+
+    echo "Maven Wrapper 执行失败，准备重试：$attempt/$MAVEN_ATTEMPTS" >&2
+    sleep $((attempt * 3))
+    attempt=$((attempt + 1))
+  done
+}
+
+MAVEN_VERSION_OUTPUT="$BUILD_DIR/.maven-version.txt"
+if ! run_maven_wrapper -version >"$MAVEN_VERSION_OUTPUT" 2>&1; then
+  cat "$MAVEN_VERSION_OUTPUT" >&2 || true
+  echo "Maven Wrapper 启动失败；这通常是下载或网络故障，不是 Java 版本不匹配" >&2
+  exit 1
+fi
+
+cat "$MAVEN_VERSION_OUTPUT"
+if ! grep -Eq "Java version: ${REQUIRED_JAVA_MAJOR}([.,[:space:]]|$)" \
+  "$MAVEN_VERSION_OUTPUT"; then
+  echo "Maven Wrapper 未使用 Java $REQUIRED_JAVA_MAJOR，拒绝继续部署"
   exit 1
 fi
 
@@ -196,12 +231,15 @@ if [ -x ops/ensure-mem0.sh ]; then
 fi
 
 echo "在服务器本地编译生产 JAR"
-./mvnw \
+if ! run_maven_wrapper \
   --batch-mode \
   --no-transfer-progress \
   -Dmaven.repo.local="$MAVEN_CACHE" \
   -Dmaven.test.skip=true \
-  clean package
+  clean package; then
+  echo "Maven 构建连续重试后仍然失败"
+  exit 1
+fi
 
 BUILT_JAR="$(find target -maxdepth 1 -type f \
   -name '*.jar' \
