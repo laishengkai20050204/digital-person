@@ -27,7 +27,7 @@ class OpenAiChatCompletionsSlashCommandTest {
     private static final Instant NOW = Instant.parse("2026-07-28T03:30:00Z");
 
     @Test
-    void returnsSlashCommandResultWithoutCallingDialogueService() {
+    void returnsPrefixedCommandResultWithoutCallingDialogueService() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
         AtomicReference<String> dialogueMessage = new AtomicReference<>();
         WechatSlashCommandHandler handler = (personId, message) -> Optional.of(
@@ -47,7 +47,7 @@ class OpenAiChatCompletionsSlashCommandTest {
                         MODEL,
                         List.of(new OpenAiChatCompletionsController.ChatMessage(
                                 "user",
-                                "/state"
+                                "#state"
                         )),
                         false
                 )
