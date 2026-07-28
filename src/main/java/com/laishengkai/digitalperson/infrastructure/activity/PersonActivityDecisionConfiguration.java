@@ -2,14 +2,16 @@ package com.laishengkai.digitalperson.infrastructure.activity;
 
 import com.laishengkai.digitalperson.activity.PersonActivityDecisionModel;
 import com.laishengkai.digitalperson.application.DefaultPersonActivityDecisionContextAssembler;
+import com.laishengkai.digitalperson.application.DialogueActivityReactionService;
+import com.laishengkai.digitalperson.application.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.application.PersonActivityDecisionContextAssembler;
 import com.laishengkai.digitalperson.application.PersonActivityDecisionService;
 import com.laishengkai.digitalperson.application.PersonModelContextAssembler;
 import com.laishengkai.digitalperson.application.StateEvaluationContextAssembler;
 import com.laishengkai.digitalperson.dialogue.LanguageModelGateway;
+import com.laishengkai.digitalperson.infrastructure.dialogue.PersonDialogueConfiguration;
 import com.laishengkai.digitalperson.infrastructure.spring.LateConditionalBeanRegistrar;
 import com.laishengkai.digitalperson.person.PersonRepository;
-import com.laishengkai.digitalperson.application.EventStateImpactEvaluator;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -18,6 +20,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Clock;
+import java.util.concurrent.Executor;
 
 /** Spring wiring for autonomous event lifecycle decisions. */
 @Configuration(proxyBeanMethods = false)
@@ -44,33 +47,51 @@ public class PersonActivityDecisionConfiguration {
         return new DefaultPersonActivityDecisionContextAssembler(commonAssembler);
     }
 
-    /** Registers the service after model and external port definitions are available. */
+    /** Registers services after model and external port definitions are available. */
     @Bean
     static BeanFactoryPostProcessor personActivityDecisionServiceRegistrar() {
-        return new LateConditionalBeanRegistrar(beanFactory ->
-                LateConditionalBeanRegistrar.registerIfPossible(
-                        beanFactory,
-                        "personActivityDecisionService",
-                        PersonActivityDecisionService.class,
-                        () -> new PersonActivityDecisionService(
-                                beanFactory.getBean(PersonRepository.class),
-                                beanFactory.getBean(StateUpdater.class),
-                                beanFactory.getBean(PersonActivityDecisionModel.class),
-                                beanFactory.getBean(
-                                        PersonActivityDecisionContextAssembler.class
-                                ),
-                                beanFactory.getBean(EventStateImpactEvaluator.class),
-                                beanFactory.getBean(StateEvaluationContextAssembler.class),
-                                beanFactory.getBean(Clock.class)
-                        ),
-                        PersonRepository.class,
-                        StateUpdater.class,
-                        PersonActivityDecisionModel.class,
-                        PersonActivityDecisionContextAssembler.class,
-                        EventStateImpactEvaluator.class,
-                        StateEvaluationContextAssembler.class,
-                        Clock.class
-                )
-        );
+        return new LateConditionalBeanRegistrar(beanFactory -> {
+            LateConditionalBeanRegistrar.registerIfPossible(
+                    beanFactory,
+                    "personActivityDecisionService",
+                    PersonActivityDecisionService.class,
+                    () -> new PersonActivityDecisionService(
+                            beanFactory.getBean(PersonRepository.class),
+                            beanFactory.getBean(StateUpdater.class),
+                            beanFactory.getBean(PersonActivityDecisionModel.class),
+                            beanFactory.getBean(PersonActivityDecisionContextAssembler.class),
+                            beanFactory.getBean(EventStateImpactEvaluator.class),
+                            beanFactory.getBean(StateEvaluationContextAssembler.class),
+                            beanFactory.getBean(Clock.class)
+                    ),
+                    PersonRepository.class,
+                    StateUpdater.class,
+                    PersonActivityDecisionModel.class,
+                    PersonActivityDecisionContextAssembler.class,
+                    EventStateImpactEvaluator.class,
+                    StateEvaluationContextAssembler.class,
+                    Clock.class
+            );
+
+            if (!LateConditionalBeanRegistrar.hasBean(
+                    beanFactory,
+                    PersonDialogueConfiguration.POST_PROCESSING_EXECUTOR
+            )) {
+                return;
+            }
+            LateConditionalBeanRegistrar.registerIfPossible(
+                    beanFactory,
+                    "dialogueActivityReactionService",
+                    DialogueActivityReactionService.class,
+                    () -> new DialogueActivityReactionService(
+                            beanFactory.getBean(PersonActivityDecisionService.class),
+                            beanFactory.getBean(
+                                    PersonDialogueConfiguration.POST_PROCESSING_EXECUTOR,
+                                    Executor.class
+                            )
+                    ),
+                    PersonActivityDecisionService.class
+            );
+        });
     }
 }
