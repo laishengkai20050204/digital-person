@@ -1,0 +1,61 @@
+{
+  "id": "digital-person-direct-bridge",
+  "name": "Digital Person Direct WeChat Bridge",
+  "description": "Claims ordinary WeChat messages before the OpenClaw agent loop and forwards only the current message to the Digital Person backend.",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "channelId": {
+        "type": "string",
+        "default": "openclaw-weixin"
+      },
+      "endpoint": {
+        "type": "string",
+        "default": "http://127.0.0.1:8080/v1/chat/completions"
+      },
+      "providerId": {
+        "type": "string",
+        "default": "digitalperson"
+      },
+      "model": {
+        "type": "string",
+        "default": "shen-zhixia"
+      },
+      "apiKey": {
+        "type": "string"
+      },
+      "apiKeyEnv": {
+        "type": "string",
+        "default": "PERSON_API_TOKEN"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 300000,
+        "default": 220000
+      },
+      "directMessagesOnly": {
+        "type": "boolean",
+        "default": true
+      },
+      "dedupeTtlMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 3600000,
+        "default": 600000
+      },
+      "backendErrorMessage": {
+        "type": "string",
+        "default": "后端暂时不可用，请稍后再试。"
+      },
+      "unsupportedMessage": {
+        "type": "string",
+        "default": "暂时只能处理文字消息。"
+      }
+    }
+  }
+}
