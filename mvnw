@@ -17,18 +17,30 @@ if [ ! -f "$WRAPPER_JAR" ]; then
   TMP_FILE="$WRAPPER_JAR.tmp.$$"
   trap 'rm -f "$TMP_FILE"' EXIT HUP INT TERM
   if command -v curl >/dev/null 2>&1; then
-    curl \
-      --fail \
-      --location \
-      --silent \
-      --show-error \
-      --retry 5 \
-      --retry-delay 2 \
-      --retry-all-errors \
-      --connect-timeout 15 \
-      --max-time 180 \
-      "$WRAPPER_URL" \
-      -o "$TMP_FILE"
+    DOWNLOAD_ATTEMPT=1
+    while :; do
+      if curl \
+        --fail \
+        --location \
+        --silent \
+        --show-error \
+        --connect-timeout 15 \
+        --max-time 180 \
+        "$WRAPPER_URL" \
+        -o "$TMP_FILE"; then
+        break
+      fi
+
+      rm -f "$TMP_FILE"
+      if [ "$DOWNLOAD_ATTEMPT" -ge 6 ]; then
+        echo "Maven Wrapper download failed after $DOWNLOAD_ATTEMPT attempts" >&2
+        exit 1
+      fi
+
+      echo "Maven Wrapper download failed; retrying: $DOWNLOAD_ATTEMPT/6" >&2
+      sleep $((DOWNLOAD_ATTEMPT * 2))
+      DOWNLOAD_ATTEMPT=$((DOWNLOAD_ATTEMPT + 1))
+    done
   elif command -v wget >/dev/null 2>&1; then
     wget \
       --quiet \
