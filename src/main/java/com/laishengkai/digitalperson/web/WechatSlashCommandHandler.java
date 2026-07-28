@@ -6,7 +6,7 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
-/** Resolves exact slash-prefixed WeChat commands without invoking the dialogue model. */
+/** Resolves exact namespaced WeChat commands without invoking the dialogue model. */
 @FunctionalInterface
 public interface WechatSlashCommandHandler {
 

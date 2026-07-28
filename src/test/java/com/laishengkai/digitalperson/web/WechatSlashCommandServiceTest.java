@@ -26,7 +26,7 @@ class WechatSlashCommandServiceTest {
     private static final Instant NOW = Instant.parse("2026-07-28T03:30:00Z");
 
     @Test
-    void returnsCurrentActivityWithoutInvokingDialogue() {
+    void returnsCurrentActivityForNamespacedCommand() {
         Person person = person();
         person.startPersonEvent(
                 new PersonEvent(
@@ -39,7 +39,7 @@ class WechatSlashCommandServiceTest {
         );
         WechatSlashCommandService service = service(person);
 
-        var result = service.handle(person.getId(), "/activity");
+        var result = service.handle(person.getId(), "#dp activity");
 
         assertThat(result).isPresent();
         assertThat(result.orElseThrow().content())
@@ -51,12 +51,13 @@ class WechatSlashCommandServiceTest {
     }
 
     @Test
-    void returnsStateAndHelpForExactSlashCommands() {
+    void returnsStateAndHelpForExactNamespacedCommands() {
         Person person = person();
         WechatSlashCommandService service = service(person);
 
-        var state = service.handle(person.getId(), "/STATE");
-        var help = service.handle(person.getId(), "/help");
+        var state = service.handle(person.getId(), "#DP STATE");
+        var help = service.handle(person.getId(), "#dp help");
+        var bareNamespace = service.handle(person.getId(), "#dp");
 
         assertThat(state).isPresent();
         assertThat(state.orElseThrow().content())
@@ -66,29 +67,33 @@ class WechatSlashCommandServiceTest {
                 .contains("社交需求：");
         assertThat(help).isPresent();
         assertThat(help.orElseThrow().content())
-                .contains("/activity")
-                .contains("/effects");
+                .contains("#dp activity")
+                .contains("#dp effects");
+        assertThat(bareNamespace).isPresent();
+        assertThat(bareNamespace.orElseThrow().content()).contains("#dp help");
     }
 
     @Test
-    void leavesOrdinaryMessagesForTheDialogueService() {
+    void leavesOrdinaryAndOpenClawSlashMessagesForTheDialogueService() {
         Person person = person();
         WechatSlashCommandService service = service(person);
 
         assertThat(service.handle(person.getId(), "activity")).isEmpty();
-        assertThat(service.handle(person.getId(), "你现在的/state是什么")).isEmpty();
+        assertThat(service.handle(person.getId(), "/state")).isEmpty();
+        assertThat(service.handle(person.getId(), "你现在的#dp state是什么")).isEmpty();
+        assertThat(service.handle(person.getId(), "#dpstate")).isEmpty();
     }
 
     @Test
-    void reservesUnknownSlashCommandsInsteadOfSendingThemToTheModel() {
+    void reservesUnknownCommandsInsideTheDpNamespace() {
         Person person = person();
         WechatSlashCommandService service = service(person);
 
-        var result = service.handle(person.getId(), "/unknown");
+        var result = service.handle(person.getId(), "#dp unknown");
 
         assertThat(result).isPresent();
         assertThat(result.orElseThrow().content())
-                .isEqualTo("未知指令：/unknown\n发送 /help 查看可用指令。");
+                .isEqualTo("未知人物指令：#dp unknown\n发送 #dp help 查看可用指令。");
     }
 
     private static WechatSlashCommandService service(Person person) {
@@ -126,7 +131,7 @@ class WechatSlashCommandServiceTest {
 
             @Override
             public boolean save(Person updated, long expectedVersion) {
-                throw new AssertionError("slash commands must remain read-only");
+                throw new AssertionError("namespaced commands must remain read-only");
             }
         };
     }

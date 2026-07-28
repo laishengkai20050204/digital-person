@@ -27,12 +27,12 @@ class OpenAiChatCompletionsSlashCommandTest {
     private static final Instant NOW = Instant.parse("2026-07-28T03:30:00Z");
 
     @Test
-    void returnsSlashCommandResultWithoutCallingDialogueService() {
+    void returnsNamespacedCommandResultWithoutCallingDialogueService() {
         Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
         AtomicReference<String> dialogueMessage = new AtomicReference<>();
-        WechatSlashCommandHandler handler = (personId, message) -> Optional.of(
-                new WechatSlashCommandHandler.CommandResult("状态结果", NOW)
-        );
+        WechatSlashCommandHandler handler = (personId, message) -> "#dp state".equals(message)
+                ? Optional.of(new WechatSlashCommandHandler.CommandResult("状态结果", NOW))
+                : Optional.empty();
         OpenAiChatCompletionsController controller = new OpenAiChatCompletionsController(
                 dialogueService(person, dialogueMessage),
                 handler,
@@ -47,7 +47,7 @@ class OpenAiChatCompletionsSlashCommandTest {
                         MODEL,
                         List.of(new OpenAiChatCompletionsController.ChatMessage(
                                 "user",
-                                "/state"
+                                "#dp state"
                         )),
                         false
                 )
@@ -60,6 +60,33 @@ class OpenAiChatCompletionsSlashCommandTest {
                 httpResponse.getBody();
         assertThat(response.choices().getFirst().message().content()).isEqualTo("状态结果");
         assertThat(response.created()).isEqualTo(NOW.getEpochSecond());
+    }
+
+    @Test
+    void leavesOpenClawSlashCommandsForNormalDialogueWhenHandlerDoesNotClaimThem() {
+        Person person = Person.create(new Personality(0.7, 0.6, 0.5, 0.8, 0.7, 0.9));
+        AtomicReference<String> dialogueMessage = new AtomicReference<>();
+        OpenAiChatCompletionsController controller = new OpenAiChatCompletionsController(
+                dialogueService(person, dialogueMessage),
+                (personId, message) -> Optional.empty(),
+                new PersonApiProperties(false, TOKEN),
+                new OpenAiCompatibilityProperties(true, person.getId().toString(), MODEL),
+                JsonMapper.builder().build()
+        );
+
+        controller.complete(
+                "Bearer " + TOKEN,
+                new OpenAiChatCompletionsController.ChatCompletionRequest(
+                        MODEL,
+                        List.of(new OpenAiChatCompletionsController.ChatMessage(
+                                "user",
+                                "/status"
+                        )),
+                        false
+                )
+        ).toCompletableFuture().join();
+
+        assertThat(dialogueMessage.get()).isEqualTo("/status");
     }
 
     private static PersonDialogueService dialogueService(
