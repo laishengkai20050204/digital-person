@@ -1,6 +1,5 @@
 package com.laishengkai.digitalperson.application;
 
-import com.laishengkai.digitalperson.dialogue.DialogueResult;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,16 +21,17 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Asynchronously asks the activity decision model to review persisted real dialogue.
  *
- * <p>Rapid exchanges are coalesced into one semantic review after a short quiet period. A maximum
- * batch wait prevents continuous chat from postponing review indefinitely. The model receives both
- * sides of every exchange in chronological order and decides whether the person actually started,
- * stopped, continued, or changed an activity. Java remains responsible for validating and applying
- * the lifecycle plan. Reviews are also serialized per person so batches cannot race on the same
- * aggregate version.</p>
+ * <p>Dialogue evidence is accumulated per person until one of three boundaries is reached: twelve
+ * exchanges, five minutes without a new exchange, or ten minutes since the batch began. The model
+ * receives both sides of every exchange in chronological order and decides whether the person
+ * actually started, stopped, continued, or changed an activity. Java remains responsible for
+ * validating and applying the lifecycle plan. Reviews are serialized per person so batches cannot
+ * race on the same aggregate version.</p>
  */
 public final class DialogueActivityReactionService {
-    static final Duration DEFAULT_DEBOUNCE_WINDOW = Duration.ofSeconds(2);
-    static final Duration DEFAULT_MAX_BATCH_WAIT = Duration.ofSeconds(8);
+    static final Duration DEFAULT_IDLE_WINDOW = Duration.ofMinutes(5);
+    static final Duration DEFAULT_MAX_BATCH_WAIT = Duration.ofMinutes(10);
+    static final int DEFAULT_MAX_BATCH_EXCHANGES = 12;
 
     private static final Logger LOGGER = LoggerFactory.getLogger(
             DialogueActivityReactionService.class
@@ -39,8 +39,9 @@ public final class DialogueActivityReactionService {
 
     private final ActivityDecisionTrigger decisionTrigger;
     private final Executor executor;
-    private final Duration debounceWindow;
+    private final Duration idleWindow;
     private final Duration maximumBatchWait;
+    private final int maximumBatchExchanges;
     private final DelayScheduler delayScheduler;
     private final ConcurrentMap<PersonId, PendingBatch> pendingBatches =
             new ConcurrentHashMap<>();
@@ -58,8 +59,9 @@ public final class DialogueActivityReactionService {
                         occurredAt
                 ),
                 executor,
-                DEFAULT_DEBOUNCE_WINDOW,
+                DEFAULT_IDLE_WINDOW,
                 DEFAULT_MAX_BATCH_WAIT,
+                DEFAULT_MAX_BATCH_EXCHANGES,
                 delayedScheduler(executor)
         );
     }
@@ -71,6 +73,7 @@ public final class DialogueActivityReactionService {
                 executor,
                 Duration.ZERO,
                 Duration.ZERO,
+                1,
                 (task, ignored) -> {
                     task.run();
                     return CompletableFuture.completedFuture(null);
@@ -81,8 +84,9 @@ public final class DialogueActivityReactionService {
     DialogueActivityReactionService(
             ActivityDecisionTrigger decisionTrigger,
             Executor executor,
-            Duration debounceWindow,
+            Duration idleWindow,
             Duration maximumBatchWait,
+            int maximumBatchExchanges,
             DelayScheduler delayScheduler
     ) {
         this.decisionTrigger = Objects.requireNonNull(
@@ -90,13 +94,17 @@ public final class DialogueActivityReactionService {
                 "decisionTrigger cannot be null"
         );
         this.executor = Objects.requireNonNull(executor, "executor cannot be null");
-        this.debounceWindow = requireNonNegative(debounceWindow, "debounceWindow");
+        this.idleWindow = requireNonNegative(idleWindow, "idleWindow");
         this.maximumBatchWait = requireNonNegative(maximumBatchWait, "maximumBatchWait");
-        if (this.maximumBatchWait.compareTo(this.debounceWindow) < 0) {
+        if (this.maximumBatchWait.compareTo(this.idleWindow) < 0) {
             throw new IllegalArgumentException(
-                    "maximumBatchWait cannot be shorter than debounceWindow"
+                    "maximumBatchWait cannot be shorter than idleWindow"
             );
         }
+        if (maximumBatchExchanges <= 0) {
+            throw new IllegalArgumentException("maximumBatchExchanges must be positive");
+        }
+        this.maximumBatchExchanges = maximumBatchExchanges;
         this.delayScheduler = Objects.requireNonNull(
                 delayScheduler,
                 "delayScheduler cannot be null"
@@ -133,16 +141,29 @@ public final class DialogueActivityReactionService {
                 batch.evidence.add(evidence);
                 registration.batch = batch;
                 registration.generation = ++batch.generation;
+                registration.exchangeCount = batch.evidence.size();
                 return batch;
             });
+
+            if (registration.exchangeCount >= maximumBatchExchanges) {
+                flushBatch(
+                        completed.personId(),
+                        registration.batch,
+                        registration.generation,
+                        true,
+                        FlushReason.MESSAGE_LIMIT
+                );
+                return true;
+            }
 
             scheduleFlush(
                     completed.personId(),
                     registration.batch,
                     registration.generation,
-                    debounceWindow,
+                    idleWindow,
                     false,
-                    true
+                    true,
+                    FlushReason.IDLE_TIMEOUT
             );
             if (registration.created) {
                 scheduleFlush(
@@ -151,7 +172,8 @@ public final class DialogueActivityReactionService {
                         registration.generation,
                         maximumBatchWait,
                         true,
-                        false
+                        false,
+                        FlushReason.MAXIMUM_WAIT
                 );
             }
             return true;
@@ -161,9 +183,41 @@ public final class DialogueActivityReactionService {
                     completed.personId(),
                     registration.batch,
                     registration.generation,
-                    true
+                    true,
+                    FlushReason.SCHEDULING_FAILURE
             );
             return registration.batch != null;
+        }
+    }
+
+    /**
+     * Immediately submits pending evidence and completes after all already queued activity reviews
+     * for the person have finished. The returned boolean reports whether any work was awaited.
+     */
+    public CompletionStage<Boolean> flushPendingAndAwait(PersonId personId) {
+        PersonId requestedPersonId = Objects.requireNonNull(
+                personId,
+                "personId cannot be null"
+        );
+        try {
+            BatchSnapshot snapshot = detachPendingBatch(requestedPersonId);
+            CompletableFuture<Void> completion;
+            if (snapshot != null) {
+                completion = queueSnapshot(
+                        requestedPersonId,
+                        snapshot,
+                        FlushReason.COMMAND_REFRESH
+                );
+            } else {
+                completion = personQueues.get(requestedPersonId);
+            }
+            if (completion == null) {
+                return CompletableFuture.completedFuture(false);
+            }
+            return completion.thenApply(ignored -> true);
+        } catch (RuntimeException error) {
+            logFailure(requestedPersonId, error);
+            return CompletableFuture.failedFuture(error);
         }
     }
 
@@ -173,26 +227,35 @@ public final class DialogueActivityReactionService {
             long generation,
             Duration delay,
             boolean force,
-            boolean flushOnSchedulingFailure
+            boolean flushOnSchedulingFailure,
+            FlushReason reason
     ) {
         final CompletionStage<Void> scheduled;
         try {
             scheduled = Objects.requireNonNull(
                     delayScheduler.schedule(
-                            () -> flushBatch(personId, batch, generation, force),
+                            () -> flushBatch(personId, batch, generation, force, reason),
                             delay
                     ),
                     "delay scheduler stage cannot be null"
             );
         } catch (RuntimeException error) {
             LOGGER.warn(
-                    "Could not schedule dialogue activity batch flush: personId={}, delayMs={}",
+                    "Could not schedule dialogue activity batch flush: "
+                            + "personId={}, delayMs={}, reason={}",
                     personId,
                     delay.toMillis(),
+                    reason.logValue,
                     error
             );
             if (flushOnSchedulingFailure) {
-                flushBatch(personId, batch, generation, true);
+                flushBatch(
+                        personId,
+                        batch,
+                        generation,
+                        true,
+                        FlushReason.SCHEDULING_FAILURE
+                );
             }
             return;
         }
@@ -201,25 +264,34 @@ public final class DialogueActivityReactionService {
                 return;
             }
             LOGGER.warn(
-                    "Dialogue activity batch timer failed: personId={}, delayMs={}",
+                    "Dialogue activity batch timer failed: "
+                            + "personId={}, delayMs={}, reason={}",
                     personId,
                     delay.toMillis(),
+                    reason.logValue,
                     unwrap(failure)
             );
             if (flushOnSchedulingFailure) {
-                flushBatch(personId, batch, generation, true);
+                flushBatch(
+                        personId,
+                        batch,
+                        generation,
+                        true,
+                        FlushReason.SCHEDULING_FAILURE
+                );
             }
         });
     }
 
-    private void flushBatch(
+    private CompletableFuture<Void> flushBatch(
             PersonId personId,
             PendingBatch expectedBatch,
             long expectedGeneration,
-            boolean force
+            boolean force,
+            FlushReason reason
     ) {
         if (expectedBatch == null) {
-            return;
+            return completedPersonQueue(personId);
         }
         AtomicReference<BatchSnapshot> snapshotReference = new AtomicReference<>();
         pendingBatches.compute(personId, (ignored, current) -> {
@@ -234,17 +306,40 @@ public final class DialogueActivityReactionService {
         });
 
         BatchSnapshot snapshot = snapshotReference.get();
-        if (snapshot == null || snapshot.evidence().isEmpty()) {
-            return;
+        if (snapshot == null) {
+            return completedPersonQueue(personId);
         }
+        return queueSnapshot(personId, snapshot, reason);
+    }
+
+    private BatchSnapshot detachPendingBatch(PersonId personId) {
+        AtomicReference<BatchSnapshot> snapshotReference = new AtomicReference<>();
+        pendingBatches.compute(personId, (ignored, current) -> {
+            if (current == null) {
+                return null;
+            }
+            snapshotReference.set(new BatchSnapshot(List.copyOf(current.evidence)));
+            return null;
+        });
+        return snapshotReference.get();
+    }
+
+    private CompletableFuture<Void> queueSnapshot(
+            PersonId personId,
+            BatchSnapshot snapshot,
+            FlushReason reason
+    ) {
         String observation = buildObservation(snapshot.evidence());
         LOGGER.info(
-                "Dialogue activity review batch queued: personId={}, exchangeCount={}, debounceMs={}",
+                "Dialogue activity review batch queued: "
+                        + "personId={}, exchangeCount={}, reason={}, idleMs={}, maxBatchWaitMs={}",
                 personId,
                 snapshot.evidence().size(),
-                debounceWindow.toMillis()
+                reason.logValue,
+                idleWindow.toMillis(),
+                maximumBatchWait.toMillis()
         );
-        enqueueDecision(
+        return enqueueDecision(
                 personId,
                 observation,
                 snapshot.latestOccurredAt(),
@@ -252,7 +347,7 @@ public final class DialogueActivityReactionService {
         );
     }
 
-    private void enqueueDecision(
+    private CompletableFuture<Void> enqueueDecision(
             PersonId personId,
             String observation,
             Instant occurredAt,
@@ -273,6 +368,12 @@ public final class DialogueActivityReactionService {
             ).toCompletableFuture();
         });
         scheduled.whenComplete((ignored, failure) -> personQueues.remove(personId, scheduled));
+        return scheduled;
+    }
+
+    private CompletableFuture<Void> completedPersonQueue(PersonId personId) {
+        CompletableFuture<Void> queued = personQueues.get(personId);
+        return queued == null ? CompletableFuture.completedFuture(null) : queued;
     }
 
     private CompletionStage<Void> decideAsynchronously(
@@ -409,6 +510,20 @@ public final class DialogueActivityReactionService {
         CompletionStage<Void> schedule(Runnable task, Duration delay);
     }
 
+    private enum FlushReason {
+        IDLE_TIMEOUT("idle_timeout"),
+        MAXIMUM_WAIT("maximum_wait"),
+        MESSAGE_LIMIT("message_limit"),
+        COMMAND_REFRESH("command_refresh"),
+        SCHEDULING_FAILURE("scheduling_failure");
+
+        private final String logValue;
+
+        FlushReason(String logValue) {
+            this.logValue = logValue;
+        }
+    }
+
     private static final class PendingBatch {
         private final List<DialogueEvidence> evidence = new ArrayList<>();
         private long generation;
@@ -417,6 +532,7 @@ public final class DialogueActivityReactionService {
     private static final class BatchRegistration {
         private PendingBatch batch;
         private long generation;
+        private int exchangeCount;
         private boolean created;
     }
 
