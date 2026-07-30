@@ -4,9 +4,12 @@ import com.laishengkai.digitalperson.dialogue.DialogueResult;
 import com.laishengkai.digitalperson.person.PersonId;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -36,12 +39,99 @@ class DialogueActivityReactionServiceTest {
         assertThat(triggered).isTrue();
         assertThat(decisions).hasValue(1);
         assertThat(observation.get())
+                .contains("共1轮")
                 .contains("用户消息：去打游戏")
                 .contains("人物回复：")
                 .contains("好呀，我也上号了。")
                 .contains("只判断数字人物本人")
                 .contains("用户本人要做某事不等于人物也在做")
                 .hasSizeLessThanOrEqualTo(PersonActivityDecisionService.MAX_OBSERVATION_LENGTH);
+    }
+
+    @Test
+    void coalescesRapidDialoguesIntoOneSemanticReview() {
+        PersonId personId = PersonId.random();
+        ManualDelayScheduler scheduler = new ManualDelayScheduler();
+        AtomicInteger decisions = new AtomicInteger();
+        AtomicReference<String> observation = new AtomicReference<>();
+        AtomicReference<Instant> occurredAt = new AtomicReference<>();
+        DialogueActivityReactionService service = new DialogueActivityReactionService(
+                (ignored, text, timestamp) -> {
+                    decisions.incrementAndGet();
+                    observation.set(text);
+                    occurredAt.set(timestamp);
+                    return CompletableFuture.completedFuture(null);
+                },
+                Runnable::run,
+                Duration.ofSeconds(2),
+                Duration.ofSeconds(8),
+                scheduler
+        );
+
+        assertThat(service.triggerIfNeeded(
+                "一起打王者吧",
+                storedExchange(personId, NOW, "好呀，我上号了。")
+        )).isTrue();
+        assertThat(service.triggerIfNeeded(
+                "我邀请你了",
+                storedExchange(personId, NOW.plusSeconds(1), "看到了，正在进房间。")
+        )).isTrue();
+        assertThat(service.triggerIfNeeded(
+                "你来了吗",
+                storedExchange(personId, NOW.plusSeconds(2), "来了，开始吧。")
+        )).isTrue();
+
+        assertThat(decisions).hasValue(0);
+
+        scheduler.run(Duration.ofSeconds(2));
+
+        assertThat(decisions).hasValue(1);
+        assertThat(occurredAt.get()).isEqualTo(NOW.plusSeconds(2));
+        assertThat(observation.get())
+                .contains("共3轮")
+                .contains("对话1：")
+                .contains("用户消息：一起打王者吧")
+                .contains("对话2：")
+                .contains("用户消息：我邀请你了")
+                .contains("对话3：")
+                .contains("用户消息：你来了吗")
+                .contains("来了，开始吧");
+
+        scheduler.run(Duration.ofSeconds(8));
+        assertThat(decisions).hasValue(1);
+    }
+
+    @Test
+    void maximumBatchWaitFlushesContinuousDialogue() {
+        PersonId personId = PersonId.random();
+        ManualDelayScheduler scheduler = new ManualDelayScheduler();
+        AtomicInteger decisions = new AtomicInteger();
+        DialogueActivityReactionService service = new DialogueActivityReactionService(
+                (ignored, observation, occurredAt) -> {
+                    decisions.incrementAndGet();
+                    return CompletableFuture.completedFuture(null);
+                },
+                Runnable::run,
+                Duration.ofSeconds(2),
+                Duration.ofSeconds(8),
+                scheduler
+        );
+
+        service.triggerIfNeeded(
+                "第一句",
+                storedExchange(personId, NOW, "第一句回复")
+        );
+        service.triggerIfNeeded(
+                "第二句",
+                storedExchange(personId, NOW.plusSeconds(1), "第二句回复")
+        );
+
+        scheduler.run(Duration.ofSeconds(8));
+
+        assertThat(decisions).hasValue(1);
+
+        scheduler.run(Duration.ofSeconds(2));
+        assertThat(decisions).hasValue(1);
     }
 
     @Test
@@ -132,14 +222,22 @@ class DialogueActivityReactionServiceTest {
     }
 
     private static PersonDialogueExchange storedExchange(String reply) {
-        return storedExchange(PersonId.random(), reply);
+        return storedExchange(PersonId.random(), NOW, reply);
     }
 
     private static PersonDialogueExchange storedExchange(PersonId personId, String reply) {
+        return storedExchange(personId, NOW, reply);
+    }
+
+    private static PersonDialogueExchange storedExchange(
+            PersonId personId,
+            Instant occurredAt,
+            String reply
+    ) {
         return new PersonDialogueExchange(
                 personId,
                 new DialogueResult("", List.of(reply)),
-                NOW,
+                occurredAt,
                 PersonDialogueExchange.ConversationStatus.STORED,
                 2,
                 PersonDialogueExchange.MemoryStatus.SCHEDULED,
@@ -157,5 +255,27 @@ class DialogueActivityReactionServiceTest {
                 PersonDialogueExchange.MemoryStatus.FAILED,
                 0
         );
+    }
+
+    private static final class ManualDelayScheduler
+            implements DialogueActivityReactionService.DelayScheduler {
+        private final List<ScheduledTask> tasks = new ArrayList<>();
+
+        @Override
+        public CompletionStage<Void> schedule(Runnable task, Duration delay) {
+            tasks.add(new ScheduledTask(delay, task));
+            return CompletableFuture.completedFuture(null);
+        }
+
+        private void run(Duration delay) {
+            List<ScheduledTask> matching = tasks.stream()
+                    .filter(task -> task.delay().equals(delay))
+                    .toList();
+            tasks.removeAll(matching);
+            matching.forEach(task -> task.action().run());
+        }
+    }
+
+    private record ScheduledTask(Duration delay, Runnable action) {
     }
 }
