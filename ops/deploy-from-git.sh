@@ -270,8 +270,14 @@ rollback() {
   fi
 }
 
+DEPLOY_RESTART_SINCE="$(date --iso-8601=seconds)"
 if ! sudo -n /usr/bin/systemctl restart "$SERVICE_NAME"; then
   echo "systemd 重启失败"
+  sudo -n /usr/bin/journalctl \
+    -u "$SERVICE_NAME" \
+    --since "$DEPLOY_RESTART_SINCE" \
+    --no-pager \
+    -n 200 || true
   rollback
   exit 1
 fi
@@ -291,6 +297,12 @@ done
 if [ "$HEALTHY" != "true" ]; then
   echo "新版本健康检查失败"
   sudo -n /usr/bin/systemctl status "$SERVICE_NAME" --no-pager || true
+  echo "===== 新版本启动日志（最近 200 行） ====="
+  sudo -n /usr/bin/journalctl \
+    -u "$SERVICE_NAME" \
+    --since "$DEPLOY_RESTART_SINCE" \
+    --no-pager \
+    -n 200 || true
   rollback
   exit 1
 fi
