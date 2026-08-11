@@ -9,6 +9,8 @@ import com.laishengkai.digitalperson.person.VersionedPerson;
 import com.laishengkai.digitalperson.personality.Personality;
 import com.laishengkai.digitalperson.state.StateUpdater;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -25,6 +27,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RefreshingWechatSlashCommandHandlerTest {
     private static final Instant NOW = Instant.parse("2026-07-30T00:20:00Z");
+
+    @Test
+    void productionConstructorExplicitlySelectsSpringAutowiring() throws Exception {
+        var constructor = RefreshingWechatSlashCommandHandler.class.getConstructor(
+                WechatSlashCommandService.class,
+                ObjectProvider.class
+        );
+
+        assertThat(constructor.getAnnotation(Autowired.class)).isNotNull();
+        assertThat(constructor.getParameterTypes())
+                .containsExactly(WechatSlashCommandService.class, ObjectProvider.class);
+    }
 
     @Test
     void flushesPendingActivityReviewBeforeReadingActivities() {
