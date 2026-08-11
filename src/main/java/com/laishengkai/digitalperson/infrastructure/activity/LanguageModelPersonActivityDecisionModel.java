@@ -38,6 +38,7 @@ public final class LanguageModelPersonActivityDecisionModel
         implements PersonActivityDecisionModel {
     static final String TOOL_NAME = "submit_event_lifecycle_plan";
     static final int MAX_OUTPUT_TOKENS = 2_048;
+    static final int DEFAULT_NEXT_REVIEW_MINUTES = 30;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper()
             .findAndRegisterModules()
@@ -154,11 +155,16 @@ public final class LanguageModelPersonActivityDecisionModel
                             + PersonActivityDecisionPlan.MAX_COMMANDS
             );
         }
-        if (submission.nextReviewMinutes() == null) {
-            throw new PersonActivityDecisionException(
-                    "nextReviewMinutes is required"
-            );
-        }
+
+        /*
+         * Some OpenAI-compatible providers occasionally omit this scheduling hint even though
+         * it is required by the tool schema. The lifecycle commands are the authoritative part
+         * of the decision, so do not discard an otherwise valid plan solely because the hint is
+         * absent. Java owns scheduling and can safely provide a conservative default.
+         */
+        int nextReviewMinutes = submission.nextReviewMinutes() == null
+                ? DEFAULT_NEXT_REVIEW_MINUTES
+                : submission.nextReviewMinutes();
 
         try {
             List<ActivityLifecycleCommand> commands = submission.commands().stream()
@@ -166,7 +172,7 @@ public final class LanguageModelPersonActivityDecisionModel
                     .toList();
             return new PersonActivityDecisionPlan(
                     commands,
-                    submission.nextReviewMinutes()
+                    nextReviewMinutes
             );
         } catch (IllegalArgumentException | NullPointerException error) {
             throw new PersonActivityDecisionException(
@@ -348,7 +354,7 @@ public final class LanguageModelPersonActivityDecisionModel
                         "additionalProperties":false
                       }
                     },
-                    "nextReviewMinutes":{"type":"integer","minimum":%d,"maximum":%d}
+                    "nextReviewMinutes":{"type":"integer","minimum":%d,"maximum":%d,"description":"必填；下一次活动复核间隔（分钟）"}
                   },
                   "required":["commands","nextReviewMinutes"],
                   "additionalProperties":false
