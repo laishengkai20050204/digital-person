@@ -22,12 +22,19 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Settles state, asks the activity model for a pure plan, validates and applies it,
  * evaluates newly started events, and saves the aggregate once with optimistic locking.
+ *
+ * <p>All decision sources are serialized per person. Dialogue-triggered, scheduled, command-refresh,
+ * and future callers therefore cannot run overlapping model decisions against the same aggregate
+ * version. Different people remain independent.</p>
  */
 public final class PersonActivityDecisionService {
     public static final int MAX_OBSERVATION_LENGTH = 4_000;
@@ -41,6 +48,8 @@ public final class PersonActivityDecisionService {
     private final PersonActivityDecisionModelRunner modelRunner;
     private final PersonActivityPlanApplier planApplier;
     private final Clock clock;
+    private final ConcurrentMap<PersonId, CompletableFuture<Void>> decisionQueues =
+            new ConcurrentHashMap<>();
 
     public PersonActivityDecisionService(
             PersonRepository personRepository,
@@ -170,6 +179,23 @@ public final class PersonActivityDecisionService {
                 clock
         );
         String normalizedObservation = normalizeObservation(observation);
+        return enqueueDecision(
+                requestedPersonId,
+                () -> decideNow(
+                        requestedPersonId,
+                        normalizedObservation,
+                        now,
+                        decisionDeadline
+                )
+        );
+    }
+
+    private CompletionStage<PersonActivityDecisionResult> decideNow(
+            PersonId requestedPersonId,
+            String normalizedObservation,
+            Instant now,
+            ActivityDecisionDeadline decisionDeadline
+    ) {
         long startedAtNanos = System.nanoTime();
         Consumer<String> checkpoint = decisionDeadline::checkpoint;
 
@@ -266,6 +292,45 @@ public final class PersonActivityDecisionService {
             );
             return CompletableFuture.failedFuture(error);
         }
+    }
+
+    private CompletionStage<PersonActivityDecisionResult> enqueueDecision(
+            PersonId personId,
+            Supplier<CompletionStage<PersonActivityDecisionResult>> decision
+    ) {
+        CompletableFuture<PersonActivityDecisionResult> result = new CompletableFuture<>();
+        CompletableFuture<Void> scheduled = decisionQueues.compute(personId, (ignored, previous) -> {
+            CompletionStage<Void> ready = previous == null
+                    ? CompletableFuture.completedFuture(null)
+                    : previous.handle((value, failure) -> null);
+            return ready.thenCompose(ignoredReady -> {
+                final CompletionStage<PersonActivityDecisionResult> stage;
+                try {
+                    stage = Objects.requireNonNull(
+                            decision.get(),
+                            "activity decision stage cannot be null"
+                    );
+                } catch (RuntimeException error) {
+                    result.completeExceptionally(error);
+                    return CompletableFuture.completedFuture(null);
+                }
+                return stage.<Void>handle((value, failure) -> {
+                    if (failure == null) {
+                        result.complete(value);
+                    } else {
+                        result.completeExceptionally(failure);
+                    }
+                    return null;
+                });
+            }).toCompletableFuture();
+        });
+        scheduled.whenComplete((ignored, failure) -> {
+            decisionQueues.remove(personId, scheduled);
+            if (failure != null && !result.isDone()) {
+                result.completeExceptionally(failure);
+            }
+        });
+        return result;
     }
 
     private CompletionStage<CompletedActivityDecision> applyAndEvaluate(
