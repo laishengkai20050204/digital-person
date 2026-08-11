@@ -5,6 +5,7 @@ import com.laishengkai.digitalperson.person.PersonId;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
@@ -42,6 +43,7 @@ public final class RefreshingWechatSlashCommandHandler implements WechatSlashCom
     private final ActivityReviewRefresher activityReviewRefresher;
     private final Duration refreshTimeout;
 
+    @Autowired
     public RefreshingWechatSlashCommandHandler(
             WechatSlashCommandService delegate,
             ObjectProvider<DialogueActivityReactionService> reactionServices
