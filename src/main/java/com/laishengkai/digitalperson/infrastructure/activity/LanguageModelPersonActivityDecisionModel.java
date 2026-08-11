@@ -199,17 +199,19 @@ public final class LanguageModelPersonActivityDecisionModel
     private static StartActivityCommand toStartCommand(CommandItem item) {
         requireAbsent(item.eventId(), "eventId", "START");
         requireAbsent(item.reason(), "reason", "START");
-        if (item.participants() == null) {
-            throw new PersonActivityDecisionException(
-                    "participants is required for START"
-            );
-        }
+        /*
+         * location, participants and notes are descriptive metadata, not lifecycle identity.
+         * StartActivityCommand already normalizes omitted location/notes to empty strings and
+         * omitted participants to an empty list. Some OpenAI-compatible providers omit these
+         * optional fields even when the tool description asks for them, so let the domain
+         * command own those defaults instead of rejecting an otherwise valid START decision.
+         */
         return new StartActivityCommand(
                 parseActivityType(item.activityType()),
                 requireText(item.title(), "title"),
-                requirePresent(item.location(), "location"),
+                item.location(),
                 item.participants(),
-                requirePresent(item.notes(), "notes")
+                item.notes()
         );
     }
 
@@ -381,13 +383,6 @@ public final class LanguageModelPersonActivityDecisionModel
             throw new PersonActivityDecisionException(fieldName + " cannot be blank");
         }
         return normalized;
-    }
-
-    private static String requirePresent(String value, String fieldName) {
-        if (value == null) {
-            throw new PersonActivityDecisionException(fieldName + " is required");
-        }
-        return value;
     }
 
     private static void requireAbsent(
