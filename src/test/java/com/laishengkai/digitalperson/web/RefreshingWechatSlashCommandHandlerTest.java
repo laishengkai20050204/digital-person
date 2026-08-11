@@ -1,7 +1,6 @@
 package com.laishengkai.digitalperson.web;
 
 import com.laishengkai.digitalperson.application.PersonCurrentStateProjector;
-import com.laishengkai.digitalperson.application.DialogueActivityReactionService;
 import com.laishengkai.digitalperson.person.Person;
 import com.laishengkai.digitalperson.person.PersonId;
 import com.laishengkai.digitalperson.person.PersonIdentity;
