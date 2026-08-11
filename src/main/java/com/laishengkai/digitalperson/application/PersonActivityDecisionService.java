@@ -314,7 +314,7 @@ public final class PersonActivityDecisionService {
                     result.completeExceptionally(error);
                     return CompletableFuture.completedFuture(null);
                 }
-                return stage.handle((value, failure) -> {
+                return stage.<Void>handle((value, failure) -> {
                     if (failure == null) {
                         result.complete(value);
                     } else {
