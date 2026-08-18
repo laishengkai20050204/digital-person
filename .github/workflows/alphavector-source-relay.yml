@@ -1,0 +1,145 @@
+name: AlphaVector Source Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact private AlphaVector commit SHA to relay
+        required: true
+        type: string
+      source_ref:
+        description: Private AlphaVector ref that must resolve to source_sha
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alphavector-source-relay-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      RELAY_ROOT: /var/tmp/alphavector-ci-source
+
+    steps:
+      - name: Validate relay request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || {
+            echo "source_sha must be one exact 40-character commit SHA"
+            exit 2
+          }
+          [[ "$SOURCE_REF" =~ ^refs/(heads|pull)/[A-Za-z0-9._/-]+$ ]] || {
+            echo "source_ref must be an AlphaVector heads or pull ref"
+            exit 2
+          }
+          [ -n "${{ secrets.SOURCE_RELAY_TOKEN }}" ] || {
+            echo "SOURCE_RELAY_TOKEN is not configured"
+            exit 2
+          }
+
+      - name: Check out exact private AlphaVector source
+        uses: actions/checkout@v6
+        with:
+          repository: laishengkai20050204/AlphaVector
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.SOURCE_RELAY_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: alphavector-source
+
+      - name: Verify and bundle exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C alphavector-source rev-parse HEAD)"
+          [ "$actual" = "$SOURCE_SHA" ] || {
+            echo "Exact source mismatch: requested SHA does not match requested ref"
+            exit 1
+          }
+
+          bundle="$RUNNER_TEMP/alphavector-source.tgz"
+          tar --exclude=.git -C alphavector-source -czf "$bundle" .
+          gzip -t "$bundle"
+          echo "ALPHAVECTOR_RELAY_BUNDLE_READY sha=$SOURCE_SHA"
+
+      - name: Configure existing Digital-Person SSH identity
+        env:
+          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
+          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s' "$SERVER_SSH_KEY_B64" | base64 --decode > ~/.ssh/id_ed25519
+          printf '%s\n' "$SERVER_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Publish exact source to shared Tencent relay cache
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh_args=(
+            -i ~/.ssh/id_ed25519
+            -p "$SERVER_PORT"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=10
+            -o ServerAliveCountMax=3
+          )
+          scp_args=(
+            -i ~/.ssh/id_ed25519
+            -P "$SERVER_PORT"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=15
+          )
+
+          remote_dir="$RELAY_ROOT/$SOURCE_SHA"
+          remote_bundle="$remote_dir/source.tgz"
+          remote_ready="$remote_dir/source.ready"
+
+          if ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+            "test -s '$remote_bundle' && test \"\$(cat '$remote_ready' 2>/dev/null)\" = '$SOURCE_SHA' && gzip -t '$remote_bundle'"; then
+            echo "ALPHAVECTOR_SOURCE_RELAY_REUSED sha=$SOURCE_SHA"
+            exit 0
+          fi
+
+          unique="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          remote_tmp="$remote_dir/source.tgz.tmp-$unique"
+          ready_tmp="$remote_dir/source.ready.tmp-$unique"
+
+          ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+            "mkdir -p '$RELAY_ROOT' '$remote_dir' && chmod 755 '$RELAY_ROOT' '$remote_dir'"
+
+          scp "${scp_args[@]}" \
+            "$RUNNER_TEMP/alphavector-source.tgz" \
+            "$SERVER_USER@$SERVER_HOST:$remote_tmp"
+
+          ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+            "set -euo pipefail; \
+             gzip -t '$remote_tmp'; \
+             chmod 644 '$remote_tmp'; \
+             mv -f '$remote_tmp' '$remote_bundle'; \
+             printf '%s\\n' '$SOURCE_SHA' > '$ready_tmp'; \
+             chmod 644 '$ready_tmp'; \
+             mv -f '$ready_tmp' '$remote_ready'; \
+             test \"\$(cat '$remote_ready')\" = '$SOURCE_SHA'; \
+             gzip -t '$remote_bundle'; \
+             find '$RELAY_ROOT' -mindepth 1 -maxdepth 1 -type d -user '$SERVER_USER' -mtime +7 -exec rm -rf -- {} + 2>/dev/null || true"
+
+          echo "ALPHAVECTOR_SOURCE_RELAY_READY sha=$SOURCE_SHA"
