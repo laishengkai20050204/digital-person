@@ -1,4 +1,5 @@
 name: AlphaVector Source Relay
+run-name: AlphaVector relay ${{ inputs.request_id }}
 
 on:
   workflow_dispatch:
@@ -7,8 +8,8 @@ on:
         description: Exact private AlphaVector commit SHA to relay
         required: true
         type: string
-      source_ref:
-        description: Private AlphaVector ref that must resolve to source_sha
+      request_id:
+        description: Unique AlphaVector CI relay request identifier
         required: true
         type: string
 
@@ -25,7 +26,7 @@ jobs:
     timeout-minutes: 10
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
-      SOURCE_REF: ${{ inputs.source_ref }}
+      REQUEST_ID: ${{ inputs.request_id }}
       SERVER_HOST: ${{ secrets.SERVER_HOST }}
       SERVER_PORT: ${{ secrets.SERVER_PORT }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
@@ -40,39 +41,14 @@ jobs:
             echo "source_sha must be one exact 40-character commit SHA"
             exit 2
           }
-          [[ "$SOURCE_REF" =~ ^refs/(heads|pull)/[A-Za-z0-9._/-]+$ ]] || {
-            echo "source_ref must be an AlphaVector heads or pull ref"
+          [[ "$REQUEST_ID" =~ ^[A-Za-z0-9._-]{1,80}$ ]] || {
+            echo "request_id must contain only letters, digits, dot, underscore, or dash"
             exit 2
           }
           [ -n "${{ secrets.SOURCE_RELAY_TOKEN }}" ] || {
             echo "SOURCE_RELAY_TOKEN is not configured"
             exit 2
           }
-
-      - name: Check out exact private AlphaVector source
-        uses: actions/checkout@v6
-        with:
-          repository: laishengkai20050204/AlphaVector
-          ref: ${{ inputs.source_ref }}
-          token: ${{ secrets.SOURCE_RELAY_TOKEN }}
-          fetch-depth: 1
-          persist-credentials: false
-          path: alphavector-source
-
-      - name: Verify and bundle exact source
-        shell: bash
-        run: |
-          set -euo pipefail
-          actual="$(git -C alphavector-source rev-parse HEAD)"
-          [ "$actual" = "$SOURCE_SHA" ] || {
-            echo "Exact source mismatch: requested SHA does not match requested ref"
-            exit 1
-          }
-
-          bundle="$RUNNER_TEMP/alphavector-source.tgz"
-          tar --exclude=.git -C alphavector-source -czf "$bundle" .
-          gzip -t "$bundle"
-          echo "ALPHAVECTOR_RELAY_BUNDLE_READY sha=$SOURCE_SHA"
 
       - name: Configure existing Digital-Person SSH identity
         env:
@@ -87,7 +63,60 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
+      - name: Check shared Tencent relay cache
+        id: shared-cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_args=(
+            -i ~/.ssh/id_ed25519
+            -p "$SERVER_PORT"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=10
+            -o ServerAliveCountMax=3
+          )
+          remote_dir="$RELAY_ROOT/$SOURCE_SHA"
+          remote_bundle="$remote_dir/source.tgz"
+          remote_ready="$remote_dir/source.ready"
+          if ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+            "test -s '$remote_bundle' && test \"\$(cat '$remote_ready' 2>/dev/null)\" = '$SOURCE_SHA' && gzip -t '$remote_bundle'"; then
+            echo "reused=true" >> "$GITHUB_OUTPUT"
+            echo "ALPHAVECTOR_SOURCE_RELAY_REUSED sha=$SOURCE_SHA"
+          else
+            echo "reused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out exact private AlphaVector SHA
+        if: steps.shared-cache.outputs.reused != 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: laishengkai20050204/AlphaVector
+          ref: ${{ inputs.source_sha }}
+          token: ${{ secrets.SOURCE_RELAY_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+          path: alphavector-source
+
+      - name: Verify and bundle exact source
+        if: steps.shared-cache.outputs.reused != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C alphavector-source rev-parse HEAD)"
+          [ "$actual" = "$SOURCE_SHA" ] || {
+            echo "Exact source mismatch after immutable SHA checkout"
+            exit 1
+          }
+
+          bundle="$RUNNER_TEMP/alphavector-source.tgz"
+          tar --exclude=.git -C alphavector-source -czf "$bundle" .
+          gzip -t "$bundle"
+          echo "ALPHAVECTOR_RELAY_BUNDLE_READY sha=$SOURCE_SHA"
+
       - name: Publish exact source to shared Tencent relay cache
+        if: steps.shared-cache.outputs.reused != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -112,14 +141,7 @@ jobs:
           remote_dir="$RELAY_ROOT/$SOURCE_SHA"
           remote_bundle="$remote_dir/source.tgz"
           remote_ready="$remote_dir/source.ready"
-
-          if ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
-            "test -s '$remote_bundle' && test \"\$(cat '$remote_ready' 2>/dev/null)\" = '$SOURCE_SHA' && gzip -t '$remote_bundle'"; then
-            echo "ALPHAVECTOR_SOURCE_RELAY_REUSED sha=$SOURCE_SHA"
-            exit 0
-          fi
-
-          unique="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          unique="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$REQUEST_ID"
           remote_tmp="$remote_dir/source.tgz.tmp-$unique"
           ready_tmp="$remote_dir/source.ready.tmp-$unique"
 
