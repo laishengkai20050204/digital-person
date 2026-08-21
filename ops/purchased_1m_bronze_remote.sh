@@ -20,9 +20,18 @@ wheelhouse="$controller_root/wheelhouse"
   exit 2
 }
 
-if [ ! -x "$python" ]; then
+runtime_packages_ready() {
+  [ -x "$python" ] || return 1
+  "$python" - <<'PY' >/dev/null 2>&1
+import pandas
+import pyarrow
+import qcloud_cos
+PY
+}
+
+if ! runtime_packages_ready; then
   if [ -n "${ALPHAVECTOR_RUNTIME_PYTHON:-}" ]; then
-    echo "Configured AlphaVector runtime Python is missing: $python" >&2
+    echo "Configured AlphaVector runtime Python is missing required Bronze packages: $python" >&2
     exit 2
   fi
   command -v python3 >/dev/null 2>&1 || {
@@ -42,9 +51,9 @@ if [ ! -x "$python" ]; then
   exec 9>"$runtime_root/bootstrap.lock"
   flock 9
 
-  if [ ! -x "$python" ]; then
+  if ! runtime_packages_ready; then
     echo "Bootstrapping dedicated Purchased 1m Bronze runtime from offline wheelhouse: $runtime_root/venv" >&2
-    rm -rf "$runtime_root/venv.tmp"
+    rm -rf "$runtime_root/venv" "$runtime_root/venv.tmp"
     python3 -m venv "$runtime_root/venv.tmp"
     "$runtime_root/venv.tmp/bin/python" -m pip install \
       --disable-pip-version-check \
