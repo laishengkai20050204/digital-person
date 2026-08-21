@@ -30,6 +30,10 @@ jobs:
           bash -n ops/ensure-mem0.sh
           bash -n ops/test-ensure-mem0-secret-handling.sh
           bash -n scripts/install-openclaw-direct-bridge.sh
+          bash -n ops/purchased_1m_bronze_remote.sh
+          bash -n ops/purchased_1m_remote_task.sh
+          bash -n ops/purchased_1m_bronze_ci_task.sh
+          python3 -m py_compile ops/purchased_1m_bronze.py
           node --check openclaw-plugins/digital-person-direct-bridge/index.mjs
           python3 -m json.tool \
             openclaw-plugins/digital-person-direct-bridge/package.json \
