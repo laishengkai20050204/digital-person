@@ -48,6 +48,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
       - name: Validate inputs
         env:
           CHUNK_ROWS: ${{ inputs.chunk_rows }}
@@ -57,6 +61,20 @@ jobs:
           [[ "$CHUNK_ROWS" =~ ^[1-9][0-9]*$ ]]
           [[ "$PART_ROWS" =~ ^[1-9][0-9]*$ ]]
           [ "$CHUNK_ROWS" -le "$PART_ROWS" ]
+
+      - name: Build offline Bronze runtime wheelhouse
+        run: |
+          set -euo pipefail
+          wheelhouse="$RUNNER_TEMP/bronze-wheelhouse"
+          mkdir -p "$wheelhouse"
+          python -m pip install --disable-pip-version-check --upgrade pip wheel
+          python -m pip wheel \
+            --wheel-dir "$wheelhouse" \
+            "pandas>=2.2,<2.4" \
+            "pyarrow>=17,<22" \
+            "cos-python-sdk-v5>=1.9,<2"
+          tar -C "$wheelhouse" -czf "$RUNNER_TEMP/bronze-wheelhouse.tgz" .
+          test -s "$RUNNER_TEMP/bronze-wheelhouse.tgz"
 
       - name: Configure SSH
         env:
@@ -80,9 +98,10 @@ jobs:
             ops/purchased_1m_bronze.py \
             ops/purchased_1m_bronze_remote.sh \
             ops/purchased_1m_remote_task.sh \
+            "$RUNNER_TEMP/bronze-wheelhouse.tgz" \
             "$SERVER_USER@$SERVER_HOST:$REMOTE_ROOT/"
           ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
-            "chmod 700 '$REMOTE_ROOT/purchased_1m_bronze_remote.sh' '$REMOTE_ROOT/purchased_1m_remote_task.sh'; chmod 600 '$REMOTE_ROOT/purchased_1m_bronze.py'"
+            "set -e; rm -rf '$REMOTE_ROOT/wheelhouse'; mkdir -p '$REMOTE_ROOT/wheelhouse'; tar -xzf '$REMOTE_ROOT/bronze-wheelhouse.tgz' -C '$REMOTE_ROOT/wheelhouse'; rm -f '$REMOTE_ROOT/bronze-wheelhouse.tgz'; chmod 700 '$REMOTE_ROOT/purchased_1m_bronze_remote.sh' '$REMOTE_ROOT/purchased_1m_remote_task.sh'; chmod 600 '$REMOTE_ROOT/purchased_1m_bronze.py'"
 
       - name: Discover source partitions
         id: plan
@@ -141,7 +160,7 @@ jobs:
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
