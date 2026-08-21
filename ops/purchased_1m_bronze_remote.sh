@@ -12,6 +12,8 @@ runtime_env="$HOME/.config/alphavector/runtime.env"
 runtime_root="${PURCHASED_1M_BRONZE_RUNTIME_ROOT:-$HOME/.cache/digital-person-purchased-1m-bronze/runtime}"
 python="${ALPHAVECTOR_RUNTIME_PYTHON:-$runtime_root/venv/bin/python}"
 shim_root="$runtime_root/shim"
+controller_root="$(cd "$(dirname "$script")" && pwd)"
+wheelhouse="$controller_root/wheelhouse"
 
 [ -r "$script" ] || {
   echo "Bronze builder script is missing: $script" >&2
@@ -31,21 +33,27 @@ if [ ! -x "$python" ]; then
     echo "flock is required to bootstrap the Bronze runtime" >&2
     exit 2
   }
+  compgen -G "$wheelhouse/*.whl" >/dev/null || {
+    echo "Bronze offline wheelhouse is missing or empty: $wheelhouse" >&2
+    exit 2
+  }
 
   mkdir -p "$runtime_root"
   exec 9>"$runtime_root/bootstrap.lock"
   flock 9
 
   if [ ! -x "$python" ]; then
-    echo "Bootstrapping dedicated Purchased 1m Bronze runtime: $runtime_root/venv" >&2
+    echo "Bootstrapping dedicated Purchased 1m Bronze runtime from offline wheelhouse: $runtime_root/venv" >&2
     rm -rf "$runtime_root/venv.tmp"
     python3 -m venv "$runtime_root/venv.tmp"
     "$runtime_root/venv.tmp/bin/python" -m pip install \
       --disable-pip-version-check \
       --no-input \
-      "pandas>=2.2" \
-      "pyarrow>=17.0" \
-      "cos-python-sdk-v5>=1.9"
+      --no-index \
+      --find-links "$wheelhouse" \
+      "pandas>=2.2,<2.4" \
+      "pyarrow>=17,<22" \
+      "cos-python-sdk-v5>=1.9,<2"
     rm -rf "$runtime_root/venv"
     mv "$runtime_root/venv.tmp" "$runtime_root/venv"
   fi
