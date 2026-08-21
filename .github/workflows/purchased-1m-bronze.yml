@@ -42,15 +42,11 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 90
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
 
       - name: Validate inputs
         env:
@@ -61,20 +57,6 @@ jobs:
           [[ "$CHUNK_ROWS" =~ ^[1-9][0-9]*$ ]]
           [[ "$PART_ROWS" =~ ^[1-9][0-9]*$ ]]
           [ "$CHUNK_ROWS" -le "$PART_ROWS" ]
-
-      - name: Build offline Bronze runtime wheelhouse
-        run: |
-          set -euo pipefail
-          wheelhouse="$RUNNER_TEMP/bronze-wheelhouse"
-          mkdir -p "$wheelhouse"
-          python -m pip install --disable-pip-version-check --upgrade pip wheel
-          python -m pip wheel \
-            --wheel-dir "$wheelhouse" \
-            "pandas>=2.2,<2.4" \
-            "pyarrow>=17,<22" \
-            "cos-python-sdk-v5>=1.9,<2"
-          tar -C "$wheelhouse" -czf "$RUNNER_TEMP/bronze-wheelhouse.tgz" .
-          test -s "$RUNNER_TEMP/bronze-wheelhouse.tgz"
 
       - name: Configure SSH
         env:
@@ -88,27 +70,99 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
           ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 
-      - name: Publish immutable controller
+      - name: Check remote Bronze runtime
+        id: runtime
         run: |
           set -euo pipefail
-          ssh_args=(-i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20)
-          scp_args=(-i ~/.ssh/id_ed25519 -P "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20)
+          ssh_args=(-i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
+          if ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" 'python="$HOME/.cache/digital-person-purchased-1m-bronze/runtime/venv/bin/python"; [ -x "$python" ] && "$python" -c "import pandas, pyarrow, qcloud_cos"'; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "Existing dedicated Bronze runtime is usable; offline wheelhouse transfer is not needed."
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Dedicated Bronze runtime is absent or incomplete; preparing offline bootstrap payload."
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.runtime.outputs.ready != 'true'
+        with:
+          python-version: "3.10"
+
+      - name: Build offline Bronze runtime wheelhouse
+        if: steps.runtime.outputs.ready != 'true'
+        run: |
+          set -euo pipefail
+          wheelhouse="$RUNNER_TEMP/bronze-wheelhouse"
+          archive="$RUNNER_TEMP/bronze-wheelhouse.tgz"
+          mkdir -p "$wheelhouse"
+          python -m pip install --disable-pip-version-check --upgrade pip wheel
+          python -m pip wheel \
+            --wheel-dir "$wheelhouse" \
+            "pandas>=2.2,<2.4" \
+            "pyarrow>=17,<22" \
+            "cos-python-sdk-v5>=1.9,<2"
+          tar -C "$wheelhouse" -czf "$archive" .
+          test -s "$archive"
+          sha256sum "$archive" > "$RUNNER_TEMP/bronze-wheelhouse.sha256"
+          split -b 5m -d -a 4 "$archive" "$RUNNER_TEMP/bronze-wheelhouse.part-"
+          test -n "$(find "$RUNNER_TEMP" -maxdepth 1 -name 'bronze-wheelhouse.part-*' -print -quit)"
+
+      - name: Publish immutable controller
+        env:
+          RUNTIME_READY: ${{ steps.runtime.outputs.ready }}
+        run: |
+          set -euo pipefail
+          ssh_args=(-i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
+          scp_args=(-i ~/.ssh/id_ed25519 -P "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
+
           ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" "mkdir -p '$REMOTE_ROOT' && chmod 700 '$REMOTE_ROOT'"
           scp "${scp_args[@]}" \
             ops/purchased_1m_bronze.py \
             ops/purchased_1m_bronze_remote.sh \
             ops/purchased_1m_remote_task.sh \
-            "$RUNNER_TEMP/bronze-wheelhouse.tgz" \
             "$SERVER_USER@$SERVER_HOST:$REMOTE_ROOT/"
+
+          if [ "$RUNTIME_READY" != "true" ]; then
+            archive_sha="$(awk '{print $1}' "$RUNNER_TEMP/bronze-wheelhouse.sha256")"
+            ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+              "rm -f '$REMOTE_ROOT'/bronze-wheelhouse.part-* '$REMOTE_ROOT'/bronze-wheelhouse.part-*.tmp '$REMOTE_ROOT/bronze-wheelhouse.tgz'; rm -rf '$REMOTE_ROOT/wheelhouse'"
+
+            for part in "$RUNNER_TEMP"/bronze-wheelhouse.part-*; do
+              base="$(basename "$part")"
+              uploaded=false
+              for attempt in 1 2 3 4 5; do
+                echo "Uploading Bronze wheelhouse chunk $base (attempt $attempt/5)"
+                rm -f "$RUNNER_TEMP/scp-timeout.marker"
+                if timeout --signal=TERM --kill-after=30s 420s \
+                  scp "${scp_args[@]}" "$part" "$SERVER_USER@$SERVER_HOST:$REMOTE_ROOT/$base.tmp"; then
+                  if ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+                    "mv '$REMOTE_ROOT/$base.tmp' '$REMOTE_ROOT/$base'"; then
+                    uploaded=true
+                    break
+                  fi
+                fi
+                ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" "rm -f '$REMOTE_ROOT/$base.tmp'" || true
+                sleep $((attempt * 5))
+              done
+              if [ "$uploaded" != "true" ]; then
+                echo "Failed to upload Bronze wheelhouse chunk after retries: $base" >&2
+                exit 1
+              fi
+            done
+
+            ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+              "set -e; cat '$REMOTE_ROOT'/bronze-wheelhouse.part-* > '$REMOTE_ROOT/bronze-wheelhouse.tgz'; test \"\$(sha256sum '$REMOTE_ROOT/bronze-wheelhouse.tgz' | awk '{print \$1}')\" = '$archive_sha'; mkdir -p '$REMOTE_ROOT/wheelhouse'; tar -xzf '$REMOTE_ROOT/bronze-wheelhouse.tgz' -C '$REMOTE_ROOT/wheelhouse'; rm -f '$REMOTE_ROOT'/bronze-wheelhouse.part-* '$REMOTE_ROOT/bronze-wheelhouse.tgz'"
+          fi
+
           ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
-            "set -e; rm -rf '$REMOTE_ROOT/wheelhouse'; mkdir -p '$REMOTE_ROOT/wheelhouse'; tar -xzf '$REMOTE_ROOT/bronze-wheelhouse.tgz' -C '$REMOTE_ROOT/wheelhouse'; rm -f '$REMOTE_ROOT/bronze-wheelhouse.tgz'; chmod 700 '$REMOTE_ROOT/purchased_1m_bronze_remote.sh' '$REMOTE_ROOT/purchased_1m_remote_task.sh'; chmod 600 '$REMOTE_ROOT/purchased_1m_bronze.py'"
+            "chmod 700 '$REMOTE_ROOT/purchased_1m_bronze_remote.sh' '$REMOTE_ROOT/purchased_1m_remote_task.sh'; chmod 600 '$REMOTE_ROOT/purchased_1m_bronze.py'"
 
       - name: Discover source partitions
         id: plan
         run: |
           set -euo pipefail
           result="$RUNNER_TEMP/bronze-plan.log"
-          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
             "$SERVER_USER@$SERVER_HOST" bash -s -- "$REMOTE_ROOT" > "$result" <<'REMOTE'
           set -euo pipefail
           root="$HOME/$1"
@@ -135,7 +189,7 @@ jobs:
         run: |
           set -euo pipefail
           result="$RUNNER_TEMP/bronze-status.log"
-          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
             "$SERVER_USER@$SERVER_HOST" bash -s -- "$REMOTE_ROOT" > "$result" <<'REMOTE'
           set -euo pipefail
           root="$HOME/$1"
@@ -222,7 +276,7 @@ jobs:
         run: |
           set -euo pipefail
           result="$RUNNER_TEMP/bronze-final.log"
-          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
             "$SERVER_USER@$SERVER_HOST" bash -s -- "$REMOTE_ROOT" "$GITHUB_RUN_ID" > "$result" <<'REMOTE'
           set -euo pipefail
           root="$HOME/$1"
