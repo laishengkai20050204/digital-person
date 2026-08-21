@@ -9,17 +9,12 @@ fi
 script="$1"
 shift
 runtime_env="$HOME/.config/alphavector/runtime.env"
-private_repo="$HOME/.cache/alphavector-theme-resolver/repo"
 runtime_root="${PURCHASED_1M_BRONZE_RUNTIME_ROOT:-$HOME/.cache/digital-person-purchased-1m-bronze/runtime}"
 python="${ALPHAVECTOR_RUNTIME_PYTHON:-$runtime_root/venv/bin/python}"
+shim_root="$runtime_root/shim"
 
 [ -r "$script" ] || {
   echo "Bronze builder script is missing: $script" >&2
-  exit 2
-}
-
-[ -d "$private_repo/src/alphavector" ] || {
-  echo "AlphaVector source tree is missing: $private_repo/src/alphavector" >&2
   exit 2
 }
 
@@ -56,6 +51,57 @@ if [ ! -x "$python" ]; then
   fi
 fi
 
+# Bronze only needs AlphaVector's stable COS primitive. Vendor that tiny interface locally so
+# pruning AlphaVector's checkout/cache cannot break source discovery or later Bronze workers.
+install -d -m 700 "$shim_root/alphavector/storage"
+printf '%s\n' '"""Bronze runtime compatibility package."""' > "$shim_root/alphavector/__init__.py"
+printf '%s\n' 'from . import cos_client' '__all__ = ["cos_client"]' > "$shim_root/alphavector/storage/__init__.py"
+cat > "$shim_root/alphavector/storage/cos_client.py" <<'PY'
+"""Minimal COS client surface used by the Purchased 1m Bronze mirror."""
+from __future__ import annotations
+
+import os
+
+DEFAULT_REGION = "ap-shanghai"
+DEFAULT_BUCKET = "alphavector-training-1375268513"
+
+
+def tencent_credentials() -> tuple[str, str, str | None]:
+    secret_id = os.getenv("TENCENT_SECRET_ID", "").strip()
+    secret_key = os.getenv("TENCENT_SECRET_KEY", "").strip()
+    token = os.getenv("TENCENT_SESSION_TOKEN", "").strip() or None
+    if not secret_id or not secret_key:
+        raise RuntimeError(
+            "TENCENT_SECRET_ID and TENCENT_SECRET_KEY must be set in the server environment"
+        )
+    return secret_id, secret_key, token
+
+
+def create_cos_client(region: str):
+    from qcloud_cos import CosConfig, CosS3Client
+
+    secret_id, secret_key, token = tencent_credentials()
+    config = CosConfig(
+        Region=region,
+        SecretId=secret_id,
+        SecretKey=secret_key,
+        Token=token,
+        Scheme="https",
+    )
+    return CosS3Client(config)
+PY
+
+# AlphaVector currently targets Python >=3.11 and imports datetime.UTC. Ubuntu 22.04 may expose
+# Python 3.10 as python3, so provide the equivalent name before the Bronze script is imported.
+cat > "$shim_root/sitecustomize.py" <<'PY'
+import datetime
+
+if not hasattr(datetime, "UTC"):
+    datetime.UTC = datetime.timezone.utc
+PY
+
+export PYTHONPATH="$shim_root${PYTHONPATH:+:$PYTHONPATH}"
+
 if [ -f "$runtime_env" ]; then
   set +u
   set -a
@@ -83,16 +129,16 @@ if [ -z "${TENCENT_SECRET_KEY:-}" ] && [ -n "${TENCENTCLOUD_SECRET_KEY:-}" ]; th
   export TENCENT_SECRET_KEY="$TENCENTCLOUD_SECRET_KEY"
 fi
 
-export PYTHONPATH="$private_repo/src${PYTHONPATH:+:$PYTHONPATH}"
-
 "$python" - <<'PY'
+import datetime
 import pandas
 import pyarrow
 import qcloud_cos
 from alphavector.storage import cos_client
 
-assert cos_client.DEFAULT_BUCKET
-assert cos_client.DEFAULT_REGION
+assert hasattr(datetime, "UTC")
+assert cos_client.DEFAULT_BUCKET == "alphavector-training-1375268513"
+assert cos_client.DEFAULT_REGION == "ap-shanghai"
 PY
 
 exec "$python" "$script" "$@"
