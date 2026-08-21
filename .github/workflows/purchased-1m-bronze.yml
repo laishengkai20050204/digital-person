@@ -1,0 +1,226 @@
+name: Purchased 1m Bronze Mirror
+run-name: Purchased 1m Bronze ${{ inputs.action }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Bronze operation
+        required: true
+        default: build
+        type: choice
+        options: [build, status]
+      chunk_rows:
+        description: CSV rows per streaming chunk
+        required: true
+        default: "250000"
+        type: string
+      max_rows_per_part:
+        description: Maximum rows per Bronze Parquet part
+        required: true
+        default: "5000000"
+        type: string
+      force:
+        description: Rebuild reusable partitions
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: purchased-1m-bronze-v1
+  cancel-in-progress: false
+
+env:
+  SERVER_HOST: ${{ secrets.SERVER_HOST }}
+  SERVER_PORT: ${{ secrets.SERVER_PORT }}
+  SERVER_USER: ${{ secrets.SERVER_USER }}
+  REMOTE_ROOT: .cache/digital-person-purchased-1m-bronze/${{ github.sha }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        env:
+          CHUNK_ROWS: ${{ inputs.chunk_rows }}
+          PART_ROWS: ${{ inputs.max_rows_per_part }}
+        run: |
+          set -euo pipefail
+          [[ "$CHUNK_ROWS" =~ ^[1-9][0-9]*$ ]]
+          [[ "$PART_ROWS" =~ ^[1-9][0-9]*$ ]]
+          [ "$CHUNK_ROWS" -le "$PART_ROWS" ]
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY_B64 }}
+          KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s' "$SSH_KEY" | base64 --decode > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Publish immutable controller
+        run: |
+          set -euo pipefail
+          ssh_args=(-i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20)
+          scp_args=(-i ~/.ssh/id_ed25519 -P "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20)
+          ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" "mkdir -p '$REMOTE_ROOT' && chmod 700 '$REMOTE_ROOT'"
+          scp "${scp_args[@]}" \
+            ops/purchased_1m_bronze.py \
+            ops/purchased_1m_bronze_remote.sh \
+            ops/purchased_1m_remote_task.sh \
+            "$SERVER_USER@$SERVER_HOST:$REMOTE_ROOT/"
+          ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+            "chmod 700 '$REMOTE_ROOT/purchased_1m_bronze_remote.sh' '$REMOTE_ROOT/purchased_1m_remote_task.sh'; chmod 600 '$REMOTE_ROOT/purchased_1m_bronze.py'"
+
+      - name: Discover source partitions
+        id: plan
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/bronze-plan.log"
+          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$SERVER_USER@$SERVER_HOST" bash -s -- "$REMOTE_ROOT" > "$result" <<'REMOTE'
+          set -euo pipefail
+          root="$HOME/$1"
+          bash "$root/purchased_1m_bronze_remote.sh" "$root/purchased_1m_bronze.py" --compact plan --encoded
+          REMOTE
+          cat "$result"
+          matrix="$(tail -n 1 "$result")"
+          python3 - <<'PY' "$matrix"
+          import json, sys
+          payload = json.loads(sys.argv[1])
+          items = payload.get("include")
+          if not isinstance(items, list) or not items:
+              raise SystemExit("empty Bronze matrix")
+          if any(c.isdigit() for c in sys.argv[1]):
+              raise SystemExit("Bronze matrix must remain digit-free")
+          for item in items:
+              if not isinstance(item, dict) or set(item) != {"k", "m", "y"}:
+                  raise SystemExit(f"invalid matrix entry: {item!r}")
+          PY
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+      - name: Show current status
+        if: inputs.action == 'status'
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/bronze-status.log"
+          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$SERVER_USER@$SERVER_HOST" bash -s -- "$REMOTE_ROOT" > "$result" <<'REMOTE'
+          set -euo pipefail
+          root="$HOME/$1"
+          bash "$root/purchased_1m_bronze_remote.sh" "$root/purchased_1m_bronze.py" --compact status
+          REMOTE
+          cat "$result"
+          python3 - <<'PY' "$(tail -n 1 "$result")" >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          r = json.loads(sys.argv[1])
+          print("# Purchased 1m Bronze Mirror")
+          print(f"\n- complete partitions: **{r['complete_partition_count']} / {r['partition_count']}**")
+          print(f"- source rows mirrored: **{r['source_rows']:,}**")
+          print(f"- Bronze rows: **{r['bronze_rows']:,}**")
+          print(f"- Parquet parts: **{r['part_count']:,}**")
+          print(f"- Bronze bytes: **{r['bronze_bytes']:,}**")
+          PY
+
+  worker:
+    if: inputs.action == 'build'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY_B64 }}
+          KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s' "$SSH_KEY" | base64 --decode > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Build Bronze partition
+        env:
+          KIND: ${{ matrix.k }}
+          MARKET: ${{ matrix.m }}
+          YEAR: ${{ matrix.y }}
+          CHUNK_ROWS: ${{ inputs.chunk_rows }}
+          PART_ROWS: ${{ inputs.max_rows_per_part }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          args=(--compact --chunk-rows "$CHUNK_ROWS" --max-rows-per-part "$PART_ROWS")
+          [ "$FORCE" != "true" ] || args+=(--force)
+          if [ "$KIND" = "a" ]; then
+            args+=(annual --market "$MARKET" --year "$YEAR" --run-id "$GITHUB_RUN_ID")
+          elif [ "$KIND" = "d" ]; then
+            args+=(delisted --run-id "$GITHUB_RUN_ID")
+          else
+            echo "unknown worker kind: $KIND" >&2
+            exit 2
+          fi
+          bash ops/purchased_1m_bronze_ci_task.sh \
+            "$REMOTE_ROOT" "bronze-$GITHUB_RUN_ID-$KIND-$MARKET-$YEAR" "${args[@]}"
+
+  finalize:
+    if: inputs.action == 'build' && !cancelled() && needs.worker.result == 'success'
+    needs: [plan, worker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY_B64 }}
+          KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s' "$SSH_KEY" | base64 --decode > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
+
+      - name: Verify every partition and publish global manifest
+        run: |
+          set -euo pipefail
+          result="$RUNNER_TEMP/bronze-final.log"
+          ssh -i ~/.ssh/id_ed25519 -p "$SERVER_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$SERVER_USER@$SERVER_HOST" bash -s -- "$REMOTE_ROOT" "$GITHUB_RUN_ID" > "$result" <<'REMOTE'
+          set -euo pipefail
+          root="$HOME/$1"
+          bash "$root/purchased_1m_bronze_remote.sh" "$root/purchased_1m_bronze.py" --compact finalize --run-id "$2"
+          REMOTE
+          cat "$result"
+          python3 - <<'PY' "$(tail -n 1 "$result")" >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          r = json.loads(sys.argv[1])
+          if r.get("ok") is not True:
+              raise SystemExit("Bronze finalize is not ok")
+          print("# Purchased 1m Bronze Mirror Complete")
+          print(f"\n- partitions: **{r['partition_count']}**")
+          print(f"- source rows: **{r['source_rows']:,}**")
+          print(f"- Bronze rows: **{r['bronze_rows']:,}**")
+          print(f"- Parquet parts: **{r['part_count']:,}**")
+          print(f"- Bronze bytes: **{r['bronze_bytes']:,}**")
+          print(f"- global manifest: `{r['manifest_key']}`")
+          print("\nThe existing deep-raw audit is not rerun; Bronze only mirrors source rows and provenance.")
+          PY
