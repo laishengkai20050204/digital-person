@@ -8,7 +8,6 @@ fi
 
 script="$1"
 shift
-runtime_env="$HOME/.config/alphavector/runtime.env"
 runtime_root="${PURCHASED_1M_BRONZE_RUNTIME_ROOT:-$HOME/.cache/digital-person-purchased-1m-bronze/runtime}"
 python="${ALPHAVECTOR_RUNTIME_PYTHON:-$runtime_root/venv/bin/python}"
 shim_root="$runtime_root/shim"
@@ -119,14 +118,32 @@ PY
 
 export PYTHONPATH="$shim_root${PYTHONPATH:+:$PYTHONPATH}"
 
-if [ -f "$runtime_env" ]; then
-  set +u
-  set -a
-  # shellcheck disable=SC1090
-  source "$runtime_env"
-  set +a
-  set -u
+# Load COS credentials from the persistent server runtime file before invoking Python. Do not rely
+# on an interactive/login shell exporting them: GitHub reaches the server through non-interactive
+# SSH. Resolve both $HOME and the account database home, source any readable runtime.env, normalize
+# Tencent SDK naming variants, and explicitly export the canonical names.
+credential_files=("$HOME/.config/alphavector/runtime.env")
+account_home=""
+if command -v getent >/dev/null 2>&1; then
+  account_home="$(getent passwd "$(id -un)" | awk -F: '{print $6}')"
 fi
+if [ -n "$account_home" ] && [ "$account_home" != "$HOME" ]; then
+  credential_files+=("$account_home/.config/alphavector/runtime.env")
+fi
+
+for runtime_env in "${credential_files[@]}"; do
+  if [ -r "$runtime_env" ]; then
+    set +u
+    set -a
+    # shellcheck disable=SC1090
+    source "$runtime_env"
+    set +a
+    set -u
+  fi
+  if [ -n "${TENCENT_SECRET_ID:-}" ] && [ -n "${TENCENT_SECRET_KEY:-}" ]; then
+    break
+  fi
+done
 
 if [ -z "${TENCENT_SECRET_ID:-}" ] || [ -z "${TENCENT_SECRET_KEY:-}" ]; then
   set +u
@@ -140,20 +157,43 @@ if [ -z "${TENCENT_SECRET_ID:-}" ] || [ -z "${TENCENT_SECRET_KEY:-}" ]; then
 fi
 
 if [ -z "${TENCENT_SECRET_ID:-}" ] && [ -n "${TENCENTCLOUD_SECRET_ID:-}" ]; then
-  export TENCENT_SECRET_ID="$TENCENTCLOUD_SECRET_ID"
+  TENCENT_SECRET_ID="$TENCENTCLOUD_SECRET_ID"
 fi
 if [ -z "${TENCENT_SECRET_KEY:-}" ] && [ -n "${TENCENTCLOUD_SECRET_KEY:-}" ]; then
-  export TENCENT_SECRET_KEY="$TENCENTCLOUD_SECRET_KEY"
+  TENCENT_SECRET_KEY="$TENCENTCLOUD_SECRET_KEY"
 fi
+
+if [ -z "${TENCENT_SECRET_ID:-}" ] || [ -z "${TENCENT_SECRET_KEY:-}" ]; then
+  echo "Tencent COS credentials are unavailable to the non-interactive Bronze SSH runtime." >&2
+  echo "remote user=$(id -un) HOME=$HOME account_home=${account_home:-unknown}" >&2
+  for runtime_env in "${credential_files[@]}"; do
+    if [ -r "$runtime_env" ]; then
+      echo "credential file readable: $runtime_env" >&2
+    else
+      echo "credential file missing/unreadable: $runtime_env" >&2
+    fi
+  done
+  exit 2
+fi
+
+export TENCENT_SECRET_ID TENCENT_SECRET_KEY
+if [ -n "${TENCENT_SESSION_TOKEN:-}" ]; then
+  export TENCENT_SESSION_TOKEN
+fi
+
+echo "Tencent COS credentials loaded for Bronze runtime (id_len=${#TENCENT_SECRET_ID}, key_len=${#TENCENT_SECRET_KEY})." >&2
 
 "$python" - <<'PY'
 import datetime
+import os
 import pandas
 import pyarrow
 import qcloud_cos
 from alphavector.storage import cos_client
 
 assert hasattr(datetime, "UTC")
+assert os.environ.get("TENCENT_SECRET_ID")
+assert os.environ.get("TENCENT_SECRET_KEY")
 assert cos_client.DEFAULT_BUCKET == "alphavector-training-1375268513"
 assert cos_client.DEFAULT_REGION == "ap-shanghai"
 PY
