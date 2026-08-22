@@ -1,26 +1,20 @@
-name: Build and Deploy
+name: Build and Test
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
-
-concurrency:
-  group: production-deployment
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  build-and-deploy:
+  build-and-test:
     runs-on: ubuntu-latest
-
-    env:
-      SERVER_HOST: ${{ secrets.SERVER_HOST }}
-      SERVER_PORT: ${{ secrets.SERVER_PORT }}
-      SERVER_USER: ${{ secrets.SERVER_USER }}
 
     steps:
       - name: Check out repository
@@ -33,50 +27,5 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Validate deployment scripts
-        run: |
-          bash -n ops/deploy-from-git.sh
-          bash -n ops/ensure-mem0.sh
-
       - name: Build and test
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
-
-      - name: Configure SSH
-        env:
-          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
-          SERVER_KNOWN_HOSTS: ${{ secrets.SERVER_KNOWN_HOSTS }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          install -d -m 700 ~/.ssh
-
-          printf '%s' "$SERVER_SSH_KEY_B64" \
-            | base64 --decode \
-            > ~/.ssh/id_ed25519
-
-          printf '%s\n' "$SERVER_KNOWN_HOSTS" \
-            > ~/.ssh/known_hosts
-
-          chmod 600 ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/known_hosts
-          ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
-
-      - name: Build and deploy exact commit on server
-        timeout-minutes: 30
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          ssh \
-            -i ~/.ssh/id_ed25519 \
-            -p "$SERVER_PORT" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=3 \
-            -o TCPKeepAlive=yes \
-            "$SERVER_USER@$SERVER_HOST" \
-            "APP_SHA='$GITHUB_SHA' DEPLOY_BRANCH='main' bash -s" \
-            < ops/deploy-from-git.sh
