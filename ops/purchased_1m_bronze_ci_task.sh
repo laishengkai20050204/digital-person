@@ -25,16 +25,24 @@ ssh_args=(
   -o ServerAliveInterval=10
   -o ServerAliveCountMax=3
 )
-remote_task="$HOME/$remote_root/purchased_1m_remote_task.sh"
+remote_task="$remote_root/purchased_1m_remote_task.sh"
 
-launch="$(ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
-  bash "$remote_task" start "$remote_root" "$task_id" "$@")"
+run_remote_task() {
+  ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+    bash -s -- "$remote_task" "$@" <<'REMOTE'
+set -euo pipefail
+remote_task="$1"
+shift
+bash "$HOME/$remote_task" "$@"
+REMOTE
+}
+
+launch="$(run_remote_task start "$remote_root" "$task_id" "$@")"
 printf '%s\n' "$launch"
 
 while true; do
   set +e
-  status_output="$(ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
-    bash "$remote_task" status "$remote_root" "$task_id" 2>&1)"
+  status_output="$(run_remote_task status "$remote_root" "$task_id" 2>&1)"
   poll_rc=$?
   set -e
   state="${status_output%%$'\n'*}"
@@ -57,8 +65,7 @@ while true; do
       ;;
     DONE\ *)
       rc="${state#DONE }"
-      ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
-        bash "$remote_task" log "$remote_root" "$task_id" || true
+      run_remote_task log "$remote_root" "$task_id" || true
       exit "$rc"
       ;;
     *)
