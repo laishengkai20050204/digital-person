@@ -74,6 +74,7 @@ jobs:
             -o BatchMode=yes
             -o StrictHostKeyChecking=yes
             -o ConnectTimeout=15
+            -o ConnectionAttempts=3
             -o ServerAliveInterval=10
             -o ServerAliveCountMax=3
           )
@@ -121,12 +122,33 @@ jobs:
         run: |
           set -euo pipefail
 
+          retry_command() {
+            local label="$1"
+            shift
+            local max_attempts=5
+            local attempt rc
+            for attempt in $(seq 1 "$max_attempts"); do
+              if "$@"; then
+                return 0
+              else
+                rc=$?
+              fi
+              if [ "$attempt" -eq "$max_attempts" ]; then
+                echo "$label failed after $max_attempts attempts (exit=$rc)"
+                return "$rc"
+              fi
+              echo "$label attempt $attempt/$max_attempts failed (exit=$rc); retrying"
+              sleep $((attempt * 2))
+            done
+          }
+
           ssh_args=(
             -i ~/.ssh/id_ed25519
             -p "$SERVER_PORT"
             -o BatchMode=yes
             -o StrictHostKeyChecking=yes
             -o ConnectTimeout=15
+            -o ConnectionAttempts=3
             -o ServerAliveInterval=10
             -o ServerAliveCountMax=3
           )
@@ -136,6 +158,7 @@ jobs:
             -o BatchMode=yes
             -o StrictHostKeyChecking=yes
             -o ConnectTimeout=15
+            -o ConnectionAttempts=3
           )
 
           remote_dir="$RELAY_ROOT/$SOURCE_SHA"
@@ -145,14 +168,17 @@ jobs:
           remote_tmp="$remote_dir/source.tgz.tmp-$unique"
           ready_tmp="$remote_dir/source.ready.tmp-$unique"
 
-          ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+          retry_command "relay mkdir" \
+            ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
             "mkdir -p '$RELAY_ROOT' '$remote_dir' && chmod 755 '$RELAY_ROOT' '$remote_dir'"
 
-          scp "${scp_args[@]}" \
+          retry_command "relay scp" \
+            scp "${scp_args[@]}" \
             "$RUNNER_TEMP/alphavector-source.tgz" \
             "$SERVER_USER@$SERVER_HOST:$remote_tmp"
 
-          ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
+          retry_command "relay finalize" \
+            ssh "${ssh_args[@]}" "$SERVER_USER@$SERVER_HOST" \
             "set -euo pipefail; \
              gzip -t '$remote_tmp'; \
              chmod 644 '$remote_tmp'; \
